@@ -202,6 +202,7 @@ pub enum UiEvent {
 #[derive(Clone, PartialEq, Eq)]
 pub struct Credentials {
     pub token_server_url: String,
+    pub client_id: String,
     pub display_name: String,
     pub invite_code: String,
 }

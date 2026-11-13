@@ -9,3 +9,4 @@ Ponto de partida para a T20. **Nada aqui foi testado ainda**; confira cada chave
 Portas a abrir: 443/TCP, 7881/TCP, 7882/UDP e, se usar o TURN embutido, 3478/UDP.
 
 Gerar chave e segredo de produção: `livekit-server generate-keys`.
+Gerar hash da senha do servidor (`ROOMS_INVITE_CODE_HASH`): `echo sua-senha | rooms-token-server hash-password`.

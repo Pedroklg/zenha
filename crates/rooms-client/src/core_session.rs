@@ -69,9 +69,10 @@ impl SessionPort for CoreSession {
         self.translator = Translator::default();
         self.queued.clear();
 
-        let backend = media_backend(&credentials.display_name);
+        let backend = media_backend(&credentials.client_id);
         let config = SessionConfig {
             token_server_url: credentials.token_server_url,
+            client_id: credentials.client_id,
             display_name: credentials.display_name,
             invite_code: credentials.invite_code,
         };

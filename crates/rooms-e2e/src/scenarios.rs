@@ -453,7 +453,7 @@ impl<'a> Ctx<'a> {
 fn token(ctx: &mut Ctx<'_>) -> anyhow::Result<()> {
     let addr = ctx.setup.token_addr;
     let request = |invite: &str| {
-        serde_json::json!({"display_name": "alice", "room": room_name("token"), "invite_code": invite})
+        serde_json::json!({"client_id": "alice", "display_name": "alice", "room": room_name("token"), "invite_code": invite})
             .to_string()
     };
     let valid = http_request(addr, "POST", "/token", Some(&request(&ctx.setup.invite)))?;

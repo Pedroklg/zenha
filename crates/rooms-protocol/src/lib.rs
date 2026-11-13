@@ -6,12 +6,14 @@ use serde::{Deserialize, Serialize};
 
 pub const MAX_DISPLAY_NAME_LEN: usize = 32;
 pub const MAX_ROOM_NAME_LEN: usize = 32;
+pub const MAX_CLIENT_ID_LEN: usize = 64;
 pub const MAX_CHAT_MESSAGE_LEN: usize = 2000;
 pub const MAX_FILE_BYTES: u64 = 50 * 1024 * 1024;
 pub const MAX_FILE_NAME_LEN: usize = 120;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TokenRequest {
+    pub client_id: String,
     pub display_name: String,
     pub room: String,
     pub invite_code: String,
@@ -77,6 +79,16 @@ pub fn validate_room_name(room: &str) -> Result<(), ValidationError> {
     Ok(())
 }
 
+/// Identificador do cliente: 1 a 64 caracteres entre `a-z`, `0-9` e `-`.
+pub fn validate_client_id(id: &str) -> Result<(), ValidationError> {
+    check_len(id, MAX_CLIENT_ID_LEN)?;
+    let allowed = |c: char| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-';
+    if !id.chars().all(allowed) {
+        return Err(ValidationError::InvalidCharacter);
+    }
+    Ok(())
+}
+
 /// Texto de chat: não vazio depois de aparar e com até 2000 caracteres.
 pub fn validate_chat_text(text: &str) -> Result<(), ValidationError> {
     check_len(text.trim(), MAX_CHAT_MESSAGE_LEN)
@@ -97,6 +109,7 @@ mod tests {
     #[test]
     fn token_request_round_trips_through_json() {
         let request = TokenRequest {
+            client_id: "0123456789abcdef0123456789abcdef".to_owned(),
             display_name: "pedro".to_owned(),
             room: "geral".to_owned(),
             invite_code: "codigo".to_owned(),
@@ -147,6 +160,27 @@ mod tests {
             validate_room_name("a b"),
             Err(ValidationError::InvalidCharacter)
         );
+    }
+
+    #[test]
+    fn client_id_rules() {
+        assert_eq!(validate_client_id("a"), Ok(()));
+        assert_eq!(validate_client_id("bot-1-abc09"), Ok(()));
+        assert_eq!(validate_client_id(&"a".repeat(64)), Ok(()));
+        assert_eq!(validate_client_id(""), Err(ValidationError::Empty));
+        assert_eq!(
+            validate_client_id(&"a".repeat(65)),
+            Err(ValidationError::TooLong {
+                max: MAX_CLIENT_ID_LEN
+            })
+        );
+        for bad in ["Bot", "bot_1", "bot 1", "bot\n", "hé"] {
+            assert_eq!(
+                validate_client_id(bad),
+                Err(ValidationError::InvalidCharacter),
+                "{bad:?}"
+            );
+        }
     }
 
     #[test]

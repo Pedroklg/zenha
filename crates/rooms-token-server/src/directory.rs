@@ -39,7 +39,16 @@ impl LiveKitDirectory {
 impl RoomDirectory for LiveKitDirectory {
     async fn participants(&self, room: &str) -> Result<Vec<String>, DirectoryError> {
         match self.client.list_participants(room).await {
-            Ok(participants) => Ok(participants.into_iter().map(|p| p.identity).collect()),
+            Ok(participants) => Ok(participants
+                .into_iter()
+                .map(|p| {
+                    if p.name.is_empty() {
+                        p.identity
+                    } else {
+                        p.name
+                    }
+                })
+                .collect()),
             Err(ServiceError::Twirp(ServerError::Twirp(code)))
                 if code.code == ServerErrorCode::NOT_FOUND =>
             {

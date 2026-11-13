@@ -14,6 +14,7 @@ rooms-protocol = { path = "crates/rooms-protocol" }
 rooms-core = { path = "crates/rooms-core" }
 
 anyhow = "1.0"
+argon2 = "=0.6.0"
 async-trait = "0.1"
 axum = "0.8"
 directories = "6.0"

@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use argon2::{Argon2, PasswordHash, PasswordVerifier};
 use axum::Json;
 use axum::Router;
 use axum::body::Bytes;
@@ -8,8 +9,8 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use rooms_protocol::{
-    ErrorResponse, RoomSummary, RoomsResponse, TokenRequest, TokenResponse, validate_display_name,
-    validate_room_name,
+    ErrorResponse, RoomSummary, RoomsResponse, TokenRequest, TokenResponse, validate_client_id,
+    validate_display_name, validate_room_name,
 };
 use subtle::ConstantTimeEq;
 
@@ -73,18 +74,20 @@ async fn issue_token(
     let request: TokenRequest =
         serde_json::from_slice(&body).map_err(|_| ApiError::MalformedBody)?;
 
-    if !invite_matches(&state.config.invite_code, &request.invite_code) {
+    if !verify_invite(&state.config, &request.invite_code) {
         return Err(ApiError::Unauthorized);
     }
+    validate_client_id(&request.client_id).map_err(|_| ApiError::Invalid("invalid client id"))?;
     validate_display_name(&request.display_name)
         .map_err(|_| ApiError::Invalid("invalid display name"))?;
     validate_room_name(&request.room).map_err(|_| ApiError::Invalid("invalid room name"))?;
 
-    let identity = request.display_name.trim();
-    let token = token::mint(&state.config, identity, &request.room).map_err(|err| {
-        tracing::error!(%err, "minting token failed");
-        ApiError::TokenFailure
-    })?;
+    let name = request.display_name.trim();
+    let token =
+        token::mint(&state.config, &request.client_id, name, &request.room).map_err(|err| {
+            tracing::error!(%err, "minting token failed");
+            ApiError::TokenFailure
+        })?;
 
     Ok(Json(TokenResponse {
         token,
@@ -100,7 +103,7 @@ async fn list_rooms(
         .get(INVITE_HEADER)
         .and_then(|value| value.to_str().ok())
         .unwrap_or_default();
-    if !invite_matches(&state.config.invite_code, provided) {
+    if !verify_invite(&state.config, provided) {
         return Err(ApiError::Unauthorized);
     }
 
@@ -116,6 +119,18 @@ async fn list_rooms(
         });
     }
     Ok(Json(RoomsResponse { rooms }))
+}
+
+fn verify_invite(config: &Config, provided: &str) -> bool {
+    if let Some(hash) = &config.invite_code_hash {
+        PasswordHash::new(hash).is_ok_and(|parsed| {
+            Argon2::default()
+                .verify_password(provided.as_bytes(), &parsed)
+                .is_ok()
+        })
+    } else {
+        invite_matches(&config.invite_code, provided)
+    }
 }
 
 fn invite_matches(expected: &str, provided: &str) -> bool {
@@ -153,6 +168,7 @@ mod tests {
         Config {
             bind_addr: "127.0.0.1:0".parse().unwrap(),
             invite_code: INVITE.to_owned(),
+            invite_code_hash: None,
             livekit_url: "ws://livekit.test:7880".to_owned(),
             livekit_api_key: API_KEY.to_owned(),
             livekit_api_secret: API_SECRET.to_owned(),
@@ -165,6 +181,17 @@ mod tests {
         router(AppState {
             config: Arc::new(test_config()),
             directory: Arc::new(directory),
+        })
+    }
+
+    fn app_with_config(config: Config) -> Router {
+        router(AppState {
+            config: Arc::new(config),
+            directory: Arc::new(
+                FakeDirectory::default()
+                    .with_participants("geral", &["ana", "bia"])
+                    .with_participants("afk", &["caio"]),
+            ),
         })
     }
 
@@ -185,13 +212,18 @@ mod tests {
             .unwrap()
     }
 
-    fn token_body(display_name: &str, room: &str, invite: &str) -> String {
+    fn token_body_with_id(client_id: &str, display_name: &str, room: &str, invite: &str) -> String {
         serde_json::to_string(&TokenRequest {
+            client_id: client_id.to_owned(),
             display_name: display_name.to_owned(),
             room: room.to_owned(),
             invite_code: invite.to_owned(),
         })
         .unwrap()
+    }
+
+    fn token_body(display_name: &str, room: &str, invite: &str) -> String {
+        token_body_with_id("client-pedro", display_name, room, invite)
     }
 
     fn rooms_request(invite: Option<&str>) -> Request<Body> {
@@ -266,8 +298,17 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn token_rejects_bad_client_id() {
+        for bad in ["", "Pedro", "a_b", "a b", &"a".repeat(65)] {
+            let body = token_body_with_id(bad, "Pedro", "geral", INVITE);
+            let response = app().oneshot(token_request(&body)).await.unwrap();
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{bad:?}");
+        }
+    }
+
+    #[tokio::test]
     async fn token_success_carries_room_identity_and_expiry() {
-        let body = token_body("  Pedro  ", "jogos", INVITE);
+        let body = token_body_with_id("inst-0123abcdef", "  Pedro  ", "jogos", INVITE);
         let response = app().oneshot(token_request(&body)).await.unwrap();
         assert_eq!(response.status(), StatusCode::OK);
 
@@ -277,7 +318,7 @@ mod tests {
         let claims = TokenVerifier::with_api_key(API_KEY, API_SECRET)
             .verify(&parsed.token)
             .unwrap();
-        assert_eq!(claims.sub, "Pedro");
+        assert_eq!(claims.sub, "inst-0123abcdef");
         assert_eq!(claims.name, "Pedro");
         assert_eq!(claims.iss, API_KEY);
         assert!(claims.video.room_join);
@@ -293,6 +334,42 @@ mod tests {
             .as_secs() as usize;
         let ttl = TTL as usize;
         assert!(claims.exp >= now + ttl - 5 && claims.exp <= now + ttl + 5);
+    }
+
+    #[tokio::test]
+    async fn hashed_invite_works_for_token_and_rooms() {
+        let hash = crate::config::hash_password(&format!("{INVITE}\n")).unwrap();
+        let mut config = test_config();
+        config.invite_code = String::new();
+        config.invite_code_hash = Some(hash);
+
+        let ok_body = token_body("Pedro", "geral", INVITE);
+        let response = app_with_config(config.clone())
+            .oneshot(token_request(&ok_body))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let bad_body = token_body("Pedro", "geral", "wrong");
+        let response = app_with_config(config.clone())
+            .oneshot(token_request(&bad_body))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+        let response = app_with_config(config.clone())
+            .oneshot(rooms_request(Some(INVITE)))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        for bad in [None, Some("wrong"), Some("")] {
+            let response = app_with_config(config.clone())
+                .oneshot(rooms_request(bad))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{bad:?}");
+        }
     }
 
     #[tokio::test]

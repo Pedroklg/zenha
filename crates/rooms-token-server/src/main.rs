@@ -14,6 +14,16 @@ use crate::routes::{AppState, router};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    if std::env::args().nth(1).as_deref() == Some("hash-password") {
+        let mut line = String::new();
+        std::io::stdin()
+            .read_line(&mut line)
+            .context("reading password from stdin")?;
+        let hash = config::hash_password(&line)?;
+        println!("{hash}");
+        return Ok(());
+    }
+
     // A missing .env is fine: production reads real environment variables.
     let _ = dotenvy::dotenv();
 

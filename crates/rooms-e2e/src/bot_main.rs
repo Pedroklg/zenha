@@ -33,6 +33,25 @@ fn describe(options: &LiveKitBackendOptions) -> String {
     }
 }
 
+pub fn client_id_for_name(name: &str) -> String {
+    let mut id: String = name
+        .chars()
+        .map(|c| {
+            let lower = c.to_ascii_lowercase();
+            if lower.is_ascii_lowercase() || lower.is_ascii_digit() || lower == '-' {
+                lower
+            } else {
+                '-'
+            }
+        })
+        .take(rooms_protocol::MAX_CLIENT_ID_LEN)
+        .collect();
+    if id.is_empty() {
+        id.push_str("bot");
+    }
+    id
+}
+
 pub fn bot_main(args: &BotArgs) -> anyhow::Result<()> {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(
@@ -44,15 +63,17 @@ pub fn bot_main(args: &BotArgs) -> anyhow::Result<()> {
 
     let options = options_for(args);
     options.validate().context("invalid bot options")?;
+    let client_id = client_id_for_name(&args.name);
     let config = SessionConfig {
         token_server_url: args.token_url.clone(),
+        client_id: client_id.clone(),
         display_name: args.name.clone(),
         invite_code: args.invite.clone(),
     };
     #[cfg(windows)]
     let backend = LiveKitBackend::with_options(options);
     #[cfg(not(windows))]
-    let backend = NoMediaBackend::new(&args.name);
+    let backend = NoMediaBackend::new(&client_id);
     let handle =
         SessionHandle::spawn_with_http_tokens(config, backend).context("starting the session")?;
     let info = BotInfo {
@@ -93,5 +114,12 @@ mod tests {
         );
         assert!(tone.test_pattern_target);
         assert_eq!(describe(&tone), "tone 1290 Hz at 0.03");
+    }
+
+    #[test]
+    fn client_id_normalizes_invalid_characters() {
+        assert_eq!(client_id_for_name("alice"), "alice");
+        assert_eq!(client_id_for_name("Alice_1"), "alice-1");
+        assert_eq!(client_id_for_name(""), "bot");
     }
 }

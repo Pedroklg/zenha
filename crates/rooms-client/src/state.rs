@@ -659,6 +659,7 @@ pub struct AppState {
     pub hotkeys: HotkeyState,
     pub close_to_tray: bool,
     pub picker: SharePicker,
+    client_id: String,
     last_refresh: Option<Instant>,
     pending_save: Option<Settings>,
 }
@@ -673,6 +674,7 @@ impl AppState {
             hotkeys: HotkeyState::from_settings(settings),
             close_to_tray: settings.close_to_tray,
             picker: SharePicker::default(),
+            client_id: settings.client_id.clone(),
             last_refresh: None,
             pending_save: None,
         }
@@ -692,6 +694,7 @@ impl AppState {
     pub fn credentials(&self) -> Credentials {
         Credentials {
             token_server_url: self.form.server_url.trim().to_owned(),
+            client_id: self.client_id.clone(),
             display_name: self.form.display_name.trim().to_owned(),
             invite_code: self.form.invite_code.clone(),
         }
@@ -703,6 +706,7 @@ impl AppState {
 
     fn settings_snapshot(&self) -> Settings {
         Settings {
+            client_id: self.client_id.clone(),
             input_device: self.audio.input.clone(),
             output_device: self.audio.output.clone(),
             noise_suppression: self.audio.noise,
@@ -1241,6 +1245,7 @@ mod tests {
 
     fn valid_settings() -> Settings {
         Settings {
+            client_id: "0123456789abcdef0123456789abcdef".to_owned(),
             display_name: "Pedro".to_owned(),
             token_server_url: "http://localhost:8080".to_owned(),
             last_room: "geral".to_owned(),

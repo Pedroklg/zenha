@@ -278,6 +278,7 @@ mod tests {
             }]);
             let config = SessionConfig {
                 token_server_url: "http://unused.invalid".into(),
+                client_id: "bot".into(),
                 display_name: "bot".into(),
                 invite_code: "code".into(),
             };

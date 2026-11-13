@@ -28,10 +28,18 @@ fn main() -> anyhow::Result<()> {
 
     let demo_flag = std::env::args().skip(1).any(|arg| arg == "--demo");
     let settings_path = settings::default_path();
-    let settings = settings_path
+    let mut settings = settings_path
         .as_deref()
         .map(settings::load)
         .unwrap_or_default();
+    if demo_flag {
+        settings.client_id = demo::SELF_IDENTITY.to_owned();
+    } else if settings::ensure_client_id(&mut settings)
+        && let Some(path) = settings_path.as_deref()
+        && let Err(err) = settings::save(path, &settings)
+    {
+        tracing::warn!(%err, "could not save generated client id");
+    }
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()

@@ -1,4 +1,7 @@
+use std::collections::hash_map::RandomState;
+use std::hash::{BuildHasher, Hasher};
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use directories::BaseDirs;
 use serde::{Deserialize, Serialize};
@@ -56,6 +59,7 @@ impl VoiceMode {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
+    pub client_id: String,
     pub display_name: String,
     pub token_server_url: String,
     pub last_room: String,
@@ -78,6 +82,7 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
+            client_id: String::new(),
             display_name: String::new(),
             token_server_url: String::new(),
             last_room: String::new(),
@@ -93,6 +98,41 @@ impl Default for Settings {
             ptt_hotkey: None,
             close_to_tray: true,
         }
+    }
+}
+
+pub fn is_valid_client_id_hex(id: &str) -> bool {
+    id.len() == 32
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
+pub fn needs_client_id(id: &str) -> bool {
+    !is_valid_client_id_hex(id)
+}
+
+pub fn generate_client_id() -> String {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let mut h1 = RandomState::new().build_hasher();
+    h1.write_u128(nanos);
+    let a = h1.finish();
+    let mut h2 = RandomState::new().build_hasher();
+    h2.write_u128(nanos);
+    h2.write_u64(a);
+    let b = h2.finish();
+    format!("{a:016x}{b:016x}")
+}
+
+pub fn ensure_client_id(settings: &mut Settings) -> bool {
+    if needs_client_id(&settings.client_id) {
+        settings.client_id = generate_client_id();
+        true
+    } else {
+        false
     }
 }
 
@@ -198,6 +238,7 @@ mod tests {
         let dir = temp_dir("roundtrip");
         let path = dir.join("nested").join(FILE_NAME);
         let settings = Settings {
+            client_id: "0123456789abcdef0123456789abcdef".to_owned(),
             display_name: "Pedro".to_owned(),
             token_server_url: "http://localhost:8080".to_owned(),
             last_room: "geral".to_owned(),
@@ -313,5 +354,23 @@ mod tests {
         assert_eq!(loaded.display_name, "Ana");
         assert_eq!(loaded.last_room, "");
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn client_id_is_generated_once_when_empty_and_has_32_hex_chars() {
+        let mut settings = Settings::default();
+        assert!(needs_client_id(&settings.client_id));
+        assert!(ensure_client_id(&mut settings));
+        assert!(!needs_client_id(&settings.client_id));
+        assert!(is_valid_client_id_hex(&settings.client_id));
+        assert!(rooms_protocol::validate_client_id(&settings.client_id).is_ok());
+
+        let first = settings.client_id.clone();
+        assert!(!ensure_client_id(&mut settings));
+        assert_eq!(settings.client_id, first);
+
+        assert!(!is_valid_client_id_hex("short"));
+        assert!(!is_valid_client_id_hex("0123456789ABCDEF0123456789abcdef"));
+        assert!(!is_valid_client_id_hex("0123456789abcdef0123456789abcdeg"));
     }
 }

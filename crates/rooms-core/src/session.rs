@@ -3,7 +3,9 @@ use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
 
-use rooms_protocol::{MAX_FILE_BYTES, TokenRequest, validate_display_name, validate_room_name};
+use rooms_protocol::{
+    MAX_FILE_BYTES, TokenRequest, validate_client_id, validate_display_name, validate_room_name,
+};
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::time::Sleep;
 
@@ -31,6 +33,7 @@ enum Phase {
     },
     Connected {
         room: String,
+        local_identity: String,
         events: UnboundedReceiver<BackendEvent>,
         reconnecting: bool,
     },
@@ -113,6 +116,7 @@ impl Session {
 
     fn start_attempt(&mut self, room: String, retry: Option<u32>) {
         let request = TokenRequest {
+            client_id: self.config.client_id.clone(),
             display_name: self.config.display_name.clone(),
             room: room.clone(),
             invite_code: self.config.invite_code.clone(),
@@ -300,7 +304,8 @@ impl Session {
 
     async fn join(&mut self, room: String) {
         let valid = validate_room_name(&room)
-            .and_then(|()| validate_display_name(&self.config.display_name));
+            .and_then(|()| validate_display_name(&self.config.display_name))
+            .and_then(|()| validate_client_id(&self.config.client_id));
         if let Err(err) = valid {
             self.emit(Event::CommandFailed(SessionError::InvalidInput(
                 err.to_string(),
@@ -315,19 +320,18 @@ impl Session {
     }
 
     async fn send_chat(&mut self, text: &str) {
-        if !matches!(self.phase, Phase::Connected { .. }) {
+        let Phase::Connected { local_identity, .. } = &self.phase else {
             self.emit(Event::CommandFailed(SessionError::NotInRoom));
             return;
-        }
+        };
         let id = uuid::Uuid::new_v4().to_string();
-        let (message, payload) =
-            match chat::build_outgoing(id, &self.config.display_name, text, unix_ms()) {
-                Ok(built) => built,
-                Err(err) => {
-                    self.emit(Event::CommandFailed(err));
-                    return;
-                }
-            };
+        let (message, payload) = match chat::build_outgoing(id, local_identity, text, unix_ms()) {
+            Ok(built) => built,
+            Err(err) => {
+                self.emit(Event::CommandFailed(err));
+                return;
+            }
+        };
         match self.backend.send_data(CHAT_TOPIC, payload).await {
             Ok(()) => self.emit(Event::ChatReceived(message)),
             Err(err) => self.emit(Event::CommandFailed(err)),
@@ -452,6 +456,7 @@ impl Session {
         }
         self.phase = Phase::Connected {
             room: room.clone(),
+            local_identity: local_identity.clone(),
             events,
             reconnecting: false,
         };
@@ -606,6 +611,7 @@ mod tests {
     fn config() -> SessionConfig {
         SessionConfig {
             token_server_url: "http://unused.invalid".to_owned(),
+            client_id: "client-pedro".to_owned(),
             display_name: "pedro".to_owned(),
             invite_code: "secret".to_owned(),
         }
@@ -675,6 +681,7 @@ mod tests {
                 participants: vec![participant("a")],
             }
         );
+        assert_eq!(h.tokens.requests()[0].client_id, "client-pedro");
         assert_eq!(h.tokens.requests()[0].invite_code, "secret");
 
         h.backend
@@ -743,6 +750,34 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
+    async fn invalid_client_id_is_rejected_without_connecting() {
+        let backend = FakeBackend::new();
+        let tokens = FakeTokenClient::new();
+        let (command_tx, command_rx) = mpsc::unbounded_channel();
+        let (event_tx, mut event_rx) = mpsc::unbounded_channel();
+        let mut bad_config = config();
+        bad_config.client_id = "Bad_Id".to_owned();
+        tokio::spawn(run(
+            bad_config,
+            Arc::new(backend.clone()),
+            Arc::new(tokens),
+            command_rx,
+            EventSink::new(event_tx),
+            ReconnectPolicy::default(),
+        ));
+        command_tx
+            .send(Command::Join {
+                room: "geral".to_owned(),
+            })
+            .unwrap();
+        assert!(matches!(
+            event_rx.recv().await.unwrap(),
+            Event::CommandFailed(SessionError::InvalidInput(_))
+        ));
+        assert_eq!(backend.connect_count(), 0);
+    }
+
+    #[tokio::test(start_paused = true)]
     async fn mute_and_deafen_reach_backend_and_survive_room_switch() {
         let mut h = harness();
         h.send(Command::SetMuted(true));
@@ -781,7 +816,7 @@ mod tests {
         let Event::ChatReceived(echo) = h.next().await else {
             panic!("expected echo");
         };
-        assert_eq!(echo.sender, "pedro");
+        assert_eq!(echo.sender, "local");
         assert_eq!(echo.text, "oi");
         assert!(echo.sent_at_unix_ms > 0);
 

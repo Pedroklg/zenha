@@ -79,6 +79,7 @@ impl SessionHandle {
     pub fn spawn_audio_only(backend: impl MediaBackend) -> Result<Self, SessionError> {
         let config = SessionConfig {
             token_server_url: String::new(),
+            client_id: String::new(),
             display_name: String::new(),
             invite_code: String::new(),
         };

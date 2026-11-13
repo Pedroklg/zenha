@@ -10,6 +10,7 @@ use crate::video::{CaptureTarget, FrameSlot, SharePreset};
 #[derive(Clone, PartialEq, Eq)]
 pub struct SessionConfig {
     pub token_server_url: String,
+    pub client_id: String,
     pub display_name: String,
     pub invite_code: String,
 }
@@ -18,6 +19,7 @@ impl fmt::Debug for SessionConfig {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("SessionConfig")
             .field("token_server_url", &self.token_server_url)
+            .field("client_id", &self.client_id)
             .field("display_name", &self.display_name)
             .field("invite_code", &"<redacted>")
             .finish()

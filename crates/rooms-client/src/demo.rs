@@ -14,7 +14,7 @@ fn is_image_name(name: &str) -> bool {
     rooms_core::is_image_mime(rooms_core::mime_for_name(name))
 }
 
-const SELF_IDENTITY: &str = "demo-self";
+pub const SELF_IDENTITY: &str = "demo-self";
 const SELF_NAME: &str = "Você";
 const FAILING_ROOM: &str = "falha";
 const REPLIES: [&str; 4] = [

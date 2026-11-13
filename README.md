@@ -28,7 +28,7 @@ cargo client -- --demo  # tudo simulado, sem servidor
 | --- | --- |
 | `cargo ci` | fmt, clippy com avisos como erro, e testes |
 | `cargo lint` | só o clippy |
-| `cargo server` | sobe o `rooms-token-server` |
+| `cargo server` | sobe o `rooms-token-server` (`cargo run -p rooms-token-server -- hash-password` gera `ROOMS_INVITE_CODE_HASH`) |
 | `cargo client` | abre o `rooms-client` |
 | `cargo fmt --all` | formata o código |
 
