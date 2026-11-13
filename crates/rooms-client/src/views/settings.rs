@@ -1,4 +1,4 @@
-use eframe::egui;
+use eframe::egui::{self, RichText};
 
 use crate::hotkeys::{HotkeyAction, binding_from_key, binding_label};
 use crate::settings::{NoiseMode, VoiceMode};
@@ -12,24 +12,33 @@ const GATE_MAX_DB: i8 = -20;
 const GATE_DEFAULT_DB: i8 = -45;
 const METER_FLOOR_DB: f32 = -70.0;
 
-pub fn show(
-    ctx: &egui::Context,
-    audio: &AudioState,
-    hotkeys: &HotkeyState,
-    close_to_tray: bool,
-) -> Vec<UserAction> {
+pub struct SettingsView<'a> {
+    pub server_url: &'a str,
+    pub display_name: &'a str,
+    pub audio: &'a AudioState,
+    pub hotkeys: &'a HotkeyState,
+    pub close_to_tray: bool,
+    pub muted_on_join: bool,
+    pub invite_copied: bool,
+}
+
+pub fn show(ctx: &egui::Context, view: SettingsView<'_>) -> Vec<UserAction> {
     let mut actions = Vec::new();
-    if !audio.open {
+    if !view.audio.open {
         return actions;
     }
     let mut open = true;
+    let max_height = (ctx.content_rect().height() - 120.0).max(200.0);
     egui::Window::new("Configurações")
         .open(&mut open)
         .collapsible(false)
         .resizable(false)
         .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+        .max_height(max_height)
         .show(ctx, |ui| {
-            content(ui, audio, hotkeys, close_to_tray, &mut actions);
+            egui::ScrollArea::vertical()
+                .max_height(max_height)
+                .show(ui, |ui| content(ui, &view, &mut actions));
         });
     if !open {
         actions.push(UserAction::CloseSettings);
@@ -37,13 +46,9 @@ pub fn show(
     actions
 }
 
-fn content(
-    ui: &mut egui::Ui,
-    audio: &AudioState,
-    hotkeys: &HotkeyState,
-    close_to_tray: bool,
-    actions: &mut Vec<UserAction>,
-) {
+fn content(ui: &mut egui::Ui, view: &SettingsView<'_>, actions: &mut Vec<UserAction>) {
+    let audio = view.audio;
+    let hotkeys = view.hotkeys;
     ui.heading("Áudio");
     ui.add_space(8.0);
 
@@ -124,7 +129,7 @@ fn content(
 
     ui.separator();
     ui.heading("Geral");
-    let mut close = close_to_tray;
+    let mut close = view.close_to_tray;
     if ui
         .checkbox(
             &mut close,
@@ -133,6 +138,37 @@ fn content(
         .changed()
     {
         actions.push(UserAction::SetCloseToTray(close));
+    }
+    let mut muted_on_join = view.muted_on_join;
+    if ui
+        .checkbox(&mut muted_on_join, "Entrar com o microfone mudo")
+        .changed()
+    {
+        actions.push(UserAction::SetMutedOnJoin(muted_on_join));
+    }
+
+    ui.separator();
+    ui.heading("Servidor");
+    ui.add_space(4.0);
+    ui.horizontal(|ui| {
+        ui.label(RichText::new("Servidor:").color(theme::TEXT_SECONDARY));
+        ui.label(view.server_url.trim());
+    });
+    ui.horizontal(|ui| {
+        ui.label(RichText::new("Nome:").color(theme::TEXT_SECONDARY));
+        ui.label(view.display_name.trim());
+    });
+    ui.add_space(6.0);
+    ui.horizontal(|ui| {
+        if ui.button("Copiar link de convite").clicked() {
+            actions.push(UserAction::CopyInviteLink);
+        }
+        if ui.button("Trocar servidor ou nome").clicked() {
+            actions.push(UserAction::ChangeServer);
+        }
+    });
+    if view.invite_copied {
+        ui.small(RichText::new("Link copiado.").color(theme::ACCENT_TEXT));
     }
 }
 

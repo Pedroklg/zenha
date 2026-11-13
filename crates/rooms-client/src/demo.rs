@@ -15,7 +15,9 @@ fn is_image_name(name: &str) -> bool {
 }
 
 pub const SELF_IDENTITY: &str = "demo-self";
-const SELF_NAME: &str = "Você";
+pub const SELF_NAME: &str = "Você";
+pub const DEMO_SERVER_URL: &str = "https://demo.zenha.local";
+pub const DEMO_PASSWORD: &str = "demo";
 const FAILING_ROOM: &str = "falha";
 const REPLIES: [&str; 4] = [
     "Boa!",

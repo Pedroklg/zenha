@@ -3,6 +3,7 @@
 mod app;
 mod chat_images;
 mod core_session;
+mod credentials;
 mod demo;
 mod dialogs;
 mod format;
@@ -10,6 +11,7 @@ mod format;
 mod global_keys;
 mod hotkeys;
 mod icons;
+mod invite;
 mod settings;
 mod state;
 mod theme;
@@ -27,19 +29,30 @@ fn main() -> anyhow::Result<()> {
         .init();
 
     let demo_flag = std::env::args().skip(1).any(|arg| arg == "--demo");
-    let settings_path = settings::default_path();
-    let mut settings = settings_path
+    let raw_settings_path = settings::default_path();
+    let mut settings = raw_settings_path
         .as_deref()
         .map(settings::load)
         .unwrap_or_default();
-    if demo_flag {
+    let (settings_path, saved_password) = if demo_flag {
         settings.client_id = demo::SELF_IDENTITY.to_owned();
-    } else if settings::ensure_client_id(&mut settings)
-        && let Some(path) = settings_path.as_deref()
-        && let Err(err) = settings::save(path, &settings)
-    {
-        tracing::warn!(%err, "could not save generated client id");
-    }
+        settings.display_name = demo::SELF_NAME.to_owned();
+        settings.token_server_url = demo::DEMO_SERVER_URL.to_owned();
+        // Keep --demo isolated from the user's real config file and Credential Manager.
+        (None, Some(demo::DEMO_PASSWORD.to_owned()))
+    } else {
+        if settings::ensure_client_id(&mut settings)
+            && let Some(path) = raw_settings_path.as_deref()
+            && let Err(err) = settings::save(path, &settings)
+        {
+            tracing::warn!(%err, "could not save generated client id");
+        }
+        let server = settings.token_server_url.trim();
+        let password = (!server.is_empty())
+            .then(|| credentials::load(server))
+            .flatten();
+        (raw_settings_path, password)
+    };
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -55,6 +68,7 @@ fn main() -> anyhow::Result<()> {
             Ok(Box::new(app::App::new(
                 &cc.egui_ctx,
                 &settings,
+                saved_password,
                 settings_path,
                 demo_flag,
             )))

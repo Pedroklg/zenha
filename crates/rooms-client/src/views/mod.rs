@@ -1,5 +1,5 @@
 pub mod chat;
-pub mod login;
+pub mod onboarding;
 pub mod room;
 pub mod screens;
 pub mod settings;

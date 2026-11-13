@@ -4,8 +4,8 @@ use std::time::{Duration, Instant};
 
 use rooms_core::Cue;
 use rooms_protocol::{
-    ChatMessage, MAX_CHAT_MESSAGE_LEN, MAX_DISPLAY_NAME_LEN, MAX_ROOM_NAME_LEN, RoomSummary,
-    ValidationError, validate_chat_text, validate_display_name, validate_room_name,
+    ChatMessage, MAX_CHAT_MESSAGE_LEN, MAX_DISPLAY_NAME_LEN, RoomSummary, ValidationError,
+    validate_chat_text, validate_display_name,
 };
 
 use crate::hotkeys::{HotkeyAction, binding_label};
@@ -28,24 +28,17 @@ pub struct LoginForm {
     pub display_name: String,
     pub server_url: String,
     pub invite_code: String,
-    pub room: String,
-    pub muted_on_join: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct LoginErrors {
     pub display_name: Option<String>,
     pub server_url: Option<String>,
-    pub invite_code: Option<String>,
-    pub room: Option<String>,
 }
 
 impl LoginErrors {
     pub fn is_empty(&self) -> bool {
-        self.display_name.is_none()
-            && self.server_url.is_none()
-            && self.invite_code.is_none()
-            && self.room.is_none()
+        self.display_name.is_none() && self.server_url.is_none()
     }
 }
 
@@ -55,8 +48,6 @@ impl LoginForm {
             display_name: settings.display_name.clone(),
             server_url: settings.token_server_url.clone(),
             invite_code: String::new(),
-            room: settings.last_room.clone(),
-            muted_on_join: settings.muted_on_join,
         }
     }
 
@@ -64,8 +55,6 @@ impl LoginForm {
         Settings {
             display_name: self.display_name.trim().to_owned(),
             token_server_url: self.server_url.trim().to_owned(),
-            last_room: self.room.trim().to_owned(),
-            muted_on_join: self.muted_on_join,
             ..Settings::default()
         }
     }
@@ -76,14 +65,6 @@ impl LoginForm {
                 .err()
                 .map(display_name_message),
             server_url: server_url_error(&self.server_url),
-            invite_code: self
-                .invite_code
-                .trim()
-                .is_empty()
-                .then(|| "Informe o código de convite.".to_owned()),
-            room: validate_room_name(self.room.trim())
-                .err()
-                .map(room_name_message),
         }
     }
 
@@ -102,18 +83,6 @@ fn display_name_message(err: ValidationError) -> String {
     }
 }
 
-fn room_name_message(err: ValidationError) -> String {
-    match err {
-        ValidationError::Empty => "Informe a sala.".to_owned(),
-        ValidationError::TooLong { .. } => {
-            format!("O nome da sala pode ter no máximo {MAX_ROOM_NAME_LEN} caracteres.")
-        }
-        ValidationError::InvalidCharacter => {
-            "Use só letras minúsculas sem acento, números, - e _.".to_owned()
-        }
-    }
-}
-
 fn server_url_error(url: &str) -> Option<String> {
     let url = url.trim();
     if url.is_empty() {
@@ -123,7 +92,13 @@ fn server_url_error(url: &str) -> Option<String> {
         .strip_prefix("http://")
         .or_else(|| url.strip_prefix("https://"));
     match rest {
-        Some(rest) if !rest.is_empty() && !url.chars().any(char::is_whitespace) => None,
+        Some(rest)
+            if !rest.is_empty()
+                && !rest.starts_with('/')
+                && !url.chars().any(char::is_whitespace) =>
+        {
+            None
+        }
         _ => Some("O endereço deve começar com http:// ou https:// e não ter espaços.".to_owned()),
     }
 }
@@ -471,6 +446,80 @@ impl ChatState {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct LobbyVoiceState {
+    pub muted: bool,
+    pub deafened: bool,
+    muted_before_deafen: bool,
+}
+
+impl LobbyVoiceState {
+    fn from_muted(muted: bool) -> Self {
+        Self {
+            muted,
+            deafened: false,
+            muted_before_deafen: muted,
+        }
+    }
+
+    pub fn effective_muted(self, mode: VoiceMode) -> bool {
+        self.muted || mode == VoiceMode::PushToTalk
+    }
+}
+
+fn toggle_mute_fields(
+    muted: &mut bool,
+    deafened: bool,
+    mic_sent: &mut bool,
+    ptt_active: bool,
+    mode: VoiceMode,
+) -> Vec<UiCommand> {
+    if deafened {
+        return Vec::new();
+    }
+    *muted = !*muted;
+    let cue = if *muted { Cue::Muted } else { Cue::Unmuted };
+    let effective = *muted || (mode == VoiceMode::PushToTalk && !ptt_active);
+    let mut commands = Vec::new();
+    if effective != *mic_sent {
+        *mic_sent = effective;
+        commands.push(UiCommand::SetMuted(effective));
+    }
+    commands.push(UiCommand::PlayCue(cue));
+    commands
+}
+
+fn toggle_deafen_fields(
+    muted: &mut bool,
+    deafened: &mut bool,
+    muted_before_deafen: &mut bool,
+    mic_sent: &mut bool,
+    ptt_active: bool,
+    mode: VoiceMode,
+) -> Vec<UiCommand> {
+    if *deafened {
+        *deafened = false;
+        *muted = *muted_before_deafen;
+        let effective = *muted || (mode == VoiceMode::PushToTalk && !ptt_active);
+        *mic_sent = effective;
+        vec![
+            UiCommand::SetDeafened(false),
+            UiCommand::SetMuted(effective),
+            UiCommand::PlayCue(Cue::Undeafened),
+        ]
+    } else {
+        *muted_before_deafen = *muted;
+        *deafened = true;
+        *muted = true;
+        *mic_sent = true;
+        vec![
+            UiCommand::SetDeafened(true),
+            UiCommand::SetMuted(true),
+            UiCommand::PlayCue(Cue::Deafened),
+        ]
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RoomState {
     pub room: String,
@@ -492,18 +541,18 @@ impl RoomState {
         room: String,
         local_identity: String,
         participants: Vec<ParticipantView>,
-        muted: bool,
+        voice: LobbyVoiceState,
         mode: VoiceMode,
     ) -> Self {
-        let mic_sent = muted || mode == VoiceMode::PushToTalk;
+        let mic_sent = voice.effective_muted(mode);
         Self {
             room,
             local_identity,
             participants,
             status: ConnectionStatus::Connected,
-            muted,
-            deafened: false,
-            muted_before_deafen: muted,
+            muted: voice.muted,
+            deafened: voice.deafened,
+            muted_before_deafen: voice.muted_before_deafen,
             ptt_held: false,
             ptt_release_at: None,
             mic_sent,
@@ -512,9 +561,20 @@ impl RoomState {
         }
     }
 
+    fn voice_state(&self) -> LobbyVoiceState {
+        LobbyVoiceState {
+            muted: self.muted,
+            deafened: self.deafened,
+            muted_before_deafen: self.muted_before_deafen,
+        }
+    }
+
+    fn ptt_active(&self) -> bool {
+        self.ptt_held || self.ptt_release_at.is_some()
+    }
+
     fn effective_muted(&self, mode: VoiceMode) -> bool {
-        self.muted
-            || (mode == VoiceMode::PushToTalk && !(self.ptt_held || self.ptt_release_at.is_some()))
+        self.muted || (mode == VoiceMode::PushToTalk && !self.ptt_active())
     }
 
     fn sync_mic(&mut self, mode: VoiceMode) -> Option<UiCommand> {
@@ -537,41 +597,26 @@ impl RoomState {
     }
 
     fn toggle_mute(&mut self, mode: VoiceMode) -> Vec<UiCommand> {
-        if self.deafened {
-            return Vec::new();
-        }
-        self.muted = !self.muted;
-        let cue = if self.muted { Cue::Muted } else { Cue::Unmuted };
-        let mut commands = Vec::new();
-        if let Some(cmd) = self.sync_mic(mode) {
-            commands.push(cmd);
-        }
-        commands.push(UiCommand::PlayCue(cue));
-        commands
+        let ptt_active = self.ptt_active();
+        toggle_mute_fields(
+            &mut self.muted,
+            self.deafened,
+            &mut self.mic_sent,
+            ptt_active,
+            mode,
+        )
     }
 
     fn toggle_deafen(&mut self, mode: VoiceMode) -> Vec<UiCommand> {
-        if self.deafened {
-            self.deafened = false;
-            self.muted = self.muted_before_deafen;
-            let effective = self.effective_muted(mode);
-            self.mic_sent = effective;
-            vec![
-                UiCommand::SetDeafened(false),
-                UiCommand::SetMuted(effective),
-                UiCommand::PlayCue(Cue::Undeafened),
-            ]
-        } else {
-            self.muted_before_deafen = self.muted;
-            self.deafened = true;
-            self.muted = true;
-            self.mic_sent = true;
-            vec![
-                UiCommand::SetDeafened(true),
-                UiCommand::SetMuted(true),
-                UiCommand::PlayCue(Cue::Deafened),
-            ]
-        }
+        let ptt_active = self.ptt_active();
+        toggle_deafen_fields(
+            &mut self.muted,
+            &mut self.deafened,
+            &mut self.muted_before_deafen,
+            &mut self.mic_sent,
+            ptt_active,
+            mode,
+        )
     }
 
     fn send_chat(&mut self) -> Vec<UiCommand> {
@@ -593,17 +638,36 @@ impl RoomState {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Screen {
-    Login,
+    Onboarding,
+    Lobby,
     Connecting { room: String },
     InRoom(Box<RoomState>),
-    Error { message: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct OnboardingState {
+    pub link_open: bool,
+    pub link_input: String,
+    pub link_error: Option<String>,
+    pub password_rejected: bool,
+    link_pasted_server: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CredentialOp {
+    Store { server: String, password: String },
+    Forget { server: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UserAction {
-    SubmitLogin,
+    SubmitOnboarding,
+    ToggleInviteLink,
+    PasteInviteLink(String),
+    JoinRoom(String),
     CancelConnect,
-    Retry,
+    ChangeServer,
+    CopyInviteLink,
     ToggleMute,
     ToggleDeafen,
     Leave,
@@ -637,6 +701,7 @@ pub enum UserAction {
     SetHotkey(HotkeyAction, Option<String>),
     HotkeyPressed(HotkeyAction),
     SetCloseToTray(bool),
+    SetMutedOnJoin(bool),
     OpenSharePicker,
     CloseSharePicker,
     RefreshCaptureTargets,
@@ -654,27 +719,65 @@ pub enum UserAction {
 pub struct AppState {
     pub screen: Screen,
     pub form: LoginForm,
+    pub onboarding: OnboardingState,
+    pub lobby_voice: LobbyVoiceState,
+    pub lobby_error: Option<String>,
+    pub muted_on_join: bool,
+    pub invite_copied: bool,
     pub rooms: Vec<RoomSummary>,
     pub audio: AudioState,
     pub hotkeys: HotkeyState,
     pub close_to_tray: bool,
     pub picker: SharePicker,
     client_id: String,
+    last_room: String,
+    saved_credential: Option<(String, String)>,
+    active_password: String,
+    pending_password_save: Option<(String, String)>,
+    pending_credential_ops: Vec<CredentialOp>,
+    pending_commands: Vec<UiCommand>,
+    audio_configured: bool,
+    session_mic_sent: bool,
+    session_deafened: bool,
     last_refresh: Option<Instant>,
     pending_save: Option<Settings>,
 }
 
 impl AppState {
-    pub fn new(settings: &Settings) -> Self {
+    pub fn new(settings: &Settings, saved_password: Option<String>) -> Self {
+        let form = LoginForm::from_settings(settings);
+        let server = form.server_url.trim().to_owned();
+        let saved_password = saved_password.filter(|p| !p.is_empty() && !server.is_empty());
+        let open_lobby = form.is_valid() && saved_password.is_some();
+        let active_password = saved_password.clone().unwrap_or_default();
+        let saved_credential = saved_password.map(|pwd| (server, pwd));
         Self {
-            screen: Screen::Login,
-            form: LoginForm::from_settings(settings),
+            screen: if open_lobby {
+                Screen::Lobby
+            } else {
+                Screen::Onboarding
+            },
+            form,
+            onboarding: OnboardingState::default(),
+            lobby_voice: LobbyVoiceState::from_muted(settings.muted_on_join),
+            lobby_error: None,
+            muted_on_join: settings.muted_on_join,
+            invite_copied: false,
             rooms: Vec::new(),
             audio: AudioState::from_settings(settings),
             hotkeys: HotkeyState::from_settings(settings),
             close_to_tray: settings.close_to_tray,
             picker: SharePicker::default(),
             client_id: settings.client_id.clone(),
+            last_room: settings.last_room.clone(),
+            saved_credential,
+            active_password,
+            pending_password_save: None,
+            pending_credential_ops: Vec::new(),
+            pending_commands: Vec::new(),
+            audio_configured: false,
+            session_mic_sent: false,
+            session_deafened: false,
             last_refresh: None,
             pending_save: None,
         }
@@ -691,22 +794,74 @@ impl AppState {
         self.hotkeys.failed = failed;
     }
 
+    pub fn show_password_field(&self) -> bool {
+        if self.onboarding.password_rejected {
+            return true;
+        }
+        let server = self.form.server_url.trim();
+        let has_saved = self
+            .saved_credential
+            .as_ref()
+            .is_some_and(|(saved_server, _)| saved_server == server);
+        let has_pasted = self.onboarding.link_pasted_server.as_deref() == Some(server);
+        !has_saved && !has_pasted
+    }
+
+    fn resolved_password(&self) -> String {
+        if !self.form.invite_code.is_empty() {
+            return self.form.invite_code.clone();
+        }
+        let server = self.form.server_url.trim();
+        if let Some((saved_server, saved_password)) = &self.saved_credential
+            && saved_server == server
+        {
+            return saved_password.clone();
+        }
+        String::new()
+    }
+
+    fn current_password(&self) -> String {
+        if !matches!(self.screen, Screen::Onboarding) && !self.active_password.is_empty() {
+            self.active_password.clone()
+        } else {
+            self.resolved_password()
+        }
+    }
+
+    pub fn invite_link(&self) -> String {
+        crate::invite::format(self.form.server_url.trim(), &self.current_password())
+    }
+
     pub fn credentials(&self) -> Credentials {
         Credentials {
             token_server_url: self.form.server_url.trim().to_owned(),
             client_id: self.client_id.clone(),
             display_name: self.form.display_name.trim().to_owned(),
-            invite_code: self.form.invite_code.clone(),
+            invite_code: self.current_password(),
         }
     }
 
-    pub fn can_submit_login(&self) -> bool {
-        matches!(self.screen, Screen::Login) && self.form.is_valid()
+    pub fn can_submit_onboarding(&self) -> bool {
+        matches!(self.screen, Screen::Onboarding) && self.form.is_valid()
+    }
+
+    pub fn mark_refreshed(&mut self, now: Instant) {
+        self.last_refresh = Some(now);
+    }
+
+    pub fn take_credential_ops(&mut self) -> Vec<CredentialOp> {
+        std::mem::take(&mut self.pending_credential_ops)
+    }
+
+    pub fn take_pending_commands(&mut self) -> Vec<UiCommand> {
+        std::mem::take(&mut self.pending_commands)
     }
 
     fn settings_snapshot(&self) -> Settings {
         Settings {
             client_id: self.client_id.clone(),
+            last_room: self.last_room.clone(),
+            muted_on_join: self.muted_on_join,
             input_device: self.audio.input.clone(),
             output_device: self.audio.output.clone(),
             noise_suppression: self.audio.noise,
@@ -729,17 +884,20 @@ impl AppState {
         let Screen::InRoom(room) = &mut self.screen else {
             return Vec::new();
         };
-        if pressed {
+        let mode = self.audio.voice_mode;
+        let commands: Vec<UiCommand> = if pressed {
             room.ptt_held = true;
             room.ptt_release_at = None;
-            room.sync_mic(self.audio.voice_mode).into_iter().collect()
+            room.sync_mic(mode).into_iter().collect()
         } else {
             if room.ptt_held {
                 room.ptt_held = false;
                 room.ptt_release_at = Some(now + PTT_RELEASE_DELAY);
             }
             Vec::new()
-        }
+        };
+        self.session_mic_sent = room.mic_sent;
+        commands
     }
 
     pub fn poll_push_to_talk(&mut self, now: Instant) -> (Vec<UiCommand>, Option<Duration>) {
@@ -752,6 +910,7 @@ impl AppState {
         if now >= deadline {
             room.ptt_release_at = None;
             let commands = room.sync_mic(self.audio.voice_mode).into_iter().collect();
+            self.session_mic_sent = room.mic_sent;
             (commands, None)
         } else {
             (Vec::new(), Some(deadline - now))
@@ -778,7 +937,7 @@ impl AppState {
     }
 
     pub fn poll_refresh(&mut self, now: Instant) -> Option<UiCommand> {
-        if !matches!(self.screen, Screen::InRoom(_)) {
+        if !matches!(self.screen, Screen::Lobby | Screen::InRoom(_)) {
             return None;
         }
         let due = self
@@ -793,20 +952,28 @@ impl AppState {
     }
 
     pub fn handle_action(&mut self, action: UserAction) -> Vec<UiCommand> {
-        let voice_mode = self.audio.voice_mode;
         match action {
-            UserAction::SubmitLogin => self.submit_login(),
+            UserAction::SubmitOnboarding => self.submit_onboarding(),
+            UserAction::ToggleInviteLink => {
+                self.onboarding.link_open = !self.onboarding.link_open;
+                self.onboarding.link_error = None;
+                Vec::new()
+            }
+            UserAction::PasteInviteLink(text) => {
+                self.paste_invite_link(text);
+                Vec::new()
+            }
+            UserAction::JoinRoom(room) => self.join_room(room),
             UserAction::CancelConnect => self.cancel_connect(),
-            UserAction::Retry => {
-                if matches!(self.screen, Screen::Error { .. }) {
-                    self.screen = Screen::Login;
-                }
+            UserAction::ChangeServer => self.change_server(),
+            UserAction::CopyInviteLink => {
+                self.invite_copied = true;
                 Vec::new()
             }
             UserAction::Leave => self.leave(),
             UserAction::SwitchRoom(room) => self.switch_room(room),
-            UserAction::ToggleMute => self.with_room(|room| room.toggle_mute(voice_mode)),
-            UserAction::ToggleDeafen => self.with_room(|room| room.toggle_deafen(voice_mode)),
+            UserAction::ToggleMute => self.toggle_mute(),
+            UserAction::ToggleDeafen => self.toggle_deafen(),
             UserAction::SendChat => self.with_room(RoomState::send_chat),
             UserAction::AttachFile(path) => self.with_room(|_| vec![UiCommand::SendFile { path }]),
             UserAction::PickFile | UserAction::SaveReceivedFile { .. } => Vec::new(),
@@ -816,12 +983,14 @@ impl AppState {
             }),
             UserAction::OpenSettings => {
                 self.audio.open = true;
+                self.invite_copied = false;
                 vec![UiCommand::RefreshAudioDevices]
             }
             UserAction::CloseSettings => {
                 self.audio.open = false;
                 self.hotkeys.capturing = None;
                 self.hotkeys.capture_error = None;
+                self.invite_copied = false;
                 Vec::new()
             }
             UserAction::StartHotkeyCapture(action) => {
@@ -847,10 +1016,8 @@ impl AppState {
                     return Vec::new();
                 }
                 match action {
-                    HotkeyAction::ToggleMute => self.with_room(|room| room.toggle_mute(voice_mode)),
-                    HotkeyAction::ToggleDeafen => {
-                        self.with_room(|room| room.toggle_deafen(voice_mode))
-                    }
+                    HotkeyAction::ToggleMute => self.toggle_mute(),
+                    HotkeyAction::ToggleDeafen => self.toggle_deafen(),
                     HotkeyAction::PushToTalk => Vec::new(),
                 }
             }
@@ -880,6 +1047,14 @@ impl AppState {
             }
             UserAction::SetCloseToTray(enabled) => {
                 self.close_to_tray = enabled;
+                self.pending_save = Some(self.settings_snapshot());
+                Vec::new()
+            }
+            UserAction::SetMutedOnJoin(enabled) => {
+                self.muted_on_join = enabled;
+                if matches!(self.screen, Screen::Lobby) && enabled && !self.lobby_voice.deafened {
+                    self.lobby_voice.muted = true;
+                }
                 self.pending_save = Some(self.settings_snapshot());
                 Vec::new()
             }
@@ -935,6 +1110,54 @@ impl AppState {
         }
     }
 
+    fn toggle_mute(&mut self) -> Vec<UiCommand> {
+        let mode = self.audio.voice_mode;
+        match &mut self.screen {
+            Screen::InRoom(room) => {
+                let commands = room.toggle_mute(mode);
+                self.session_mic_sent = room.mic_sent;
+                commands
+            }
+            Screen::Lobby => toggle_mute_fields(
+                &mut self.lobby_voice.muted,
+                self.lobby_voice.deafened,
+                &mut self.session_mic_sent,
+                false,
+                mode,
+            ),
+            Screen::Onboarding | Screen::Connecting { .. } => Vec::new(),
+        }
+    }
+
+    fn toggle_deafen(&mut self) -> Vec<UiCommand> {
+        let mode = self.audio.voice_mode;
+        match &mut self.screen {
+            Screen::InRoom(room) => {
+                let commands = room.toggle_deafen(mode);
+                self.session_mic_sent = room.mic_sent;
+                self.session_deafened = room.deafened;
+                commands
+            }
+            Screen::Lobby => {
+                let mut mic_sent = self.session_mic_sent;
+                let mut deafened = self.lobby_voice.deafened;
+                let commands = toggle_deafen_fields(
+                    &mut self.lobby_voice.muted,
+                    &mut deafened,
+                    &mut self.lobby_voice.muted_before_deafen,
+                    &mut mic_sent,
+                    false,
+                    mode,
+                );
+                self.lobby_voice.deafened = deafened;
+                self.session_mic_sent = mic_sent;
+                self.session_deafened = deafened;
+                commands
+            }
+            Screen::Onboarding | Screen::Connecting { .. } => Vec::new(),
+        }
+    }
+
     fn with_room(&mut self, f: impl FnOnce(&mut RoomState) -> Vec<UiCommand>) -> Vec<UiCommand> {
         match &mut self.screen {
             Screen::InRoom(state) => f(state),
@@ -948,36 +1171,117 @@ impl AppState {
         }
     }
 
-    fn submit_login(&mut self) -> Vec<UiCommand> {
-        if !matches!(self.screen, Screen::Login) || !self.form.is_valid() {
+    fn paste_invite_link(&mut self, text: String) {
+        if let Some(invite) = crate::invite::parse(&text) {
+            self.form.server_url = invite.server.clone();
+            self.form.invite_code = invite.password.clone();
+            if invite.password.is_empty() {
+                self.onboarding.link_pasted_server = None;
+            } else {
+                self.onboarding.link_pasted_server = Some(invite.server);
+                self.onboarding.password_rejected = false;
+            }
+            self.onboarding.link_open = false;
+            self.onboarding.link_input.clear();
+            self.onboarding.link_error = None;
+        } else {
+            self.onboarding.link_input = text;
+            self.onboarding.link_error = (!self.onboarding.link_input.trim().is_empty())
+                .then(|| "Link de convite inválido.".to_owned());
+        }
+    }
+
+    fn submit_onboarding(&mut self) -> Vec<UiCommand> {
+        if !self.can_submit_onboarding() {
             return Vec::new();
         }
-        let settings = self.settings_snapshot();
-        let room = settings.last_room.clone();
+        let server = self.form.server_url.trim().to_owned();
+        let password = self.resolved_password();
+        self.active_password = password.clone();
+        self.pending_password_save = (!password.is_empty()
+            && self.saved_credential.as_ref() != Some(&(server.clone(), password.clone())))
+        .then_some((server, password));
+        self.pending_save = Some(self.settings_snapshot());
+        self.lobby_voice = LobbyVoiceState::from_muted(self.muted_on_join);
+        self.lobby_error = None;
+        self.rooms.clear();
+        self.audio.open = false;
+        self.invite_copied = false;
+        self.audio_configured = false;
+        self.session_mic_sent = false;
+        self.session_deafened = false;
+        self.onboarding.password_rejected = false;
+        self.onboarding.link_open = false;
+        self.onboarding.link_error = None;
+        self.last_refresh = None;
+        self.screen = Screen::Lobby;
+        vec![UiCommand::RefreshRooms]
+    }
+
+    fn join_room(&mut self, room: String) -> Vec<UiCommand> {
+        if !matches!(self.screen, Screen::Lobby) || room.trim().is_empty() {
+            return Vec::new();
+        }
         let mut commands = Vec::new();
-        if let Some(id) = settings.input_device.clone() {
-            commands.push(UiCommand::SetInputDevice(Some(id)));
+        if !self.audio_configured {
+            if let Some(id) = self.audio.input.clone() {
+                commands.push(UiCommand::SetInputDevice(Some(id)));
+            }
+            if let Some(id) = self.audio.output.clone() {
+                commands.push(UiCommand::SetOutputDevice(Some(id)));
+            }
+            if self.audio.stream_volume != FULL_VOLUME {
+                commands.push(UiCommand::SetStreamVolume(self.audio.stream_volume));
+            }
+            if self.audio.noise != NoiseMode::default() {
+                commands.push(UiCommand::SetNoiseSuppression(self.audio.noise));
+            }
+            if let Some(threshold) = self.audio.noise_gate {
+                commands.push(UiCommand::SetNoiseGate(Some(threshold)));
+            }
+            self.audio_configured = true;
         }
-        if let Some(id) = settings.output_device.clone() {
-            commands.push(UiCommand::SetOutputDevice(Some(id)));
+        if self.lobby_voice.deafened != self.session_deafened {
+            commands.push(UiCommand::SetDeafened(self.lobby_voice.deafened));
+            self.session_deafened = self.lobby_voice.deafened;
         }
-        if self.audio.stream_volume != FULL_VOLUME {
-            commands.push(UiCommand::SetStreamVolume(self.audio.stream_volume));
-        }
-        if settings.noise_suppression != NoiseMode::default() {
-            commands.push(UiCommand::SetNoiseSuppression(settings.noise_suppression));
-        }
-        if let Some(threshold) = settings.noise_gate_db {
-            commands.push(UiCommand::SetNoiseGate(Some(threshold)));
-        }
-        if settings.muted_on_join || settings.voice_mode == VoiceMode::PushToTalk {
-            commands.push(UiCommand::SetMuted(true));
+        let desired_mic = self.lobby_voice.effective_muted(self.audio.voice_mode);
+        if desired_mic != self.session_mic_sent {
+            commands.push(UiCommand::SetMuted(desired_mic));
+            self.session_mic_sent = desired_mic;
         }
         commands.push(UiCommand::Join { room: room.clone() });
-        self.pending_save = Some(settings);
+        self.lobby_error = None;
         self.audio.open = false;
         self.screen = Screen::Connecting { room };
         commands
+    }
+
+    fn change_server(&mut self) -> Vec<UiCommand> {
+        let was_in_room = matches!(self.screen, Screen::InRoom(_) | Screen::Connecting { .. });
+        if let Screen::InRoom(room) = &self.screen {
+            self.lobby_voice = room.voice_state();
+            self.session_mic_sent = room.mic_sent;
+            self.session_deafened = room.deafened;
+        }
+        self.picker.open = false;
+        self.audio.open = false;
+        self.audio.mic_level = None;
+        self.hotkeys.capturing = None;
+        self.hotkeys.capture_error = None;
+        self.lobby_error = None;
+        self.rooms.clear();
+        self.onboarding.password_rejected = false;
+        self.onboarding.link_open = false;
+        self.onboarding.link_input.clear();
+        self.onboarding.link_error = None;
+        self.invite_copied = false;
+        self.screen = Screen::Onboarding;
+        if was_in_room {
+            vec![UiCommand::Leave]
+        } else {
+            Vec::new()
+        }
     }
 
     fn open_picker(&mut self) -> Vec<UiCommand> {
@@ -1066,7 +1370,9 @@ impl AppState {
         };
         room.ptt_held = false;
         room.ptt_release_at = None;
-        room.sync_mic(mode).into_iter().collect()
+        let commands = room.sync_mic(mode).into_iter().collect();
+        self.session_mic_sent = room.mic_sent;
+        commands
     }
 
     fn set_hotkey(&mut self, action: HotkeyAction, binding: Option<String>) {
@@ -1094,7 +1400,7 @@ impl AppState {
 
     fn cancel_connect(&mut self) -> Vec<UiCommand> {
         if matches!(self.screen, Screen::Connecting { .. }) {
-            self.screen = Screen::Login;
+            self.screen = Screen::Lobby;
             vec![UiCommand::Leave]
         } else {
             Vec::new()
@@ -1104,8 +1410,11 @@ impl AppState {
     fn leave(&mut self) -> Vec<UiCommand> {
         self.picker.open = false;
         self.audio.mic_level = None;
-        if matches!(self.screen, Screen::InRoom(_)) {
-            self.screen = Screen::Login;
+        if let Screen::InRoom(room) = &self.screen {
+            self.lobby_voice = room.voice_state();
+            self.session_mic_sent = room.mic_sent;
+            self.session_deafened = room.deafened;
+            self.screen = Screen::Lobby;
             vec![UiCommand::Leave]
         } else {
             Vec::new()
@@ -1121,14 +1430,28 @@ impl AppState {
         }
         state.reset_for_room(room.clone());
         state.status = ConnectionStatus::Connecting;
-        self.form.room = room.clone();
-        self.pending_save = Some(self.settings_snapshot());
         vec![UiCommand::Join { room }]
     }
 
     pub fn apply_event(&mut self, event: UiEvent) {
         match event {
-            UiEvent::RoomsUpdated(rooms) => self.rooms = rooms,
+            UiEvent::RoomsUpdated(rooms) => {
+                if !matches!(self.screen, Screen::Onboarding) {
+                    self.rooms = rooms;
+                    self.lobby_error = None;
+                    if let Some((server, password)) = self.pending_password_save.take() {
+                        self.saved_credential = Some((server.clone(), password.clone()));
+                        self.pending_credential_ops
+                            .push(CredentialOp::Store { server, password });
+                    }
+                }
+            }
+            UiEvent::RoomsFailed { message } => {
+                if matches!(self.screen, Screen::Lobby | Screen::Connecting { .. }) {
+                    self.lobby_error = Some(message);
+                }
+            }
+            UiEvent::InviteRejected => self.on_invite_rejected(),
             UiEvent::AudioDevicesUpdated {
                 inputs, outputs, ..
             } => {
@@ -1145,8 +1468,19 @@ impl AppState {
             UiEvent::Failed { message } => {
                 self.picker.open = false;
                 self.audio.mic_level = None;
-                if !matches!(self.screen, Screen::Login) {
-                    self.screen = Screen::Error { message };
+                match &self.screen {
+                    Screen::Connecting { .. } => {
+                        self.lobby_error = Some(message);
+                        self.screen = Screen::Lobby;
+                    }
+                    Screen::InRoom(room) => {
+                        self.lobby_voice = room.voice_state();
+                        self.session_mic_sent = room.mic_sent;
+                        self.session_deafened = room.deafened;
+                        self.lobby_error = Some(message);
+                        self.screen = Screen::Lobby;
+                    }
+                    Screen::Onboarding | Screen::Lobby => {}
                 }
             }
             UiEvent::MicLevel {
@@ -1163,8 +1497,17 @@ impl AppState {
             UiEvent::Left => {
                 self.picker.open = false;
                 self.audio.mic_level = None;
-                if matches!(self.screen, Screen::InRoom(_) | Screen::Connecting { .. }) {
-                    self.screen = Screen::Login;
+                match &self.screen {
+                    Screen::InRoom(room) => {
+                        self.lobby_voice = room.voice_state();
+                        self.session_mic_sent = room.mic_sent;
+                        self.session_deafened = room.deafened;
+                        self.screen = Screen::Lobby;
+                    }
+                    Screen::Connecting { .. } => {
+                        self.screen = Screen::Lobby;
+                    }
+                    Screen::Onboarding | Screen::Lobby => {}
                 }
             }
             other => {
@@ -1173,6 +1516,34 @@ impl AppState {
                 }
             }
         }
+    }
+
+    fn on_invite_rejected(&mut self) {
+        self.picker.open = false;
+        self.audio.open = false;
+        self.audio.mic_level = None;
+        if matches!(self.screen, Screen::Onboarding) {
+            return;
+        }
+        if matches!(self.screen, Screen::InRoom(_) | Screen::Connecting { .. }) {
+            self.pending_commands.push(UiCommand::Leave);
+        }
+        self.rooms.clear();
+        self.lobby_error = None;
+        self.pending_password_save = None;
+        self.saved_credential = None;
+        self.active_password.clear();
+        self.form.invite_code.clear();
+        self.onboarding.password_rejected = true;
+        self.onboarding.link_pasted_server = None;
+        self.onboarding.link_error = None;
+        self.invite_copied = false;
+        let server = self.form.server_url.trim().to_owned();
+        if !server.is_empty() {
+            self.pending_credential_ops
+                .push(CredentialOp::Forget { server });
+        }
+        self.screen = Screen::Onboarding;
     }
 
     fn on_joined(
@@ -1187,9 +1558,12 @@ impl AppState {
                     room,
                     local_identity,
                     participants,
-                    self.form.muted_on_join,
+                    self.lobby_voice,
                     self.audio.voice_mode,
                 );
+                self.session_mic_sent = state.mic_sent;
+                self.session_deafened = state.deafened;
+                self.lobby_error = None;
                 self.screen = Screen::InRoom(Box::new(state));
                 self.last_refresh = None;
             }
@@ -1202,7 +1576,7 @@ impl AppState {
                 state.status = ConnectionStatus::Connected;
                 state.share = ShareState::default();
             }
-            Screen::Login | Screen::Error { .. } => {}
+            Screen::Onboarding | Screen::Lobby => {}
         }
     }
 }
@@ -1231,6 +1605,8 @@ fn apply_room_event(state: &mut RoomState, event: UiEvent) {
         UiEvent::Joined { .. }
         | UiEvent::Left
         | UiEvent::Failed { .. }
+        | UiEvent::InviteRejected
+        | UiEvent::RoomsFailed { .. }
         | UiEvent::RoomsUpdated(_)
         | UiEvent::CaptureTargetsUpdated(_)
         | UiEvent::MicLevel { .. }
@@ -1265,7 +1641,7 @@ mod tests {
 
     #[test]
     fn stream_volume_applies_while_moving_and_saves_when_asked() {
-        let mut state = AppState::new(&valid_settings());
+        let mut state = AppState::new(&valid_settings(), None);
         assert_eq!(state.audio.stream_volume, FULL_VOLUME);
         assert_eq!(
             state.handle_action(UserAction::SetStreamVolume(40)),
@@ -1281,15 +1657,15 @@ mod tests {
         let saved = state.take_pending_save().unwrap();
         assert_eq!(saved.stream_volume, Some(40));
 
-        let mut restored = AppState::new(&saved);
-        restored.form.invite_code = "segredo".to_owned();
-        let commands = restored.handle_action(UserAction::SubmitLogin);
+        let mut restored = AppState::new(&saved, Some("segredo".to_owned()));
+        assert_eq!(restored.screen, Screen::Lobby);
+        let commands = restored.handle_action(UserAction::JoinRoom("geral".to_owned()));
         assert!(commands.contains(&UiCommand::SetStreamVolume(40)));
     }
 
     #[test]
-    fn noise_gate_applies_without_saving_then_saves_and_restores_on_login() {
-        let mut state = AppState::new(&valid_settings());
+    fn noise_gate_applies_without_saving_then_saves_and_restores_on_join() {
+        let mut state = AppState::new(&valid_settings(), None);
         assert_eq!(state.audio.noise_gate, None);
         assert_eq!(
             state.handle_action(UserAction::SetNoiseGate(Some(-45))),
@@ -1305,14 +1681,12 @@ mod tests {
         let saved = state.take_pending_save().unwrap();
         assert_eq!(saved.noise_gate_db, Some(-45));
 
-        let mut restored = AppState::new(&saved);
-        restored.form.invite_code = "segredo".to_owned();
-        let commands = restored.handle_action(UserAction::SubmitLogin);
+        let mut restored = AppState::new(&saved, Some("segredo".to_owned()));
+        let commands = restored.handle_action(UserAction::JoinRoom("geral".to_owned()));
         assert!(commands.contains(&UiCommand::SetNoiseGate(Some(-45))));
 
-        let mut off = AppState::new(&valid_settings());
-        off.form.invite_code = "segredo".to_owned();
-        let commands = off.handle_action(UserAction::SubmitLogin);
+        let mut off = AppState::new(&valid_settings(), Some("segredo".to_owned()));
+        let commands = off.handle_action(UserAction::JoinRoom("geral".to_owned()));
         assert!(
             !commands
                 .iter()
@@ -1324,7 +1698,7 @@ mod tests {
     fn mic_level_follows_events_and_clears_on_leave_and_mode_change() {
         let mut settings = valid_settings();
         settings.noise_suppression = NoiseMode::Enhanced;
-        let mut state = AppState::new(&settings);
+        let mut state = AppState::new(&settings, None);
         state.form.invite_code = "segredo".to_owned();
         let level = UiEvent::MicLevel {
             level_db: -38,
@@ -1369,7 +1743,7 @@ mod tests {
 
     #[test]
     fn maximum_mode_shows_the_mic_level_and_is_sent_and_saved() {
-        let mut state = AppState::new(&valid_settings());
+        let mut state = AppState::new(&valid_settings(), None);
         state.form.invite_code = "segredo".to_owned();
         in_room(&mut state);
         assert_eq!(
@@ -1391,8 +1765,8 @@ mod tests {
     }
 
     #[test]
-    fn noise_mode_is_sent_saved_and_restored_on_login() {
-        let mut state = AppState::new(&valid_settings());
+    fn noise_mode_is_sent_saved_and_restored_on_join() {
+        let mut state = AppState::new(&valid_settings(), None);
         assert_eq!(
             state.handle_action(UserAction::SelectNoiseMode(NoiseMode::Enhanced)),
             vec![UiCommand::SetNoiseSuppression(NoiseMode::Enhanced)]
@@ -1405,9 +1779,8 @@ mod tests {
         let saved = state.take_pending_save().unwrap();
         assert_eq!(saved.noise_suppression, NoiseMode::Enhanced);
 
-        let mut restored = AppState::new(&saved);
-        restored.form.invite_code = "segredo".to_owned();
-        let commands = restored.handle_action(UserAction::SubmitLogin);
+        let mut restored = AppState::new(&saved, Some("segredo".to_owned()));
+        let commands = restored.handle_action(UserAction::JoinRoom("geral".to_owned()));
         assert!(commands.contains(&UiCommand::SetNoiseSuppression(NoiseMode::Enhanced)));
     }
 
@@ -1428,7 +1801,7 @@ mod tests {
     }
 
     fn state_with_code() -> AppState {
-        let mut state = AppState::new(&valid_settings());
+        let mut state = AppState::new(&valid_settings(), None);
         state.form.invite_code = "segredo".to_owned();
         state
     }
@@ -1465,7 +1838,10 @@ mod tests {
     }
 
     fn in_room(state: &mut AppState) {
-        state.handle_action(UserAction::SubmitLogin);
+        if matches!(state.screen, Screen::Onboarding) {
+            state.handle_action(UserAction::SubmitOnboarding);
+        }
+        state.handle_action(UserAction::JoinRoom("geral".to_owned()));
         state.apply_event(UiEvent::Joined {
             room: "geral".to_owned(),
             local_identity: "pedro".to_owned(),
@@ -1493,23 +1869,25 @@ mod tests {
             form.errors().display_name.as_deref(),
             Some("Informe seu nome.")
         );
-        assert!(form.errors().room.is_none());
+        assert!(form.errors().server_url.is_none());
 
         let mut form = state_with_code().form;
         form.display_name = "a".repeat(33);
         assert!(form.errors().display_name.is_some());
 
+        // LoginForm::errors validates only display_name and server_url (no room or old code).
         let mut form = state_with_code().form;
-        form.room = "Sala Grande".to_owned();
-        assert!(form.errors().room.is_some());
-        form.room = String::new();
-        assert_eq!(form.errors().room.as_deref(), Some("Informe a sala."));
+        form.invite_code = String::new();
+        assert!(form.is_valid());
 
-        let mut form = state_with_code().form;
-        form.invite_code = "   ".to_owned();
-        assert!(form.errors().invite_code.is_some());
-
-        for bad in ["", "localhost:8080", "ftp://x", "http://", "http://a b"] {
+        for bad in [
+            "",
+            "localhost:8080",
+            "ftp://x",
+            "http://",
+            "http:///x",
+            "http://a b",
+        ] {
             let mut form = state_with_code().form;
             form.server_url = bad.to_owned();
             assert!(form.errors().server_url.is_some(), "{bad:?}");
@@ -1527,16 +1905,26 @@ mod tests {
 
     #[test]
     fn invalid_form_does_not_submit() {
-        let mut state = AppState::new(&valid_settings());
-        assert!(state.handle_action(UserAction::SubmitLogin).is_empty());
-        assert_eq!(state.screen, Screen::Login);
+        let mut state = AppState::new(&valid_settings(), None);
+        state.form.display_name = String::new();
+        assert!(state.handle_action(UserAction::SubmitOnboarding).is_empty());
+        assert_eq!(state.screen, Screen::Onboarding);
         assert!(state.take_pending_save().is_none());
     }
 
     #[test]
-    fn join_flow_goes_login_connecting_in_room() {
+    fn join_flow_goes_onboarding_lobby_connecting_in_room() {
         let mut state = state_with_code();
-        let commands = state.handle_action(UserAction::SubmitLogin);
+        assert_eq!(state.screen, Screen::Onboarding);
+        assert_eq!(
+            state.handle_action(UserAction::SubmitOnboarding),
+            vec![UiCommand::RefreshRooms]
+        );
+        assert_eq!(state.screen, Screen::Lobby);
+        assert_eq!(state.take_pending_save(), Some(valid_settings()));
+        assert!(state.take_pending_save().is_none());
+
+        let commands = state.handle_action(UserAction::JoinRoom("geral".to_owned()));
         assert_eq!(
             commands,
             vec![UiCommand::Join {
@@ -1549,8 +1937,6 @@ mod tests {
                 room: "geral".to_owned()
             }
         );
-        assert_eq!(state.take_pending_save(), Some(valid_settings()));
-        assert!(state.take_pending_save().is_none());
 
         state.apply_event(UiEvent::Joined {
             room: "geral".to_owned(),
@@ -1567,8 +1953,9 @@ mod tests {
     #[test]
     fn muted_on_join_sends_mute_first_and_starts_muted() {
         let mut state = state_with_code();
-        state.form.muted_on_join = true;
-        let commands = state.handle_action(UserAction::SubmitLogin);
+        state.muted_on_join = true;
+        state.handle_action(UserAction::SubmitOnboarding);
+        let commands = state.handle_action(UserAction::JoinRoom("geral".to_owned()));
         assert_eq!(
             commands,
             vec![
@@ -1587,27 +1974,21 @@ mod tests {
     }
 
     #[test]
-    fn failure_shows_error_and_retry_keeps_fields() {
+    fn failure_returns_to_lobby_with_error_and_keeps_fields() {
         let mut state = state_with_code();
-        state.handle_action(UserAction::SubmitLogin);
+        state.handle_action(UserAction::SubmitOnboarding);
+        state.handle_action(UserAction::JoinRoom("geral".to_owned()));
         state.apply_event(UiEvent::Failed {
             message: "sem rede".to_owned(),
         });
-        assert_eq!(
-            state.screen,
-            Screen::Error {
-                message: "sem rede".to_owned()
-            }
-        );
-        state.handle_action(UserAction::Retry);
-        assert_eq!(state.screen, Screen::Login);
+        assert_eq!(state.screen, Screen::Lobby);
+        assert_eq!(state.lobby_error.as_deref(), Some("sem rede"));
         assert_eq!(state.form.display_name, "Pedro");
-        assert_eq!(state.form.invite_code, "segredo");
-        assert_eq!(state.form.room, "geral");
+        assert_eq!(state.credentials().invite_code, "segredo");
     }
 
     #[test]
-    fn stale_events_are_ignored_on_login() {
+    fn stale_events_are_ignored_on_onboarding() {
         let mut state = state_with_code();
         state.apply_event(UiEvent::Failed {
             message: "x".to_owned(),
@@ -1617,33 +1998,40 @@ mod tests {
             local_identity: "pedro".to_owned(),
             participants: vec![],
         });
-        assert_eq!(state.screen, Screen::Login);
+        state.apply_event(UiEvent::RoomsUpdated(vec![RoomSummary {
+            name: "geral".to_owned(),
+            participants: vec![],
+        }]));
+        assert_eq!(state.screen, Screen::Onboarding);
+        assert!(state.rooms.is_empty());
+        assert!(state.take_credential_ops().is_empty());
     }
 
     #[test]
-    fn cancel_connect_returns_to_login_and_leaves() {
+    fn cancel_connect_returns_to_lobby_and_leaves() {
         let mut state = state_with_code();
-        state.handle_action(UserAction::SubmitLogin);
+        state.handle_action(UserAction::SubmitOnboarding);
+        state.handle_action(UserAction::JoinRoom("geral".to_owned()));
         assert_eq!(
             state.handle_action(UserAction::CancelConnect),
             vec![UiCommand::Leave]
         );
-        assert_eq!(state.screen, Screen::Login);
+        assert_eq!(state.screen, Screen::Lobby);
     }
 
     #[test]
-    fn leave_and_left_event_return_to_login() {
+    fn leave_and_left_event_return_to_lobby() {
         let mut state = state_with_code();
         in_room(&mut state);
         assert_eq!(
             state.handle_action(UserAction::Leave),
             vec![UiCommand::Leave]
         );
-        assert_eq!(state.screen, Screen::Login);
+        assert_eq!(state.screen, Screen::Lobby);
 
         in_room(&mut state);
         state.apply_event(UiEvent::Left);
-        assert_eq!(state.screen, Screen::Login);
+        assert_eq!(state.screen, Screen::Lobby);
     }
 
     #[test]
@@ -1746,11 +2134,7 @@ mod tests {
         assert!(current.chat.messages.is_empty());
         assert!(current.participants.is_empty());
         assert_eq!(current.status, ConnectionStatus::Connecting);
-        assert_eq!(state.form.room, "jogos");
-        assert_eq!(
-            state.take_pending_save().map(|s| s.last_room),
-            Some("jogos".to_owned())
-        );
+        assert!(state.take_pending_save().is_none());
 
         assert!(
             state
@@ -1935,6 +2319,7 @@ mod tests {
     #[test]
     fn rooms_updated_replaces_the_list() {
         let mut state = state_with_code();
+        state.handle_action(UserAction::SubmitOnboarding);
         let summary = |name: &str| RoomSummary {
             name: name.to_owned(),
             participants: vec![],
@@ -1946,11 +2331,31 @@ mod tests {
     }
 
     #[test]
-    fn refresh_is_driven_by_elapsed_time_only_in_room() {
+    fn refresh_runs_in_lobby_and_in_room_only() {
         let mut state = state_with_code();
         let start = Instant::now();
         assert!(state.poll_refresh(start).is_none());
-        in_room(&mut state);
+
+        state.handle_action(UserAction::SubmitOnboarding);
+        assert_eq!(state.poll_refresh(start), Some(UiCommand::RefreshRooms));
+        assert!(state.poll_refresh(start + Duration::from_secs(2)).is_none());
+        assert_eq!(
+            state.poll_refresh(start + ROOMS_REFRESH_INTERVAL),
+            Some(UiCommand::RefreshRooms)
+        );
+
+        state.handle_action(UserAction::JoinRoom("geral".to_owned()));
+        assert!(
+            state
+                .poll_refresh(start + ROOMS_REFRESH_INTERVAL * 2)
+                .is_none()
+        );
+
+        state.apply_event(UiEvent::Joined {
+            room: "geral".to_owned(),
+            local_identity: "pedro".to_owned(),
+            participants: vec![person("ana")],
+        });
         assert_eq!(state.poll_refresh(start), Some(UiCommand::RefreshRooms));
         assert!(state.poll_refresh(start).is_none());
         assert!(state.poll_refresh(start + Duration::from_secs(2)).is_none());
@@ -2026,23 +2431,29 @@ mod tests {
     fn device_choice_works_inside_a_room_and_is_kept_when_switching_rooms() {
         let mut state = state_with_code();
         in_room(&mut state);
+        assert_eq!(state.audio.output_label(), DEFAULT_DEVICE_LABEL);
         assert_eq!(
             state.handle_action(UserAction::SelectOutputDevice(Some("o1".to_owned()))),
             vec![UiCommand::SetOutputDevice(Some("o1".to_owned()))]
         );
-        state.take_pending_save();
+        assert_eq!(
+            state.take_pending_save().unwrap().output_device.as_deref(),
+            Some("o1")
+        );
         state.handle_action(UserAction::SwitchRoom("jogos".to_owned()));
-        let saved = state.take_pending_save().unwrap();
-        assert_eq!(saved.output_device.as_deref(), Some("o1"));
-        assert_eq!(saved.last_room, "jogos");
+        assert_eq!(room(&state).room, "jogos");
+        assert_eq!(state.audio.output.as_deref(), Some("o1"));
     }
 
     #[test]
     fn audio_devices_updated_replaces_the_lists_and_ignores_the_backend_selection() {
-        let mut state = AppState::new(&Settings {
-            input_device: Some("m1".to_owned()),
-            ..valid_settings()
-        });
+        let mut state = AppState::new(
+            &Settings {
+                input_device: Some("m1".to_owned()),
+                ..valid_settings()
+            },
+            None,
+        );
         state.apply_event(devices_event(&["m1", "m2"], &["o1"]));
         assert_eq!(state.audio.inputs, vec![mic("m1"), mic("m2")]);
         assert_eq!(state.audio.outputs, vec![mic("o1")]);
@@ -2050,7 +2461,7 @@ mod tests {
         assert_eq!(state.audio.inputs, vec![mic("m3")]);
         assert!(state.audio.outputs.is_empty());
         assert_eq!(state.audio.input.as_deref(), Some("m1"));
-        assert_eq!(state.screen, Screen::Login);
+        assert_eq!(state.screen, Screen::Onboarding);
     }
 
     #[test]
@@ -2064,10 +2475,13 @@ mod tests {
 
     #[test]
     fn selected_label_covers_default_present_missing_and_not_loaded() {
-        let mut state = AppState::new(&Settings {
-            input_device: Some("m1".to_owned()),
-            ..valid_settings()
-        });
+        let mut state = AppState::new(
+            &Settings {
+                input_device: Some("m1".to_owned()),
+                ..valid_settings()
+            },
+            None,
+        );
         assert_eq!(state.audio.output_label(), DEFAULT_DEVICE_LABEL);
         assert_eq!(state.audio.input_label(), LOADING_DEVICE_LABEL);
 
@@ -2083,16 +2497,24 @@ mod tests {
     }
 
     #[test]
-    fn login_sends_saved_devices_before_mute_and_join_and_closes_settings() {
-        let mut state = AppState::new(&Settings {
-            input_device: Some("m1".to_owned()),
-            output_device: Some("o1".to_owned()),
-            muted_on_join: true,
-            ..valid_settings()
-        });
+    fn first_join_configures_devices_once_before_mute_and_join_and_closes_settings() {
+        let mut state = AppState::new(
+            &Settings {
+                input_device: Some("m1".to_owned()),
+                output_device: Some("o1".to_owned()),
+                muted_on_join: true,
+                ..valid_settings()
+            },
+            None,
+        );
         state.form.invite_code = "segredo".to_owned();
         state.handle_action(UserAction::OpenSettings);
-        let commands = state.handle_action(UserAction::SubmitLogin);
+        state.handle_action(UserAction::SubmitOnboarding);
+        let saved = state.take_pending_save().unwrap();
+        assert_eq!(saved.input_device.as_deref(), Some("m1"));
+        assert_eq!(saved.output_device.as_deref(), Some("o1"));
+
+        let commands = state.handle_action(UserAction::JoinRoom("geral".to_owned()));
         assert_eq!(
             commands,
             vec![
@@ -2105,17 +2527,33 @@ mod tests {
             ]
         );
         assert!(!state.audio.open);
-        let saved = state.take_pending_save().unwrap();
-        assert_eq!(saved.input_device.as_deref(), Some("m1"));
-        assert_eq!(saved.output_device.as_deref(), Some("o1"));
+
+        state.apply_event(UiEvent::Joined {
+            room: "geral".to_owned(),
+            local_identity: "pedro".to_owned(),
+            participants: vec![],
+        });
+        state.handle_action(UserAction::Leave);
+
+        // Second room join must not repeat device/audio setup commands.
+        let second_commands = state.handle_action(UserAction::JoinRoom("jogos".to_owned()));
+        assert_eq!(
+            second_commands,
+            vec![UiCommand::Join {
+                room: "jogos".to_owned()
+            }]
+        );
     }
 
     #[test]
     fn saved_device_choices_load_from_settings() {
-        let state = AppState::new(&Settings {
-            input_device: Some("m1".to_owned()),
-            ..valid_settings()
-        });
+        let state = AppState::new(
+            &Settings {
+                input_device: Some("m1".to_owned()),
+                ..valid_settings()
+            },
+            None,
+        );
         assert_eq!(state.audio.input.as_deref(), Some("m1"));
         assert_eq!(state.audio.output, None);
     }
@@ -2324,7 +2762,7 @@ mod tests {
         settings.mute_hotkey = Some("control+KeyM".to_owned());
         settings.deafen_hotkey = Some("control+KeyD".to_owned());
         settings.ptt_hotkey = Some("F9".to_owned());
-        let mut state = AppState::new(&settings);
+        let mut state = AppState::new(&settings, None);
         assert_eq!(
             state.hotkeys.binding(HotkeyAction::ToggleMute),
             Some("control+KeyM")
@@ -2376,7 +2814,7 @@ mod tests {
 
     #[test]
     fn setting_removing_and_deduplicating_hotkeys_updates_state_and_failures() {
-        let mut state = AppState::new(&valid_settings());
+        let mut state = AppState::new(&valid_settings(), None);
         state.set_hotkey_failures(vec![HotkeyAction::ToggleMute, HotkeyAction::ToggleDeafen]);
         state.handle_action(UserAction::StartHotkeyCapture(HotkeyAction::ToggleMute));
         state.handle_action(UserAction::RejectHotkey("antigo".to_owned()));
@@ -2487,13 +2925,15 @@ mod tests {
     #[test]
     fn mute_and_deafen_cues_cover_all_transitions_and_skip_ignored_mute_and_join() {
         let mut state = state_with_code();
-        state.form.muted_on_join = true;
-        let login_cmds = state.handle_action(UserAction::SubmitLogin);
+        state.muted_on_join = true;
+        let onboarding_cmds = state.handle_action(UserAction::SubmitOnboarding);
         assert!(
-            !login_cmds
+            !onboarding_cmds
                 .iter()
                 .any(|c| matches!(c, UiCommand::PlayCue(_)))
         );
+        let join_cmds = state.handle_action(UserAction::JoinRoom("geral".to_owned()));
+        assert!(!join_cmds.iter().any(|c| matches!(c, UiCommand::PlayCue(_))));
         state.apply_event(UiEvent::Joined {
             room: "geral".to_owned(),
             local_identity: "pedro".to_owned(),
@@ -2537,7 +2977,7 @@ mod tests {
         let mut settings = valid_settings();
         settings.voice_mode = VoiceMode::PushToTalk;
         settings.ptt_hotkey = Some("control+Space".to_owned());
-        let mut state = AppState::new(&settings);
+        let mut state = AppState::new(&settings, None);
         state.form.invite_code = "segredo".to_owned();
         in_room(&mut state);
         state.take_pending_save();
@@ -2545,13 +2985,13 @@ mod tests {
     }
 
     #[test]
-    fn login_in_push_to_talk_sends_single_mute_and_starts_unmuted_in_ui() {
+    fn join_from_lobby_in_push_to_talk_sends_single_mute_and_starts_unmuted_in_ui() {
         let mut settings = valid_settings();
         settings.voice_mode = VoiceMode::PushToTalk;
-        let mut state = AppState::new(&settings);
-        state.form.invite_code = "segredo".to_owned();
+        let mut state = AppState::new(&settings, Some("segredo".to_owned()));
+        assert_eq!(state.screen, Screen::Lobby);
         assert_eq!(
-            state.handle_action(UserAction::SubmitLogin),
+            state.handle_action(UserAction::JoinRoom("geral".to_owned())),
             vec![
                 UiCommand::SetMuted(true),
                 UiCommand::Join {
@@ -2567,13 +3007,15 @@ mod tests {
         assert!(!room(&state).muted);
         assert!(room(&state).mic_sent);
 
-        let mut both = AppState::new(&Settings {
-            muted_on_join: true,
-            ..settings
-        });
-        both.form.invite_code = "segredo".to_owned();
+        let mut both = AppState::new(
+            &Settings {
+                muted_on_join: true,
+                ..settings
+            },
+            Some("segredo".to_owned()),
+        );
         assert_eq!(
-            both.handle_action(UserAction::SubmitLogin),
+            both.handle_action(UserAction::JoinRoom("geral".to_owned())),
             vec![
                 UiCommand::SetMuted(true),
                 UiCommand::Join {
@@ -2810,7 +3252,7 @@ mod tests {
 
     #[test]
     fn close_to_tray_loads_from_settings_and_saves_on_change() {
-        let mut state = AppState::new(&valid_settings());
+        let mut state = AppState::new(&valid_settings(), None);
         assert!(state.close_to_tray);
         assert!(
             state
@@ -2821,7 +3263,7 @@ mod tests {
         let saved = state.take_pending_save().unwrap();
         assert!(!saved.close_to_tray);
 
-        let restored = AppState::new(&saved);
+        let restored = AppState::new(&saved, None);
         assert!(!restored.close_to_tray);
     }
 
@@ -2830,7 +3272,10 @@ mod tests {
         let mut state = state_with_code();
         assert_eq!(state.tray_muted(), None);
 
-        state.handle_action(UserAction::SubmitLogin);
+        state.handle_action(UserAction::SubmitOnboarding);
+        assert_eq!(state.tray_muted(), None);
+
+        state.handle_action(UserAction::JoinRoom("geral".to_owned()));
         assert_eq!(state.tray_muted(), None);
 
         state.apply_event(UiEvent::Joined {
@@ -2845,5 +3290,190 @@ mod tests {
 
         state.handle_action(UserAction::Leave);
         assert_eq!(state.tray_muted(), None);
+    }
+
+    #[test]
+    fn startup_with_saved_data_and_password_opens_lobby_without_auto_joining_last_room() {
+        let state = AppState::new(&valid_settings(), Some("segredo".to_owned()));
+        assert_eq!(state.screen, Screen::Lobby);
+        assert_eq!(state.credentials().invite_code, "segredo");
+        assert!(!state.show_password_field());
+    }
+
+    #[test]
+    fn startup_without_saved_password_or_with_invalid_settings_opens_onboarding() {
+        let no_pwd = AppState::new(&valid_settings(), None);
+        assert_eq!(no_pwd.screen, Screen::Onboarding);
+        assert!(no_pwd.show_password_field());
+
+        let no_name = AppState::new(
+            &Settings {
+                display_name: String::new(),
+                ..valid_settings()
+            },
+            Some("segredo".to_owned()),
+        );
+        assert_eq!(no_name.screen, Screen::Onboarding);
+        assert!(!no_name.show_password_field());
+    }
+
+    #[test]
+    fn rejected_password_returns_to_onboarding_shows_password_field_and_forgets_credential() {
+        let mut state = AppState::new(&valid_settings(), Some("antiga".to_owned()));
+        assert_eq!(state.screen, Screen::Lobby);
+
+        // Reject on RefreshRooms in Lobby.
+        state.apply_event(UiEvent::InviteRejected);
+        assert_eq!(state.screen, Screen::Onboarding);
+        assert!(state.onboarding.password_rejected);
+        assert!(state.show_password_field());
+        assert_eq!(
+            state.take_credential_ops(),
+            vec![CredentialOp::Forget {
+                server: "http://localhost:8080".to_owned()
+            }]
+        );
+        assert!(state.take_pending_commands().is_empty());
+
+        // Enter wrong password and get rejected while joining a room; must NOT save on submit
+        // and must leave cleanly + forget on rejection.
+        state.form.invite_code = "errada".to_owned();
+        state.handle_action(UserAction::SubmitOnboarding);
+        assert!(state.take_credential_ops().is_empty());
+        state.handle_action(UserAction::JoinRoom("geral".to_owned()));
+        state.apply_event(UiEvent::InviteRejected);
+        assert_eq!(state.screen, Screen::Onboarding);
+        assert!(state.show_password_field());
+        assert_eq!(state.take_pending_commands(), vec![UiCommand::Leave]);
+        assert!(state.take_credential_ops().contains(&CredentialOp::Forget {
+            server: "http://localhost:8080".to_owned()
+        }));
+
+        // Correct password is only persisted once RoomsUpdated confirms it.
+        state.form.invite_code = "certa".to_owned();
+        state.handle_action(UserAction::SubmitOnboarding);
+        assert!(state.take_credential_ops().is_empty());
+        state.apply_event(UiEvent::RoomsUpdated(vec![]));
+        assert_eq!(
+            state.take_credential_ops(),
+            vec![CredentialOp::Store {
+                server: "http://localhost:8080".to_owned(),
+                password: "certa".to_owned(),
+            }]
+        );
+    }
+
+    #[test]
+    fn paste_invite_link_fills_server_and_password_preserving_name() {
+        let mut state = AppState::new(&Settings::default(), None);
+        let link = crate::invite::format("https://voz.amigos.example", "café & 123");
+
+        state.handle_action(UserAction::ToggleInviteLink);
+        assert!(state.onboarding.link_open);
+        state.handle_action(UserAction::PasteInviteLink(link.clone()));
+        assert_eq!(state.form.server_url, "https://voz.amigos.example");
+        assert_eq!(state.form.invite_code, "café & 123");
+        assert_eq!(state.form.display_name, "");
+        assert!(!state.show_password_field());
+        assert!(!state.onboarding.link_open);
+
+        // Editing server URL afterwards reveals password field again.
+        state.form.server_url = "https://outro.example".to_owned();
+        assert!(state.show_password_field());
+
+        // Existing display name is preserved when pasting another invite link.
+        state.form.display_name = "Maria".to_owned();
+        state.handle_action(UserAction::PasteInviteLink(link));
+        assert_eq!(state.form.display_name, "Maria");
+
+        // A link without password leaves password field visible.
+        state.handle_action(UserAction::PasteInviteLink(
+            "zenha://entrar?servidor=https%3A%2F%2Fsem-senha.example".to_owned(),
+        ));
+        assert_eq!(state.form.server_url, "https://sem-senha.example");
+        assert!(state.show_password_field());
+    }
+
+    #[test]
+    fn copy_invite_link_uses_current_password_and_change_server_keeps_fields() {
+        let mut state = AppState::new(&valid_settings(), Some("segredo-salvo".to_owned()));
+        state.handle_action(UserAction::OpenSettings);
+        state.handle_action(UserAction::CopyInviteLink);
+        assert!(state.invite_copied);
+        assert_eq!(
+            crate::invite::parse(&state.invite_link()),
+            Some(crate::invite::Invite {
+                server: "http://localhost:8080".to_owned(),
+                password: "segredo-salvo".to_owned(),
+            })
+        );
+
+        in_room(&mut state);
+        assert_eq!(
+            state.handle_action(UserAction::ChangeServer),
+            vec![UiCommand::Leave]
+        );
+        assert_eq!(state.screen, Screen::Onboarding);
+        assert!(!state.invite_copied);
+        assert_eq!(state.form.display_name, "Pedro");
+        assert_eq!(state.form.server_url, "http://localhost:8080");
+        assert!(!state.show_password_field());
+    }
+
+    #[test]
+    fn lobby_voice_state_carries_across_rooms_and_back_on_leave() {
+        let mut state = AppState::new(&valid_settings(), Some("segredo".to_owned()));
+        assert_eq!(
+            state.handle_action(UserAction::ToggleMute),
+            vec![UiCommand::SetMuted(true), UiCommand::PlayCue(Cue::Muted)]
+        );
+        assert!(state.lobby_voice.muted);
+
+        assert_eq!(
+            state.handle_action(UserAction::JoinRoom("geral".to_owned())),
+            vec![UiCommand::Join {
+                room: "geral".to_owned()
+            }]
+        );
+        state.apply_event(UiEvent::Joined {
+            room: "geral".to_owned(),
+            local_identity: "pedro".to_owned(),
+            participants: vec![],
+        });
+        assert!(room(&state).muted);
+
+        state.handle_action(UserAction::ToggleDeafen);
+        state.handle_action(UserAction::Leave);
+        assert_eq!(state.screen, Screen::Lobby);
+        assert!(state.lobby_voice.muted);
+        assert!(state.lobby_voice.deafened);
+
+        state.handle_action(UserAction::JoinRoom("jogos".to_owned()));
+        state.apply_event(UiEvent::Joined {
+            room: "jogos".to_owned(),
+            local_identity: "pedro".to_owned(),
+            participants: vec![],
+        });
+        assert!(room(&state).deafened);
+        assert!(room(&state).muted);
+    }
+
+    #[test]
+    fn muted_on_join_setting_updates_and_saves() {
+        let mut state = AppState::new(&valid_settings(), Some("segredo".to_owned()));
+        assert!(!state.muted_on_join);
+        state.handle_action(UserAction::SetMutedOnJoin(true));
+        assert!(state.muted_on_join);
+        assert!(state.lobby_voice.muted);
+        assert!(state.take_pending_save().unwrap().muted_on_join);
+        assert_eq!(
+            state.handle_action(UserAction::JoinRoom("geral".to_owned())),
+            vec![
+                UiCommand::SetMuted(true),
+                UiCommand::Join {
+                    room: "geral".to_owned()
+                }
+            ]
+        );
     }
 }

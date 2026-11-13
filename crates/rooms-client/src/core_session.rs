@@ -215,7 +215,7 @@ impl Drop for TestFeed {
 
 fn describe(error: &SessionError) -> String {
     match error {
-        SessionError::InviteRejected => "Código de convite recusado.".to_owned(),
+        SessionError::InviteRejected => "Senha recusada pelo servidor.".to_owned(),
         SessionError::TokenServer(reason) => {
             format!("Não foi possível falar com o servidor de tokens: {reason}")
         }
@@ -331,9 +331,13 @@ impl Translator {
                 self.room = None;
                 self.local_identity.clear();
                 self.participants.clear();
-                vec![UiEvent::Failed {
-                    message: describe(&error),
-                }]
+                if matches!(error, SessionError::InviteRejected) {
+                    vec![UiEvent::InviteRejected]
+                } else {
+                    vec![UiEvent::Failed {
+                        message: describe(&error),
+                    }]
+                }
             }
             Event::ParticipantJoined(participant) => {
                 let participant = view(participant);
@@ -417,12 +421,15 @@ impl Translator {
             Event::WatchingStopped => vec![UiEvent::WatchingStopped],
             Event::CommandFailed(error) => {
                 tracing::warn!(%error, "command failed");
-                if is_share_error(&error) {
-                    vec![UiEvent::ShareFailed {
+                match &error {
+                    SessionError::InviteRejected => vec![UiEvent::InviteRejected],
+                    SessionError::TokenServer(_) => vec![UiEvent::RoomsFailed {
                         message: describe(&error),
-                    }]
-                } else {
-                    Vec::new()
+                    }],
+                    _ if is_share_error(&error) => vec![UiEvent::ShareFailed {
+                        message: describe(&error),
+                    }],
+                    _ => Vec::new(),
                 }
             }
         }
@@ -583,11 +590,36 @@ mod tests {
     #[test]
     fn errors_are_described_in_portuguese() {
         let mut translator = Translator::default();
-        let events = translator.translate(Event::Failed(SessionError::InviteRejected));
+        assert_eq!(
+            describe(&SessionError::InviteRejected),
+            "Senha recusada pelo servidor."
+        );
+        let events = translator.translate(Event::Failed(SessionError::TokenServer("500".into())));
         assert_eq!(
             events,
             vec![UiEvent::Failed {
-                message: "Código de convite recusado.".to_owned()
+                message: "Não foi possível falar com o servidor de tokens: 500".to_owned()
+            }]
+        );
+    }
+
+    #[test]
+    fn invite_rejection_and_room_refresh_errors_translate_to_ui_events() {
+        let mut translator = Translator::default();
+        assert_eq!(
+            translator.translate(Event::Failed(SessionError::InviteRejected)),
+            vec![UiEvent::InviteRejected]
+        );
+        assert_eq!(
+            translator.translate(Event::CommandFailed(SessionError::InviteRejected)),
+            vec![UiEvent::InviteRejected]
+        );
+        assert_eq!(
+            translator.translate(Event::CommandFailed(SessionError::TokenServer(
+                "offline".into()
+            ))),
+            vec![UiEvent::RoomsFailed {
+                message: "Não foi possível falar com o servidor de tokens: offline".to_owned(),
             }]
         );
     }

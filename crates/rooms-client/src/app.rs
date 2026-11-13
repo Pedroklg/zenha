@@ -8,6 +8,7 @@ use eframe::egui;
 
 use crate::chat_images::ChatImages;
 use crate::core_session::CoreSession;
+use crate::credentials;
 use crate::demo::DemoSession;
 use crate::dialogs;
 use crate::format::server_host;
@@ -18,7 +19,7 @@ use crate::hotkeys::HotkeyAction;
 #[cfg(windows)]
 use crate::settings::VoiceMode;
 use crate::settings::{self, Settings};
-use crate::state::{AppState, ChatEntry, Screen, UserAction};
+use crate::state::{AppState, ChatEntry, CredentialOp, Screen, UserAction};
 use crate::theme;
 #[cfg(windows)]
 use crate::tray::{Tray, TrayAction};
@@ -39,6 +40,7 @@ pub struct App {
     state: AppState,
     session: Box<dyn SessionPort>,
     settings_path: Option<PathBuf>,
+    is_demo: bool,
     banner: Option<&'static str>,
     renderer: views::share::VideoRenderer,
     images: ChatImages,
@@ -56,26 +58,32 @@ impl App {
     pub fn new(
         ctx: &egui::Context,
         settings: &Settings,
+        saved_password: Option<String>,
         settings_path: Option<PathBuf>,
         demo_flag: bool,
     ) -> Self {
         theme::install(ctx);
-        let (session, banner): (Box<dyn SessionPort>, _) = if demo_flag {
+        let (mut session, banner): (Box<dyn SessionPort>, _) = if demo_flag {
             (Box::new(DemoSession::new()), Some(DEMO_LABEL))
         } else {
             let ctx = ctx.clone();
             let wake = Arc::new(move || ctx.request_repaint());
             (Box::new(CoreSession::new(wake)), MEDIA_LABEL)
         };
+        let state = AppState::new(settings, saved_password);
+        if matches!(state.screen, Screen::Lobby) {
+            session.configure(state.credentials());
+        }
         let (save_sender, save_results) = channel();
         #[cfg(windows)]
         let global_keys = GlobalKeys::new(ctx);
         #[cfg(windows)]
         let tray = Tray::new(ctx);
         Self {
-            state: AppState::new(settings),
+            state,
             session,
             settings_path,
+            is_demo: demo_flag,
             banner,
             renderer: views::share::VideoRenderer::default(),
             images: ChatImages::default(),
@@ -107,6 +115,43 @@ impl App {
         }
         if let Some(command) = self.state.poll_refresh(Instant::now()) {
             self.session.send(command);
+        }
+        self.flush_state_effects();
+    }
+
+    fn send_commands(&mut self, commands: Vec<UiCommand>) {
+        if commands.is_empty() {
+            return;
+        }
+        let now = Instant::now();
+        for command in commands {
+            if matches!(command, UiCommand::RefreshRooms) {
+                self.state.mark_refreshed(now);
+            }
+            self.session.send(command);
+        }
+    }
+
+    fn flush_state_effects(&mut self) {
+        let pending = self.state.take_pending_commands();
+        self.send_commands(pending);
+        let credential_ops = self.state.take_credential_ops();
+        let pending_save = self.state.take_pending_save();
+        if self.is_demo {
+            return;
+        }
+        for op in credential_ops {
+            match op {
+                CredentialOp::Store { server, password } => {
+                    credentials::store_in_background(server, password);
+                }
+                CredentialOp::Forget { server } => {
+                    credentials::forget_in_background(server);
+                }
+            }
+        }
+        if let (Some(settings), Some(path)) = (pending_save, self.settings_path.clone()) {
+            settings::save_in_background(path, settings);
         }
     }
 
@@ -195,22 +240,19 @@ impl App {
         }
     }
 
-    fn dispatch(&mut self, actions: Vec<UserAction>) {
-        if actions.contains(&UserAction::SubmitLogin) && self.state.can_submit_login() {
+    fn dispatch(&mut self, ctx: &egui::Context, actions: Vec<UserAction>) {
+        if actions.contains(&UserAction::SubmitOnboarding) && self.state.can_submit_onboarding() {
             self.session.configure(self.state.credentials());
+        }
+        if actions.contains(&UserAction::CopyInviteLink) {
+            ctx.copy_text(self.state.invite_link());
         }
         let commands: Vec<UiCommand> = actions
             .into_iter()
             .flat_map(|action| self.state.handle_action(action))
             .collect();
-        for command in commands {
-            self.session.send(command);
-        }
-        if let (Some(settings), Some(path)) =
-            (self.state.take_pending_save(), self.settings_path.clone())
-        {
-            settings::save_in_background(path, settings);
-        }
+        self.send_commands(commands);
+        self.flush_state_effects();
     }
 }
 
@@ -228,7 +270,7 @@ impl eframe::App for App {
                 match action {
                     HotkeyAction::ToggleMute | HotkeyAction::ToggleDeafen => {
                         if pressed {
-                            self.dispatch(vec![UserAction::HotkeyPressed(action)]);
+                            self.dispatch(ctx, vec![UserAction::HotkeyPressed(action)]);
                         }
                     }
                     HotkeyAction::PushToTalk => {
@@ -256,7 +298,7 @@ impl eframe::App for App {
                         ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
                     }
                     TrayAction::ToggleMute => {
-                        self.dispatch(vec![UserAction::ToggleMute]);
+                        self.dispatch(ctx, vec![UserAction::ToggleMute]);
                     }
                     TrayAction::Quit => {
                         self.quitting = true;
@@ -276,21 +318,35 @@ impl eframe::App for App {
             views::screens::demo_banner(ui, label);
         }
 
+        let show_password = self.state.show_password_field();
         let ptt_hint = self.state.push_to_talk_hint();
         let AppState {
             screen,
             form,
+            onboarding,
+            lobby_voice,
+            lobby_error,
             rooms,
             audio,
             hotkeys,
             close_to_tray,
+            muted_on_join,
+            invite_copied,
             picker,
             ..
         } = &mut self.state;
         let renderer = &mut self.renderer;
         let images = &mut self.images;
         let mut actions = match screen {
-            Screen::Login => views::login::show(ui, form),
+            Screen::Onboarding => views::onboarding::show(ui, form, onboarding, show_password),
+            Screen::Lobby => views::room::show_lobby(
+                ui,
+                &form.display_name,
+                *lobby_voice,
+                rooms,
+                server_host(&form.server_url),
+                lobby_error.as_deref(),
+            ),
             Screen::Connecting { room } => views::screens::connecting(ui, room),
             Screen::InRoom(room) => views::room::show(
                 ui,
@@ -302,17 +358,22 @@ impl eframe::App for App {
                 audio.stream_volume,
                 ptt_hint.as_deref(),
             ),
-            Screen::Error { message } => views::screens::error(ui, message),
         };
         actions.extend(views::settings::show(
             ui.ctx(),
-            audio,
-            hotkeys,
-            *close_to_tray,
+            views::settings::SettingsView {
+                server_url: &form.server_url,
+                display_name: &form.display_name,
+                audio,
+                hotkeys,
+                close_to_tray: *close_to_tray,
+                muted_on_join: *muted_on_join,
+                invite_copied: *invite_copied,
+            },
         ));
         actions.extend(views::share::picker(ui.ctx(), picker));
         let actions = self.resolve_effects(ui.ctx(), actions);
-        self.dispatch(actions);
+        self.dispatch(ui.ctx(), actions);
         self.prune_images();
 
         if ui.ctx().input(|i| i.viewport().close_requested())

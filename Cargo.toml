@@ -25,6 +25,7 @@ futures-util = { version = "0.3", default-features = false }
 global-hotkey = "=0.10.0"
 http-body-util = "0.1"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp"] }
+keyring = { version = "=3.6.3", default-features = false, features = ["windows-native"] }
 ndarray = "0.15"
 nnnoiseless = { version = "0.5.2", default-features = false }
 livekit = { version = "=0.10.1", default-features = false, features = ["native", "rustls-tls-webpki-roots"] }

@@ -7,7 +7,9 @@ use super::chat;
 use super::share::VideoRenderer;
 use crate::chat_images::ChatImages;
 use crate::icons;
-use crate::state::{ConnectionStatus, LocalShare, RoomState, UserAction, WatchState};
+use crate::state::{
+    ConnectionStatus, LobbyVoiceState, LocalShare, RoomState, UserAction, WatchState,
+};
 use crate::theme;
 use crate::ui_model::ParticipantView;
 
@@ -44,7 +46,23 @@ pub fn show(
         return actions;
     }
 
-    sidebar(ui, state, rooms, server_host, ptt_hint, &mut actions);
+    let local_name = local_display_name(&state.participants, &state.local_identity);
+    let user = SidebarUser {
+        name: local_name,
+        status_label: ptt_hint.unwrap_or_else(|| state.status.label()),
+        status_connected: ptt_hint.is_none() && state.status == ConnectionStatus::Connected,
+        muted: state.muted,
+        deafened: state.deafened,
+    };
+    sidebar(
+        ui,
+        user,
+        Some(&state.room),
+        &state.participants,
+        rooms,
+        server_host,
+        &mut actions,
+    );
 
     if state.chat.open {
         actions.extend(chat::show(
@@ -65,12 +83,96 @@ pub fn show(
     actions
 }
 
-fn sidebar(
+pub fn show_lobby(
     ui: &mut egui::Ui,
-    state: &RoomState,
+    display_name: &str,
+    voice: LobbyVoiceState,
     rooms: &[RoomSummary],
     server_host: &str,
-    ptt_hint: Option<&str>,
+    error: Option<&str>,
+) -> Vec<UserAction> {
+    let mut actions = Vec::new();
+    let user = SidebarUser {
+        name: display_name.trim(),
+        status_label: "Fora de sala",
+        status_connected: false,
+        muted: voice.muted,
+        deafened: voice.deafened,
+    };
+    sidebar(ui, user, None, &[], rooms, server_host, &mut actions);
+
+    egui::Panel::top("lobby_header")
+        .exact_size(HEADER_HEIGHT)
+        .show_separator_line(false)
+        .frame(
+            egui::Frame::new()
+                .fill(theme::PANEL)
+                .inner_margin(Margin::symmetric(24, 0)),
+        )
+        .show(ui, |ui| {
+            let rect = ui.max_rect();
+            ui.allocate_ui_with_layout(rect.size(), Layout::right_to_left(Align::Center), |ui| {
+                if ui.button("Configurações").clicked() {
+                    actions.push(UserAction::OpenSettings);
+                }
+            });
+            let full = ui.clip_rect();
+            ui.painter().hline(
+                full.x_range(),
+                rect.bottom(),
+                Stroke::new(1.0, theme::BORDER),
+            );
+        });
+
+    egui::CentralPanel::default()
+        .frame(
+            egui::Frame::new()
+                .fill(theme::BG)
+                .inner_margin(Margin::same(24)),
+        )
+        .show(ui, |ui| {
+            if let Some(message) = error {
+                egui::Frame::new()
+                    .fill(theme::ERROR_BG)
+                    .stroke(Stroke::new(1.0, theme::ERROR_BORDER))
+                    .corner_radius(CornerRadius::same(8))
+                    .inner_margin(Margin::symmetric(14, 10))
+                    .show(ui, |ui| {
+                        ui.label(RichText::new(message).size(13.0).color(theme::ERROR));
+                    });
+                ui.add_space(16.0);
+            }
+            ui.allocate_ui_with_layout(
+                ui.available_size(),
+                Layout::centered_and_justified(egui::Direction::TopDown),
+                |ui| {
+                    ui.label(
+                        RichText::new("Escolha uma sala para entrar.")
+                            .size(15.0)
+                            .color(theme::TEXT_SECONDARY),
+                    );
+                },
+            );
+        });
+
+    actions
+}
+
+struct SidebarUser<'a> {
+    name: &'a str,
+    status_label: &'a str,
+    status_connected: bool,
+    muted: bool,
+    deafened: bool,
+}
+
+fn sidebar(
+    ui: &mut egui::Ui,
+    user: SidebarUser<'_>,
+    current_room: Option<&str>,
+    participants: &[ParticipantView],
+    rooms: &[RoomSummary],
+    server_host: &str,
     actions: &mut Vec<UserAction>,
 ) {
     egui::Panel::left("rooms_panel")
@@ -124,7 +226,7 @@ fn sidebar(
                     let top = ui.max_rect().top() - 12.0;
                     ui.painter()
                         .hline(full.x_range(), top, Stroke::new(1.0, theme::BORDER));
-                    user_footer(ui, state, ptt_hint, actions);
+                    user_footer(ui, user, actions);
                 });
 
             egui::CentralPanel::default()
@@ -134,22 +236,16 @@ fn sidebar(
                         .inner_margin(Margin::same(12)),
                 )
                 .show(ui, |ui| {
-                    rooms_list(ui, &state.room, &state.participants, rooms, actions);
+                    rooms_list(ui, current_room, participants, rooms, actions);
                 });
         });
 }
 
-fn user_footer(
-    ui: &mut egui::Ui,
-    state: &RoomState,
-    ptt_hint: Option<&str>,
-    actions: &mut Vec<UserAction>,
-) {
-    let local_name = local_display_name(&state.participants, &state.local_identity);
-    let avatar_colors = theme::avatar_color(&state.local_identity, true);
+fn user_footer(ui: &mut egui::Ui, user: SidebarUser<'_>, actions: &mut Vec<UserAction>) {
+    let avatar_colors = theme::avatar_color(user.name, true);
 
     ui.horizontal(|ui| {
-        theme::avatar(ui, 36.0, local_name, avatar_colors);
+        theme::avatar(ui, 36.0, user.name, avatar_colors);
         ui.add_space(4.0);
 
         let text_width = (ui.available_width() - 96.0).max(40.0);
@@ -160,53 +256,46 @@ fn user_footer(
                 ui.spacing_mut().item_spacing.y = 2.0;
                 ui.add(
                     egui::Label::new(
-                        RichText::new(local_name)
+                        RichText::new(user.name)
                             .font(theme::semibold(13.0))
                             .color(theme::TEXT),
                     )
                     .truncate(),
                 );
-                if let Some(hint) = ptt_hint {
-                    ui.add(
-                        egui::Label::new(RichText::new(hint).size(11.0).color(theme::TEXT_WEAK))
-                            .truncate(),
-                    );
+                let status_color = if user.status_connected {
+                    theme::SPEAKING
                 } else {
-                    let status_color = if state.status == ConnectionStatus::Connected {
-                        theme::SPEAKING
-                    } else {
-                        theme::TEXT_WEAK
-                    };
-                    ui.add(
-                        egui::Label::new(
-                            RichText::new(state.status.label())
-                                .size(12.0)
-                                .color(status_color),
-                        )
-                        .truncate(),
-                    );
-                }
+                    theme::TEXT_WEAK
+                };
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(user.status_label)
+                            .size(12.0)
+                            .color(status_color),
+                    )
+                    .truncate(),
+                );
             },
         );
 
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            let deafen_tip = if state.deafened {
+            let deafen_tip = if user.deafened {
                 "Ligar áudio"
             } else {
                 "Desligar áudio"
             };
-            if icons::icon_button(ui, 44.0, icons::headphones, state.deafened, deafen_tip).clicked()
+            if icons::icon_button(ui, 44.0, icons::headphones, user.deafened, deafen_tip).clicked()
             {
                 actions.push(UserAction::ToggleDeafen);
             }
 
-            let mute_tip = if state.muted {
+            let mute_tip = if user.muted {
                 "Ligar microfone"
             } else {
                 "Mutar microfone"
             };
-            let mute_resp = ui.add_enabled_ui(!state.deafened, |ui| {
-                icons::icon_button(ui, 44.0, icons::mic, state.muted, mute_tip)
+            let mute_resp = ui.add_enabled_ui(!user.deafened, |ui| {
+                icons::icon_button(ui, 44.0, icons::mic, user.muted, mute_tip)
             });
             if mute_resp.inner.clicked() {
                 actions.push(UserAction::ToggleMute);
@@ -217,7 +306,7 @@ fn user_footer(
 
 fn rooms_list(
     ui: &mut egui::Ui,
-    current: &str,
+    current: Option<&str>,
     current_participants: &[ParticipantView],
     rooms: &[RoomSummary],
     actions: &mut Vec<UserAction>,
@@ -237,10 +326,15 @@ fn rooms_list(
         .auto_shrink([false, false])
         .show(ui, |ui| {
             for summary in rooms {
-                let is_current = summary.name == current;
+                let is_current = current == Some(summary.name.as_str());
                 let row_resp = room_row(ui, &summary.name, summary.participants.len(), is_current);
                 if row_resp.clicked() && !is_current {
-                    actions.push(UserAction::SwitchRoom(summary.name.clone()));
+                    let action = if current.is_some() {
+                        UserAction::SwitchRoom(summary.name.clone())
+                    } else {
+                        UserAction::JoinRoom(summary.name.clone())
+                    };
+                    actions.push(action);
                 }
                 if !summary.participants.is_empty() {
                     ui.add_space(2.0);

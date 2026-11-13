@@ -167,6 +167,10 @@ pub enum UiEvent {
     Failed {
         message: String,
     },
+    InviteRejected,
+    RoomsFailed {
+        message: String,
+    },
     ChatReceived(ChatMessage),
     FileTransfer(FileTransferView),
     RoomsUpdated(Vec<RoomSummary>),
