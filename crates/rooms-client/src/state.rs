@@ -628,6 +628,7 @@ pub enum UserAction {
     RejectHotkey(String),
     SetHotkey(HotkeyAction, Option<String>),
     HotkeyPressed(HotkeyAction),
+    SetCloseToTray(bool),
     OpenSharePicker,
     CloseSharePicker,
     RefreshCaptureTargets,
@@ -648,6 +649,7 @@ pub struct AppState {
     pub rooms: Vec<RoomSummary>,
     pub audio: AudioState,
     pub hotkeys: HotkeyState,
+    pub close_to_tray: bool,
     pub picker: SharePicker,
     last_refresh: Option<Instant>,
     pending_save: Option<Settings>,
@@ -661,9 +663,17 @@ impl AppState {
             rooms: Vec::new(),
             audio: AudioState::from_settings(settings),
             hotkeys: HotkeyState::from_settings(settings),
+            close_to_tray: settings.close_to_tray,
             picker: SharePicker::default(),
             last_refresh: None,
             pending_save: None,
+        }
+    }
+
+    pub fn tray_muted(&self) -> Option<bool> {
+        match &self.screen {
+            Screen::InRoom(room) => Some(room.muted),
+            _ => None,
         }
     }
 
@@ -695,6 +705,7 @@ impl AppState {
             mute_hotkey: self.hotkeys.mute.clone(),
             deafen_hotkey: self.hotkeys.deafen.clone(),
             ptt_hotkey: self.hotkeys.ptt.clone(),
+            close_to_tray: self.close_to_tray,
             ..self.form.to_settings()
         }
     }
@@ -852,6 +863,11 @@ impl AppState {
                 vec![UiCommand::SetNoiseGate(threshold)]
             }
             UserAction::SaveAudioSettings => {
+                self.pending_save = Some(self.settings_snapshot());
+                Vec::new()
+            }
+            UserAction::SetCloseToTray(enabled) => {
+                self.close_to_tray = enabled;
                 self.pending_save = Some(self.settings_snapshot());
                 Vec::new()
             }
@@ -1219,6 +1235,7 @@ mod tests {
             mute_hotkey: None,
             deafen_hotkey: None,
             ptt_hotkey: None,
+            close_to_tray: true,
         }
     }
 
@@ -2755,5 +2772,43 @@ mod tests {
         assert!(va.push_to_talk(false, t0).is_empty());
         assert!(!room(&va).ptt_held);
         assert_eq!(va.poll_push_to_talk(t0), (Vec::new(), None));
+    }
+
+    #[test]
+    fn close_to_tray_loads_from_settings_and_saves_on_change() {
+        let mut state = AppState::new(&valid_settings());
+        assert!(state.close_to_tray);
+        assert!(
+            state
+                .handle_action(UserAction::SetCloseToTray(false))
+                .is_empty()
+        );
+        assert!(!state.close_to_tray);
+        let saved = state.take_pending_save().unwrap();
+        assert!(!saved.close_to_tray);
+
+        let restored = AppState::new(&saved);
+        assert!(!restored.close_to_tray);
+    }
+
+    #[test]
+    fn tray_muted_reflects_room_presence_and_mute_state() {
+        let mut state = state_with_code();
+        assert_eq!(state.tray_muted(), None);
+
+        state.handle_action(UserAction::SubmitLogin);
+        assert_eq!(state.tray_muted(), None);
+
+        state.apply_event(UiEvent::Joined {
+            room: "geral".to_owned(),
+            participants: vec![person("ana")],
+        });
+        assert_eq!(state.tray_muted(), Some(false));
+
+        state.handle_action(UserAction::ToggleMute);
+        assert_eq!(state.tray_muted(), Some(true));
+
+        state.handle_action(UserAction::Leave);
+        assert_eq!(state.tray_muted(), None);
     }
 }

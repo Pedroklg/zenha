@@ -18,6 +18,8 @@ use crate::hotkeys::HotkeyAction;
 use crate::settings::VoiceMode;
 use crate::settings::{self, Settings};
 use crate::state::{AppState, ChatEntry, Screen, UserAction};
+#[cfg(windows)]
+use crate::tray::{Tray, TrayAction};
 use crate::ui_model::{SessionPort, UiCommand};
 use crate::views;
 
@@ -42,6 +44,9 @@ pub struct App {
     save_sender: Sender<Result<PathBuf, ()>>,
     #[cfg(windows)]
     global_keys: Option<GlobalKeys>,
+    #[cfg(windows)]
+    tray: Option<Tray>,
+    quitting: bool,
     fullscreen: bool,
 }
 
@@ -62,6 +67,8 @@ impl App {
         let (save_sender, save_results) = channel();
         #[cfg(windows)]
         let global_keys = GlobalKeys::new(ctx);
+        #[cfg(windows)]
+        let tray = Tray::new(ctx);
         Self {
             state: AppState::new(settings),
             session,
@@ -73,7 +80,21 @@ impl App {
             save_sender,
             #[cfg(windows)]
             global_keys,
+            #[cfg(windows)]
+            tray,
+            quitting: false,
             fullscreen: false,
+        }
+    }
+
+    fn has_tray(&self) -> bool {
+        #[cfg(windows)]
+        {
+            self.tray.is_some()
+        }
+        #[cfg(not(windows))]
+        {
+            false
         }
     }
 
@@ -222,6 +243,28 @@ impl eframe::App for App {
         if let Some(wait) = wait {
             ctx.request_repaint_after(wait);
         }
+        #[cfg(windows)]
+        if let Some(actions) = self.tray.as_mut().map(Tray::actions) {
+            for action in actions {
+                match action {
+                    TrayAction::Open => {
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+                    }
+                    TrayAction::ToggleMute => {
+                        self.dispatch(vec![UserAction::ToggleMute]);
+                    }
+                    TrayAction::Quit => {
+                        self.quitting = true;
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                    }
+                }
+            }
+            if let Some(tray) = &mut self.tray {
+                tray.sync(self.state.tray_muted());
+            }
+        }
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
@@ -237,6 +280,7 @@ impl eframe::App for App {
             rooms,
             audio,
             hotkeys,
+            close_to_tray,
             picker,
             ..
         } = &mut self.state;
@@ -256,11 +300,27 @@ impl eframe::App for App {
             ),
             Screen::Error { message } => views::screens::error(ui, message),
         };
-        actions.extend(views::settings::show(ui.ctx(), audio, hotkeys));
+        actions.extend(views::settings::show(
+            ui.ctx(),
+            audio,
+            hotkeys,
+            *close_to_tray,
+        ));
         actions.extend(views::share::picker(ui.ctx(), picker));
         let actions = self.resolve_effects(ui.ctx(), actions);
         self.dispatch(actions);
         self.prune_images();
+
+        if ui.ctx().input(|i| i.viewport().close_requested())
+            && self.state.close_to_tray
+            && self.has_tray()
+            && !self.quitting
+        {
+            ui.ctx()
+                .send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            ui.ctx()
+                .send_viewport_cmd(egui::ViewportCommand::Visible(false));
+        }
 
         let fullscreen = self.state.is_fullscreen();
         if fullscreen != self.fullscreen {

@@ -11,12 +11,13 @@ mod global_keys;
 mod hotkeys;
 mod settings;
 mod state;
+mod tray;
 mod ui_model;
 mod views;
 
 use eframe::egui;
 
-const APP_NAME: &str = "Voice Rooms";
+pub(crate) const APP_NAME: &str = "Voice Rooms";
 
 fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()

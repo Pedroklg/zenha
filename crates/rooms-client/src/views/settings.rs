@@ -14,7 +14,12 @@ const OPEN_COLOR: egui::Color32 = egui::Color32::from_rgb(60, 180, 90);
 const CLOSED_COLOR: egui::Color32 = egui::Color32::from_rgb(130, 130, 130);
 const ERROR_COLOR: egui::Color32 = egui::Color32::from_rgb(220, 80, 80);
 
-pub fn show(ctx: &egui::Context, audio: &AudioState, hotkeys: &HotkeyState) -> Vec<UserAction> {
+pub fn show(
+    ctx: &egui::Context,
+    audio: &AudioState,
+    hotkeys: &HotkeyState,
+    close_to_tray: bool,
+) -> Vec<UserAction> {
     let mut actions = Vec::new();
     if !audio.open {
         return actions;
@@ -25,7 +30,9 @@ pub fn show(ctx: &egui::Context, audio: &AudioState, hotkeys: &HotkeyState) -> V
         .collapsible(false)
         .resizable(false)
         .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-        .show(ctx, |ui| content(ui, audio, hotkeys, &mut actions));
+        .show(ctx, |ui| {
+            content(ui, audio, hotkeys, close_to_tray, &mut actions);
+        });
     if !open {
         actions.push(UserAction::CloseSettings);
     }
@@ -36,6 +43,7 @@ fn content(
     ui: &mut egui::Ui,
     audio: &AudioState,
     hotkeys: &HotkeyState,
+    close_to_tray: bool,
     actions: &mut Vec<UserAction>,
 ) {
     ui.heading("Áudio");
@@ -115,6 +123,19 @@ fn content(
     ui.heading("Atalhos globais");
     ui.small("Funcionam com o app minimizado e com um jogo em foco.");
     hotkeys_section(ui, audio.voice_mode, hotkeys, actions);
+
+    ui.separator();
+    ui.heading("Geral");
+    let mut close = close_to_tray;
+    if ui
+        .checkbox(
+            &mut close,
+            "Fechar para a bandeja (o app continua na chamada)",
+        )
+        .changed()
+    {
+        actions.push(UserAction::SetCloseToTray(close));
+    }
 }
 
 fn hotkeys_section(

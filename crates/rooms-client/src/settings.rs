@@ -52,7 +52,7 @@ impl VoiceMode {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
     pub display_name: String,
@@ -71,6 +71,28 @@ pub struct Settings {
     pub mute_hotkey: Option<String>,
     pub deafen_hotkey: Option<String>,
     pub ptt_hotkey: Option<String>,
+    pub close_to_tray: bool,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            display_name: String::new(),
+            token_server_url: String::new(),
+            last_room: String::new(),
+            muted_on_join: false,
+            input_device: None,
+            output_device: None,
+            noise_suppression: NoiseMode::default(),
+            voice_mode: VoiceMode::default(),
+            stream_volume: None,
+            noise_gate_db: None,
+            mute_hotkey: None,
+            deafen_hotkey: None,
+            ptt_hotkey: None,
+            close_to_tray: true,
+        }
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -156,6 +178,7 @@ mod tests {
             mute_hotkey: Some("shift+control+KeyM".to_owned()),
             deafen_hotkey: Some("alt+KeyD".to_owned()),
             ptt_hotkey: Some("F9".to_owned()),
+            close_to_tray: false,
         };
         save(&path, &settings).unwrap();
         assert_eq!(load(&path), settings);
@@ -228,6 +251,23 @@ mod tests {
         assert_eq!(loaded.output_device, None);
         assert_eq!(loaded.voice_mode, VoiceMode::VoiceActivity);
         assert_eq!(loaded.ptt_hotkey, None);
+        assert!(loaded.close_to_tray);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn close_to_tray_defaults_to_true_and_round_trips_false() {
+        let dir = temp_dir("tray");
+        let path = dir.join(FILE_NAME);
+        std::fs::write(&path, r#"{"display_name":"Ana"}"#).unwrap();
+        assert!(load(&path).close_to_tray);
+
+        let settings = Settings {
+            close_to_tray: false,
+            ..Settings::default()
+        };
+        save(&path, &settings).unwrap();
+        assert!(!load(&path).close_to_tray);
         std::fs::remove_dir_all(dir).unwrap();
     }
 
