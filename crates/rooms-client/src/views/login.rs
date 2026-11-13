@@ -10,7 +10,7 @@ pub fn show(ui: &mut egui::Ui, form: &mut LoginForm) -> Vec<UserAction> {
     egui::CentralPanel::default().show(ui, |ui| {
         ui.vertical_centered(|ui| {
             ui.add_space(24.0);
-            ui.heading("Voice Rooms");
+            ui.heading("Zenha");
             ui.add_space(16.0);
             ui.scope(|ui| {
                 ui.set_max_width(380.0);

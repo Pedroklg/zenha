@@ -6,6 +6,10 @@ edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
+[[bin]]
+name = "zenha"
+path = "src/main.rs"
+
 [dependencies]
 rooms-core.workspace = true
 rooms-protocol.workspace = true

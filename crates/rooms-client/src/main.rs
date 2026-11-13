@@ -17,7 +17,7 @@ mod views;
 
 use eframe::egui;
 
-pub(crate) const APP_NAME: &str = "Voice Rooms";
+pub(crate) const APP_NAME: &str = "Zenha";
 
 fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()

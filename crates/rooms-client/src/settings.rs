@@ -3,7 +3,8 @@ use std::path::{Path, PathBuf};
 use directories::BaseDirs;
 use serde::{Deserialize, Serialize};
 
-const APP_DIR: &str = "voice-rooms";
+const APP_DIR: &str = "zenha";
+const LEGACY_APP_DIR: &str = "voice-rooms";
 const FILE_NAME: &str = "settings.json";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -106,7 +107,24 @@ pub enum SettingsError {
 }
 
 pub fn default_path() -> Option<PathBuf> {
-    BaseDirs::new().map(|dirs| dirs.config_dir().join(APP_DIR).join(FILE_NAME))
+    let config = BaseDirs::new()?.config_dir().to_path_buf();
+    let path = config.join(APP_DIR).join(FILE_NAME);
+    migrate_legacy(&config.join(LEGACY_APP_DIR).join(FILE_NAME), &path);
+    Some(path)
+}
+
+fn migrate_legacy(legacy: &Path, path: &Path) {
+    if path.exists() || !legacy.exists() {
+        return;
+    }
+    let copied = path
+        .parent()
+        .map_or(Ok(()), std::fs::create_dir_all)
+        .and_then(|()| std::fs::copy(legacy, path));
+    match copied {
+        Ok(_) => tracing::info!(from = %legacy.display(), "migrated legacy settings"),
+        Err(err) => tracing::warn!("could not migrate legacy settings: {err}"),
+    }
 }
 
 pub fn load(path: &Path) -> Settings {
@@ -152,12 +170,27 @@ mod tests {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_nanos())
             .unwrap_or(0);
-        let dir = std::env::temp_dir().join(format!(
-            "voice-rooms-test-{tag}-{}-{nanos}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("zenha-test-{tag}-{}-{nanos}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn migrates_legacy_file_once_without_overwriting() {
+        let dir = temp_dir("migrate");
+        let legacy = dir.join(LEGACY_APP_DIR).join(FILE_NAME);
+        let path = dir.join(APP_DIR).join(FILE_NAME);
+        std::fs::create_dir_all(legacy.parent().unwrap()).unwrap();
+        std::fs::write(&legacy, "old").unwrap();
+
+        migrate_legacy(&legacy, &path);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "old");
+
+        std::fs::write(&legacy, "newer legacy").unwrap();
+        migrate_legacy(&legacy, &path);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "old");
+        assert!(legacy.exists());
     }
 
     #[test]
