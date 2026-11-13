@@ -20,6 +20,7 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 
 [target.'cfg(windows)'.dependencies]
+global-hotkey.workspace = true
 rfd = { version = "0.15", default-features = false }
 
 [lints]

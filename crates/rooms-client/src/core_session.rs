@@ -131,6 +131,7 @@ fn to_core(command: UiCommand) -> Command {
         UiCommand::StopScreenShare => Command::StopScreenShare,
         UiCommand::WatchScreenShare { identity } => Command::WatchScreenShare { identity },
         UiCommand::StopWatching => Command::StopWatching,
+        UiCommand::PlayCue(cue) => Command::PlayCue(cue),
     }
 }
 
@@ -603,6 +604,10 @@ mod tests {
         assert_eq!(
             to_core(UiCommand::SetOutputDevice(None)),
             Command::SetOutputDevice(None)
+        );
+        assert_eq!(
+            to_core(UiCommand::PlayCue(rooms_core::Cue::Muted)),
+            Command::PlayCue(rooms_core::Cue::Muted)
         );
     }
 

@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use rooms_protocol::{ChatMessage, RoomSummary};
 
 use crate::capture::CaptureEnd;
+use crate::cue::Cue;
 use crate::video::{CaptureTarget, FrameSlot, SharePreset};
 
 #[derive(Clone, PartialEq, Eq)]
@@ -122,6 +123,8 @@ pub enum Command {
         identity: String,
     },
     StopWatching,
+    /// Som curto de confirmação, só para quem usa o app.
+    PlayCue(Cue),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

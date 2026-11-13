@@ -6,6 +6,7 @@ use tokio::sync::mpsc::{self, UnboundedSender};
 
 use crate::api::{AudioDevices, FileTransfer, NoiseSuppression, Participant, SessionError};
 use crate::backend::{BackendEvent, ConnectedRoom, MediaBackend};
+use crate::cue::Cue;
 use crate::video::{CaptureTarget, FrameSlot, SharePreset};
 
 /// Backend sem mídia: conecta sempre e mostra só o participante local.
@@ -121,6 +122,8 @@ impl MediaBackend for NoMediaBackend {
     async fn stop_watching(&self) -> Result<(), SessionError> {
         Ok(())
     }
+
+    fn play_cue(&self, _cue: Cue) {}
 }
 
 #[cfg(test)]

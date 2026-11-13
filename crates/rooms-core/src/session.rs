@@ -222,6 +222,7 @@ impl Session {
             Command::StopScreenShare => self.stop_share().await,
             Command::WatchScreenShare { identity } => self.watch(identity).await,
             Command::StopWatching => self.stop_watch().await,
+            Command::PlayCue(cue) => self.backend.play_cue(cue),
         }
     }
 
@@ -591,6 +592,7 @@ mod tests {
     use super::*;
     use crate::api::{AudioDevice, AudioDevices, Participant};
     use crate::capture::CaptureEnd;
+    use crate::cue::Cue;
     use crate::testing::{BackendCall, FakeBackend, FakeTokenClient};
     use crate::video::{CaptureKind, CaptureTarget, VideoFrame};
 
@@ -1613,5 +1615,30 @@ mod tests {
     #[test]
     fn config_debug_hides_invite_code() {
         assert!(!format!("{:?}", config()).contains("secret"));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn play_cue_reaches_backend_inside_and_outside_a_room() {
+        let mut h = harness();
+        h.send(Command::PlayCue(Cue::Muted));
+        h.send(Command::PlayCue(Cue::Unmuted));
+        h.join("geral").await;
+        h.send(Command::PlayCue(Cue::Deafened));
+        h.send(Command::PlayCue(Cue::Undeafened));
+        h.send(Command::RefreshAudioDevices);
+        assert!(matches!(h.next().await, Event::AudioDevicesUpdated(_)));
+        let cues: Vec<_> = h
+            .backend
+            .calls()
+            .into_iter()
+            .filter_map(|call| match call {
+                BackendCall::PlayCue(cue) => Some(cue),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            cues,
+            vec![Cue::Muted, Cue::Unmuted, Cue::Deafened, Cue::Undeafened]
+        );
     }
 }

@@ -37,6 +37,7 @@ pub enum UiCommand {
         identity: String,
     },
     StopWatching,
+    PlayCue(rooms_core::Cue),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

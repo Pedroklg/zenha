@@ -150,6 +150,12 @@ pub const ALL: &[ScenarioDef] = &[
         needs_media: true,
         run: room_switch,
     },
+    ScenarioDef {
+        name: "cue",
+        title: "Som de confirmação de mute e deafen toca na saída escolhida",
+        needs_media: true,
+        run: cue,
+    },
 ];
 
 pub fn room_name(scenario: &str) -> String {
@@ -1215,6 +1221,64 @@ fn room_switch(ctx: &mut Ctx<'_>) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn cue(ctx: &mut Ctx<'_>) -> anyhow::Result<()> {
+    const MUTED_HZ: f64 = 880.0;
+    const DEAFENED_HZ: f64 = 440.0;
+    const WINDOW: Duration = Duration::from_millis(1000);
+    const CUE_LEAD: Duration = Duration::from_millis(300);
+    const AFTER_WAIT: Duration = Duration::from_millis(500);
+
+    ctx.require_probe()?;
+    let room = ctx.room();
+    let listener = ctx.spawn_listener(LISTENER_BOT)?;
+    ctx.join(&listener, &room)?;
+
+    let baseline = ctx.probe.measure_tone(MUTED_HZ, WINDOW)?;
+    ctx.rec.number("baseline_tone_rms", baseline.tone_rms, "");
+    ctx.rec.number("baseline_total_rms", baseline.total_rms, "");
+
+    for (cue_name, hz) in [("muted", MUTED_HZ), ("deafened", DEAFENED_HZ)] {
+        let probe = ctx.probe;
+        // The cue is sent after capture starts so it lands mid-window, away from the Hann edges.
+        let m = std::thread::scope(|scope| {
+            let measuring = scope.spawn(|| probe.measure_tone(hz, WINDOW));
+            std::thread::sleep(CUE_LEAD);
+            listener.send(&BotCommand::PlayCue {
+                cue: cue_name.to_owned(),
+            })?;
+            measuring
+                .join()
+                .map_err(|_| anyhow::anyhow!("the measuring thread panicked"))?
+        })?;
+        ctx.rec
+            .number(&format!("{cue_name}_tone_rms"), m.tone_rms, "");
+        ctx.rec
+            .number(&format!("{cue_name}_total_rms"), m.total_rms, "");
+        ctx.rec.number(&format!("{cue_name}_peak"), m.peak, "");
+        ctx.rec
+            .number(&format!("{cue_name}_tone_ratio"), m.tone_ratio, "");
+        if m.tone_rms < MIN_TONE_RMS || m.tone_rms < 5.0 * baseline.tone_rms {
+            bail!(
+                "cue {cue_name} at {hz} Hz not heard (tone_rms {:.5}, tone_ratio {:.2}, baseline {:.5})",
+                m.tone_rms,
+                m.tone_ratio,
+                baseline.tone_rms
+            );
+        }
+    }
+
+    std::thread::sleep(AFTER_WAIT);
+    let after = ctx.probe.measure_tone(MUTED_HZ, WINDOW)?;
+    ctx.rec.number("after_tone_rms", after.tone_rms, "");
+    if after.tone_rms >= MIN_TONE_RMS {
+        bail!(
+            "the cue is still audible after stopping (tone_rms {:.5})",
+            after.tone_rms
+        );
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use rooms_protocol::validate_room_name;
@@ -1281,7 +1345,8 @@ mod tests {
                 "files",
                 "share",
                 "share-audio",
-                "room-switch"
+                "room-switch",
+                "cue",
             ]
         );
         assert!(!ALL[0].needs_media);

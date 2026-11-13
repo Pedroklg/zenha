@@ -2,11 +2,13 @@ use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+use rooms_core::Cue;
 use rooms_protocol::{
     ChatMessage, MAX_CHAT_MESSAGE_LEN, MAX_DISPLAY_NAME_LEN, MAX_ROOM_NAME_LEN, RoomSummary,
     ValidationError, validate_chat_text, validate_display_name, validate_room_name,
 };
 
+use crate::hotkeys::HotkeyAction;
 use crate::settings::{NoiseMode, Settings};
 use crate::ui_model::{
     AudioDeviceView, CaptureTargetView, Credentials, FeedHandle, FileTransferView, ParticipantView,
@@ -168,6 +170,42 @@ impl AudioState {
 
     pub fn output_label(&self) -> String {
         selected_label(&self.outputs, self.output.as_deref(), self.loaded)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct HotkeyState {
+    pub mute: Option<String>,
+    pub deafen: Option<String>,
+    pub capturing: Option<HotkeyAction>,
+    pub capture_error: Option<String>,
+    pub failed: Vec<HotkeyAction>,
+}
+
+impl HotkeyState {
+    fn from_settings(settings: &Settings) -> Self {
+        Self {
+            mute: settings.mute_hotkey.clone(),
+            deafen: settings.deafen_hotkey.clone(),
+            ..Self::default()
+        }
+    }
+
+    pub fn binding(&self, action: HotkeyAction) -> Option<&str> {
+        match action {
+            HotkeyAction::ToggleMute => self.mute.as_deref(),
+            HotkeyAction::ToggleDeafen => self.deafen.as_deref(),
+        }
+    }
+
+    pub fn registrations(&self) -> Vec<(HotkeyAction, String)> {
+        if self.capturing.is_some() {
+            return Vec::new();
+        }
+        HotkeyAction::ALL
+            .into_iter()
+            .filter_map(|action| self.binding(action).map(|b| (action, b.to_owned())))
+            .collect()
     }
 }
 
@@ -468,7 +506,8 @@ impl RoomState {
             return Vec::new();
         }
         self.muted = !self.muted;
-        vec![UiCommand::SetMuted(self.muted)]
+        let cue = if self.muted { Cue::Muted } else { Cue::Unmuted };
+        vec![UiCommand::SetMuted(self.muted), UiCommand::PlayCue(cue)]
     }
 
     fn toggle_deafen(&mut self) -> Vec<UiCommand> {
@@ -478,12 +517,17 @@ impl RoomState {
             vec![
                 UiCommand::SetDeafened(false),
                 UiCommand::SetMuted(self.muted),
+                UiCommand::PlayCue(Cue::Undeafened),
             ]
         } else {
             self.muted_before_deafen = self.muted;
             self.deafened = true;
             self.muted = true;
-            vec![UiCommand::SetDeafened(true), UiCommand::SetMuted(true)]
+            vec![
+                UiCommand::SetDeafened(true),
+                UiCommand::SetMuted(true),
+                UiCommand::PlayCue(Cue::Deafened),
+            ]
         }
     }
 
@@ -543,6 +587,11 @@ pub enum UserAction {
     /// Applies the noise gate threshold at once; `SaveAudioSettings` stores it.
     SetNoiseGate(Option<i8>),
     SaveAudioSettings,
+    StartHotkeyCapture(HotkeyAction),
+    CancelHotkeyCapture,
+    RejectHotkey(String),
+    SetHotkey(HotkeyAction, Option<String>),
+    HotkeyPressed(HotkeyAction),
     OpenSharePicker,
     CloseSharePicker,
     RefreshCaptureTargets,
@@ -562,6 +611,7 @@ pub struct AppState {
     pub form: LoginForm,
     pub rooms: Vec<RoomSummary>,
     pub audio: AudioState,
+    pub hotkeys: HotkeyState,
     pub picker: SharePicker,
     last_refresh: Option<Instant>,
     pending_save: Option<Settings>,
@@ -574,10 +624,15 @@ impl AppState {
             form: LoginForm::from_settings(settings),
             rooms: Vec::new(),
             audio: AudioState::from_settings(settings),
+            hotkeys: HotkeyState::from_settings(settings),
             picker: SharePicker::default(),
             last_refresh: None,
             pending_save: None,
         }
+    }
+
+    pub fn set_hotkey_failures(&mut self, failed: Vec<HotkeyAction>) {
+        self.hotkeys.failed = failed;
     }
 
     pub fn credentials(&self) -> Credentials {
@@ -600,6 +655,8 @@ impl AppState {
             stream_volume: (self.audio.stream_volume != FULL_VOLUME)
                 .then_some(self.audio.stream_volume),
             noise_gate_db: self.audio.noise_gate,
+            mute_hotkey: self.hotkeys.mute.clone(),
+            deafen_hotkey: self.hotkeys.deafen.clone(),
             ..self.form.to_settings()
         }
     }
@@ -650,7 +707,36 @@ impl AppState {
             }
             UserAction::CloseSettings => {
                 self.audio.open = false;
+                self.hotkeys.capturing = None;
+                self.hotkeys.capture_error = None;
                 Vec::new()
+            }
+            UserAction::StartHotkeyCapture(action) => {
+                self.hotkeys.capturing = Some(action);
+                self.hotkeys.capture_error = None;
+                Vec::new()
+            }
+            UserAction::CancelHotkeyCapture => {
+                self.hotkeys.capturing = None;
+                self.hotkeys.capture_error = None;
+                Vec::new()
+            }
+            UserAction::RejectHotkey(message) => {
+                self.hotkeys.capture_error = Some(message);
+                Vec::new()
+            }
+            UserAction::SetHotkey(action, binding) => {
+                self.set_hotkey(action, binding);
+                Vec::new()
+            }
+            UserAction::HotkeyPressed(action) => {
+                if self.hotkeys.capturing.is_some() {
+                    return Vec::new();
+                }
+                match action {
+                    HotkeyAction::ToggleMute => self.with_room(RoomState::toggle_mute),
+                    HotkeyAction::ToggleDeafen => self.with_room(RoomState::toggle_deafen),
+                }
             }
             UserAction::RefreshAudioDevices => vec![UiCommand::RefreshAudioDevices],
             UserAction::SelectInputDevice(id) => self.select_input(id),
@@ -847,6 +933,30 @@ impl AppState {
         vec![UiCommand::SetNoiseSuppression(mode)]
     }
 
+    fn set_hotkey(&mut self, action: HotkeyAction, binding: Option<String>) {
+        let other = match action {
+            HotkeyAction::ToggleMute => HotkeyAction::ToggleDeafen,
+            HotkeyAction::ToggleDeafen => HotkeyAction::ToggleMute,
+        };
+        if let Some(ref b) = binding
+            && self.hotkeys.binding(other) == Some(b.as_str())
+        {
+            self.hotkeys.capture_error = Some(format!(
+                "Esse atalho já está em uso em \"{}\".",
+                other.label()
+            ));
+            return;
+        }
+        match action {
+            HotkeyAction::ToggleMute => self.hotkeys.mute = binding,
+            HotkeyAction::ToggleDeafen => self.hotkeys.deafen = binding,
+        }
+        self.hotkeys.capturing = None;
+        self.hotkeys.capture_error = None;
+        self.hotkeys.failed.retain(|&a| a != action);
+        self.pending_save = Some(self.settings_snapshot());
+    }
+
     fn cancel_connect(&mut self) -> Vec<UiCommand> {
         if matches!(self.screen, Screen::Connecting { .. }) {
             self.screen = Screen::Login;
@@ -993,6 +1103,8 @@ mod tests {
             noise_suppression: NoiseMode::default(),
             stream_volume: None,
             noise_gate_db: None,
+            mute_hotkey: None,
+            deafen_hotkey: None,
         }
     }
 
@@ -1410,12 +1522,12 @@ mod tests {
         in_room(&mut state);
         assert_eq!(
             state.handle_action(UserAction::ToggleMute),
-            vec![UiCommand::SetMuted(true)]
+            vec![UiCommand::SetMuted(true), UiCommand::PlayCue(Cue::Muted)]
         );
         assert!(room(&state).muted);
         assert_eq!(
             state.handle_action(UserAction::ToggleMute),
-            vec![UiCommand::SetMuted(false)]
+            vec![UiCommand::SetMuted(false), UiCommand::PlayCue(Cue::Unmuted)]
         );
     }
 
@@ -1425,13 +1537,21 @@ mod tests {
         in_room(&mut state);
         assert_eq!(
             state.handle_action(UserAction::ToggleDeafen),
-            vec![UiCommand::SetDeafened(true), UiCommand::SetMuted(true)]
+            vec![
+                UiCommand::SetDeafened(true),
+                UiCommand::SetMuted(true),
+                UiCommand::PlayCue(Cue::Deafened)
+            ]
         );
         assert!(room(&state).deafened && room(&state).muted);
         assert!(state.handle_action(UserAction::ToggleMute).is_empty());
         assert_eq!(
             state.handle_action(UserAction::ToggleDeafen),
-            vec![UiCommand::SetDeafened(false), UiCommand::SetMuted(false)]
+            vec![
+                UiCommand::SetDeafened(false),
+                UiCommand::SetMuted(false),
+                UiCommand::PlayCue(Cue::Undeafened)
+            ]
         );
         assert!(!room(&state).muted && !room(&state).deafened);
 
@@ -1439,7 +1559,11 @@ mod tests {
         state.handle_action(UserAction::ToggleDeafen);
         assert_eq!(
             state.handle_action(UserAction::ToggleDeafen),
-            vec![UiCommand::SetDeafened(false), UiCommand::SetMuted(true)]
+            vec![
+                UiCommand::SetDeafened(false),
+                UiCommand::SetMuted(true),
+                UiCommand::PlayCue(Cue::Undeafened)
+            ]
         );
         assert!(room(&state).muted);
     }
@@ -2030,5 +2154,186 @@ mod tests {
         assert!((w - 533.333).abs() < 0.01 && (h - 300.0).abs() < 0.01);
         assert_eq!(aspect_fit((0.0, 100.0), (1920, 1080)), (0.0, 0.0));
         assert_eq!(aspect_fit((100.0, 100.0), (0, 0)), (0.0, 0.0));
+    }
+
+    #[test]
+    fn hotkeys_load_save_and_suspend_registrations_while_capturing() {
+        let mut settings = valid_settings();
+        settings.mute_hotkey = Some("control+KeyM".to_owned());
+        settings.deafen_hotkey = Some("control+KeyD".to_owned());
+        let mut state = AppState::new(&settings);
+        assert_eq!(
+            state.hotkeys.binding(HotkeyAction::ToggleMute),
+            Some("control+KeyM")
+        );
+        assert_eq!(
+            state.hotkeys.binding(HotkeyAction::ToggleDeafen),
+            Some("control+KeyD")
+        );
+        assert_eq!(
+            state.hotkeys.registrations(),
+            vec![
+                (HotkeyAction::ToggleMute, "control+KeyM".to_owned()),
+                (HotkeyAction::ToggleDeafen, "control+KeyD".to_owned()),
+            ]
+        );
+
+        state.handle_action(UserAction::StartHotkeyCapture(HotkeyAction::ToggleMute));
+        assert_eq!(state.hotkeys.capturing, Some(HotkeyAction::ToggleMute));
+        assert!(state.hotkeys.registrations().is_empty());
+
+        state.handle_action(UserAction::RejectHotkey("erro".to_owned()));
+        assert_eq!(state.hotkeys.capture_error.as_deref(), Some("erro"));
+        assert_eq!(state.hotkeys.capturing, Some(HotkeyAction::ToggleMute));
+
+        state.handle_action(UserAction::CancelHotkeyCapture);
+        assert_eq!(state.hotkeys.capturing, None);
+        assert_eq!(state.hotkeys.capture_error, None);
+        assert_eq!(state.hotkeys.registrations().len(), 2);
+
+        state.handle_action(UserAction::OpenSettings);
+        state.handle_action(UserAction::StartHotkeyCapture(HotkeyAction::ToggleDeafen));
+        state.handle_action(UserAction::RejectHotkey("erro".to_owned()));
+        state.handle_action(UserAction::CloseSettings);
+        assert!(!state.audio.open);
+        assert_eq!(state.hotkeys.capturing, None);
+        assert_eq!(state.hotkeys.capture_error, None);
+    }
+
+    #[test]
+    fn setting_removing_and_deduplicating_hotkeys_updates_state_and_failures() {
+        let mut state = AppState::new(&valid_settings());
+        state.set_hotkey_failures(vec![HotkeyAction::ToggleMute, HotkeyAction::ToggleDeafen]);
+        state.handle_action(UserAction::StartHotkeyCapture(HotkeyAction::ToggleMute));
+        state.handle_action(UserAction::RejectHotkey("antigo".to_owned()));
+        state.handle_action(UserAction::SetHotkey(
+            HotkeyAction::ToggleMute,
+            Some("shift+KeyM".to_owned()),
+        ));
+        assert_eq!(state.hotkeys.mute.as_deref(), Some("shift+KeyM"));
+        assert_eq!(state.hotkeys.capturing, None);
+        assert_eq!(state.hotkeys.capture_error, None);
+        assert_eq!(state.hotkeys.failed, vec![HotkeyAction::ToggleDeafen]);
+        let saved = state.take_pending_save().unwrap();
+        assert_eq!(saved.mute_hotkey.as_deref(), Some("shift+KeyM"));
+
+        state.handle_action(UserAction::StartHotkeyCapture(HotkeyAction::ToggleDeafen));
+        state.handle_action(UserAction::SetHotkey(
+            HotkeyAction::ToggleDeafen,
+            Some("shift+KeyM".to_owned()),
+        ));
+        assert_eq!(state.hotkeys.deafen, None);
+        assert_eq!(state.hotkeys.capturing, Some(HotkeyAction::ToggleDeafen));
+        assert_eq!(
+            state.hotkeys.capture_error.as_deref(),
+            Some("Esse atalho já está em uso em \"Mutar microfone\".")
+        );
+        assert!(state.take_pending_save().is_none());
+
+        state.handle_action(UserAction::SetHotkey(
+            HotkeyAction::ToggleDeafen,
+            Some("shift+KeyD".to_owned()),
+        ));
+        assert_eq!(state.hotkeys.deafen.as_deref(), Some("shift+KeyD"));
+        assert!(state.hotkeys.failed.is_empty());
+        assert_eq!(
+            state.take_pending_save().unwrap().deafen_hotkey.as_deref(),
+            Some("shift+KeyD")
+        );
+
+        state.handle_action(UserAction::SetHotkey(HotkeyAction::ToggleMute, None));
+        assert_eq!(state.hotkeys.mute, None);
+        let saved = state.take_pending_save().unwrap();
+        assert_eq!(saved.mute_hotkey, None);
+        assert_eq!(saved.deafen_hotkey.as_deref(), Some("shift+KeyD"));
+    }
+
+    #[test]
+    fn hotkey_pressed_toggles_only_in_room_and_when_not_capturing() {
+        let mut state = state_with_code();
+        assert!(
+            state
+                .handle_action(UserAction::HotkeyPressed(HotkeyAction::ToggleMute))
+                .is_empty()
+        );
+        assert!(
+            state
+                .handle_action(UserAction::HotkeyPressed(HotkeyAction::ToggleDeafen))
+                .is_empty()
+        );
+
+        in_room(&mut state);
+        assert_eq!(
+            state.handle_action(UserAction::HotkeyPressed(HotkeyAction::ToggleMute)),
+            vec![UiCommand::SetMuted(true), UiCommand::PlayCue(Cue::Muted)]
+        );
+        assert!(room(&state).muted);
+
+        state.handle_action(UserAction::StartHotkeyCapture(HotkeyAction::ToggleMute));
+        assert!(
+            state
+                .handle_action(UserAction::HotkeyPressed(HotkeyAction::ToggleMute))
+                .is_empty()
+        );
+        assert!(room(&state).muted);
+
+        state.handle_action(UserAction::CancelHotkeyCapture);
+        assert_eq!(
+            state.handle_action(UserAction::HotkeyPressed(HotkeyAction::ToggleDeafen)),
+            vec![
+                UiCommand::SetDeafened(true),
+                UiCommand::SetMuted(true),
+                UiCommand::PlayCue(Cue::Deafened)
+            ]
+        );
+        assert!(room(&state).deafened);
+    }
+
+    #[test]
+    fn mute_and_deafen_cues_cover_all_transitions_and_skip_ignored_mute_and_join() {
+        let mut state = state_with_code();
+        state.form.muted_on_join = true;
+        let login_cmds = state.handle_action(UserAction::SubmitLogin);
+        assert!(
+            !login_cmds
+                .iter()
+                .any(|c| matches!(c, UiCommand::PlayCue(_)))
+        );
+        state.apply_event(UiEvent::Joined {
+            room: "geral".to_owned(),
+            participants: vec![person("ana")],
+        });
+        assert!(room(&state).muted);
+
+        assert_eq!(
+            state.handle_action(UserAction::ToggleMute),
+            vec![UiCommand::SetMuted(false), UiCommand::PlayCue(Cue::Unmuted)]
+        );
+        assert_eq!(
+            state.handle_action(UserAction::ToggleMute),
+            vec![UiCommand::SetMuted(true), UiCommand::PlayCue(Cue::Muted)]
+        );
+        assert_eq!(
+            state.handle_action(UserAction::ToggleDeafen),
+            vec![
+                UiCommand::SetDeafened(true),
+                UiCommand::SetMuted(true),
+                UiCommand::PlayCue(Cue::Deafened)
+            ]
+        );
+        assert!(state.handle_action(UserAction::ToggleMute).is_empty());
+        assert!(
+            state
+                .handle_action(UserAction::HotkeyPressed(HotkeyAction::ToggleMute))
+                .is_empty()
+        );
+        assert_eq!(
+            state.handle_action(UserAction::ToggleDeafen),
+            vec![
+                UiCommand::SetDeafened(false),
+                UiCommand::SetMuted(true),
+                UiCommand::PlayCue(Cue::Undeafened)
+            ]
+        );
     }
 }

@@ -47,6 +47,9 @@ pub struct Settings {
     pub stream_volume: Option<u8>,
     /// Limiar da porta de ruído em dBFS (-70 a -20); ausente significa desligada.
     pub noise_gate_db: Option<i8>,
+    /// Atalho global no formato do `global-hotkey` (ex.: "shift+control+KeyM"); ausente = nenhum.
+    pub mute_hotkey: Option<String>,
+    pub deafen_hotkey: Option<String>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -128,6 +131,8 @@ mod tests {
             noise_suppression: NoiseMode::Enhanced,
             stream_volume: Some(40),
             noise_gate_db: Some(-45),
+            mute_hotkey: Some("shift+control+KeyM".to_owned()),
+            deafen_hotkey: Some("alt+KeyD".to_owned()),
         };
         save(&path, &settings).unwrap();
         assert_eq!(load(&path), settings);

@@ -1,7 +1,8 @@
 use eframe::egui;
 
+use crate::hotkeys::{HotkeyAction, binding_from_key, binding_label};
 use crate::settings::NoiseMode;
-use crate::state::{AudioState, DEFAULT_DEVICE_LABEL, MicLevelView, UserAction};
+use crate::state::{AudioState, DEFAULT_DEVICE_LABEL, HotkeyState, MicLevelView, UserAction};
 use crate::ui_model::AudioDeviceView;
 
 const COMBO_WIDTH: f32 = 320.0;
@@ -11,8 +12,9 @@ const GATE_DEFAULT_DB: i8 = -45;
 const METER_FLOOR_DB: f32 = -70.0;
 const OPEN_COLOR: egui::Color32 = egui::Color32::from_rgb(60, 180, 90);
 const CLOSED_COLOR: egui::Color32 = egui::Color32::from_rgb(130, 130, 130);
+const ERROR_COLOR: egui::Color32 = egui::Color32::from_rgb(220, 80, 80);
 
-pub fn show(ctx: &egui::Context, audio: &AudioState) -> Vec<UserAction> {
+pub fn show(ctx: &egui::Context, audio: &AudioState, hotkeys: &HotkeyState) -> Vec<UserAction> {
     let mut actions = Vec::new();
     if !audio.open {
         return actions;
@@ -23,14 +25,19 @@ pub fn show(ctx: &egui::Context, audio: &AudioState) -> Vec<UserAction> {
         .collapsible(false)
         .resizable(false)
         .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-        .show(ctx, |ui| content(ui, audio, &mut actions));
+        .show(ctx, |ui| content(ui, audio, hotkeys, &mut actions));
     if !open {
         actions.push(UserAction::CloseSettings);
     }
     actions
 }
 
-fn content(ui: &mut egui::Ui, audio: &AudioState, actions: &mut Vec<UserAction>) {
+fn content(
+    ui: &mut egui::Ui,
+    audio: &AudioState,
+    hotkeys: &HotkeyState,
+    actions: &mut Vec<UserAction>,
+) {
     ui.heading("Áudio");
     ui.add_space(8.0);
 
@@ -86,6 +93,77 @@ fn content(ui: &mut egui::Ui, audio: &AudioState, actions: &mut Vec<UserAction>)
 
     if ui.button("Atualizar lista").clicked() {
         actions.push(UserAction::RefreshAudioDevices);
+    }
+
+    ui.separator();
+    ui.heading("Atalhos globais");
+    ui.small("Funcionam com o app minimizado e com um jogo em foco.");
+    hotkeys_section(ui, hotkeys, actions);
+}
+
+fn hotkeys_section(ui: &mut egui::Ui, hotkeys: &HotkeyState, actions: &mut Vec<UserAction>) {
+    if let Some(capturing) = hotkeys.capturing {
+        for event in ui.input(|i| i.events.clone()) {
+            if let egui::Event::Key {
+                key,
+                physical_key,
+                pressed: true,
+                repeat: false,
+                modifiers,
+                ..
+            } = event
+            {
+                let key = physical_key.unwrap_or(key);
+                if key == egui::Key::Escape {
+                    actions.push(UserAction::CancelHotkeyCapture);
+                } else {
+                    match binding_from_key(key, modifiers) {
+                        Ok(binding) => {
+                            actions.push(UserAction::SetHotkey(capturing, Some(binding)));
+                        }
+                        Err(err) => {
+                            actions.push(UserAction::RejectHotkey(err.message().to_owned()));
+                        }
+                    }
+                }
+                break;
+            }
+        }
+    }
+
+    for action in HotkeyAction::ALL {
+        ui.horizontal(|ui| {
+            ui.label(action.label());
+            if hotkeys.capturing == Some(action) {
+                ui.label("Pressione a combinação... (Esc cancela)");
+                if ui.button("Cancelar").clicked() {
+                    actions.push(UserAction::CancelHotkeyCapture);
+                }
+            } else {
+                let current = hotkeys.binding(action).map(binding_label);
+                ui.label(current.as_deref().unwrap_or("Nenhum"));
+                if ui.button("Alterar").clicked() {
+                    actions.push(UserAction::StartHotkeyCapture(action));
+                }
+                if ui
+                    .add_enabled(current.is_some(), egui::Button::new("Remover"))
+                    .clicked()
+                {
+                    actions.push(UserAction::SetHotkey(action, None));
+                }
+            }
+        });
+        if hotkeys.capturing == Some(action)
+            && let Some(err) = &hotkeys.capture_error
+        {
+            ui.colored_label(ERROR_COLOR, err);
+        }
+        if hotkeys.failed.contains(&action) {
+            ui.colored_label(
+                ERROR_COLOR,
+                "Não foi possível registrar: outro programa já usa esse atalho.",
+            );
+        }
     }
 }
 

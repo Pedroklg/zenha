@@ -1,7 +1,7 @@
 //! Protocolo de linhas JSON entre o orquestrador e os bots: comandos no stdin, eventos no stdout.
 
 use rooms_core::{
-    AudioDevice, AudioDevices, CaptureKind, CaptureTarget, Command, Event, NoiseSuppression,
+    AudioDevice, AudioDevices, CaptureKind, CaptureTarget, Command, Cue, Event, NoiseSuppression,
     Participant, SessionError, SharePreset, TEST_PATTERN_TARGET_ID, TransferState,
 };
 use serde::{Deserialize, Serialize};
@@ -73,7 +73,21 @@ pub enum BotCommand {
     MeasureFrames {
         duration_ms: u64,
     },
+    #[serde(alias = "play-cue")]
+    PlayCue {
+        cue: String,
+    },
     Quit,
+}
+
+fn parse_cue(name: &str) -> Option<Cue> {
+    match name {
+        "muted" => Some(Cue::Muted),
+        "unmuted" => Some(Cue::Unmuted),
+        "deafened" => Some(Cue::Deafened),
+        "undeafened" => Some(Cue::Undeafened),
+        _ => None,
+    }
 }
 
 impl BotCommand {
@@ -106,6 +120,7 @@ impl BotCommand {
                 identity: identity.clone(),
             },
             Self::StopWatching => Command::StopWatching,
+            Self::PlayCue { cue } => Command::PlayCue(parse_cue(cue)?),
             Self::MeasureFrames { .. } | Self::Quit => return None,
         })
     }
@@ -429,7 +444,13 @@ pub struct Stamped {
 }
 
 pub fn parse_command(line: &str) -> Result<BotCommand, String> {
-    serde_json::from_str(line.trim()).map_err(|err| err.to_string())
+    let command: BotCommand = serde_json::from_str(line.trim()).map_err(|err| err.to_string())?;
+    if let BotCommand::PlayCue { cue } = &command
+        && parse_cue(cue).is_none()
+    {
+        return Err(format!("unknown cue: {cue}"));
+    }
+    Ok(command)
 }
 
 pub fn encode_event(t_ms: u64, event: &BotEvent) -> String {
@@ -476,6 +497,19 @@ mod tests {
             parse_command(r#" {"cmd":"measure-frames","duration_ms":3000} "#),
             Ok(BotCommand::MeasureFrames { duration_ms: 3000 })
         );
+        assert_eq!(
+            parse_command(r#"{"cmd":"play_cue","cue":"muted"}"#),
+            Ok(BotCommand::PlayCue {
+                cue: "muted".into()
+            })
+        );
+        assert_eq!(
+            parse_command(r#"{"cmd":"play-cue","cue":"undeafened"}"#),
+            Ok(BotCommand::PlayCue {
+                cue: "undeafened".into()
+            })
+        );
+        assert!(parse_command(r#"{"cmd":"play_cue","cue":"bogus"}"#).is_err());
         assert_eq!(parse_command(r#"{"cmd":"quit"}"#), Ok(BotCommand::Quit));
         assert!(parse_command(r#"{"cmd":"explode"}"#).is_err());
         assert!(parse_command("not json").is_err());
@@ -501,6 +535,18 @@ mod tests {
             },
             BotCommand::StopWatching,
             BotCommand::MeasureFrames { duration_ms: 10 },
+            BotCommand::PlayCue {
+                cue: "muted".into(),
+            },
+            BotCommand::PlayCue {
+                cue: "unmuted".into(),
+            },
+            BotCommand::PlayCue {
+                cue: "deafened".into(),
+            },
+            BotCommand::PlayCue {
+                cue: "undeafened".into(),
+            },
             BotCommand::Quit,
         ];
         for command in all {
@@ -515,6 +561,18 @@ mod tests {
             BotCommand::SetMuted { muted: true }.to_core(),
             Some(Command::SetMuted(true))
         );
+        for (name, expected) in [
+            ("muted", Cue::Muted),
+            ("unmuted", Cue::Unmuted),
+            ("deafened", Cue::Deafened),
+            ("undeafened", Cue::Undeafened),
+        ] {
+            assert_eq!(
+                BotCommand::PlayCue { cue: name.into() }.to_core(),
+                Some(Command::PlayCue(expected))
+            );
+        }
+        assert_eq!(BotCommand::PlayCue { cue: "nope".into() }.to_core(), None);
         assert!(matches!(
             BotCommand::StartShare.to_core(),
             Some(Command::StartScreenShare { target_id, .. }) if target_id == TEST_PATTERN_TARGET_ID

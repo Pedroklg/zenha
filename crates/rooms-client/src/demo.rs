@@ -196,7 +196,8 @@ impl DemoSession {
             }
             UiCommand::SetNoiseSuppression(_)
             | UiCommand::SetStreamVolume(_)
-            | UiCommand::SetNoiseGate(_) => {}
+            | UiCommand::SetNoiseGate(_)
+            | UiCommand::PlayCue(_) => {}
             UiCommand::SetOutputDevice(id) => {
                 self.output = id;
                 self.publish_audio_devices();

@@ -11,6 +11,7 @@ use crate::api::{
     AudioDevice, AudioDevices, FileTransfer, NoiseSuppression, Participant, SessionError,
 };
 use crate::backend::{BackendEvent, ConnectedRoom, MediaBackend};
+use crate::cue::Cue;
 use crate::token::TokenClient;
 use crate::video::{CaptureTarget, FrameSlot, SharePreset, VideoFrame};
 
@@ -51,6 +52,7 @@ pub enum BackendCall {
         identity: String,
     },
     StopWatching,
+    PlayCue(Cue),
 }
 
 #[derive(Debug)]
@@ -370,6 +372,10 @@ impl MediaBackend for FakeBackend {
         state.calls.push(BackendCall::StopWatching);
         state.watching = None;
         Ok(())
+    }
+
+    fn play_cue(&self, cue: Cue) {
+        lock(&self.state).calls.push(BackendCall::PlayCue(cue));
     }
 }
 

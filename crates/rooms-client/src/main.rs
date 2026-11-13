@@ -6,6 +6,9 @@ mod core_session;
 mod demo;
 mod dialogs;
 mod format;
+#[cfg(windows)]
+mod global_keys;
+mod hotkeys;
 mod settings;
 mod state;
 mod ui_model;

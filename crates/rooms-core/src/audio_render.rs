@@ -14,6 +14,36 @@ pub(crate) const RENDER_SAMPLE_RATE: u32 = 48_000;
 pub(crate) const RENDER_CHANNELS: usize = 2;
 const POLL_INTERVAL: Duration = Duration::from_millis(5);
 const BUFFER_DURATION_HNS: i64 = 600_000;
+const CUE_TAIL: Duration = Duration::from_millis(150);
+
+fn fill_mono(samples: &[f32], cursor: &mut usize, out: &mut [f32]) {
+    for frame in out.chunks_mut(RENDER_CHANNELS) {
+        let sample = samples.get(*cursor).copied().unwrap_or(0.0);
+        *cursor = cursor.saturating_add(1);
+        frame.fill(sample);
+    }
+}
+
+pub(crate) fn play_once(device: Option<String>, samples: Vec<f32>) {
+    if samples.is_empty() {
+        return;
+    }
+    let duration = Duration::from_micros(
+        (samples.len() as u64).saturating_mul(1_000_000) / u64::from(RENDER_SAMPLE_RATE),
+    ) + CUE_TAIL;
+    if let Err(err) = thread::Builder::new()
+        .name("audio-cue".to_owned())
+        .spawn(move || {
+            let mut cursor = 0;
+            let _stream = OutputStream::start(device, move |out: &mut [f32]| {
+                fill_mono(&samples, &mut cursor, out);
+            });
+            thread::sleep(duration);
+        })
+    {
+        tracing::warn!(%err, "could not start the audio cue thread");
+    }
+}
 
 /// Render thread; dropping it stops the playback.
 pub(crate) struct OutputStream {
@@ -110,4 +140,24 @@ fn render(
         thread::sleep(POLL_INTERVAL);
     }
     client.stop_stream()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fill_mono_duplicates_channels_and_pads_with_zeros() {
+        let mono = [0.25f32, -0.5, 0.75];
+        let mut cursor = 0;
+        let mut first = [1.0f32; 4];
+        fill_mono(&mono, &mut cursor, &mut first);
+        assert_eq!(first, [0.25, 0.25, -0.5, -0.5]);
+        assert_eq!(cursor, 2);
+
+        let mut second = [1.0f32; 6];
+        fill_mono(&mono, &mut cursor, &mut second);
+        assert_eq!(second, [0.75, 0.75, 0.0, 0.0, 0.0, 0.0]);
+        assert_eq!(cursor, 5);
+    }
 }

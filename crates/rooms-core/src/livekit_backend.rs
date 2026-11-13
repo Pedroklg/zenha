@@ -27,7 +27,7 @@ use tokio::time::timeout;
 use crate::api::{
     AudioDevice, AudioDevices, FileTransfer, NoiseSuppression, Participant, SessionError,
 };
-use crate::audio_render::{OutputStream, RENDER_CHANNELS, RENDER_SAMPLE_RATE};
+use crate::audio_render::{OutputStream, RENDER_CHANNELS, RENDER_SAMPLE_RATE, play_once};
 use crate::backend::{BackendEvent, ConnectedRoom, MediaBackend};
 use crate::backend_options::{
     LiveKitBackendOptions, MicrophoneSource, TEST_PATTERN_SIZE, TEST_PATTERN_TARGET_ID,
@@ -38,6 +38,7 @@ use crate::backend_support::{
     sanitize_error, unique_devices,
 };
 use crate::capture::{FrameSource, TestPatternSource};
+use crate::cue::{Cue, cue_samples};
 use crate::deep_filter::DeepFilterDenoiser;
 use crate::file_receive::FileReceiver;
 use crate::files::FILE_TOPIC;
@@ -75,14 +76,17 @@ struct Flags {
 }
 
 impl Flags {
-    /// Plays `track` through the app's own output so its volume can be set apart from voices.
-    fn play_stream(&self, track: RtcAudioTrack) {
-        let device = self
-            .stream_output
+    fn stream_output(&self) -> Option<String> {
+        self.stream_output
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .clone();
-        let player = StreamPlayer::start(track, device, self.stream_attenuation.clone());
+            .clone()
+    }
+
+    /// Plays `track` through the app's own output so its volume can be set apart from voices.
+    fn play_stream(&self, track: RtcAudioTrack) {
+        let player =
+            StreamPlayer::start(track, self.stream_output(), self.stream_attenuation.clone());
         *self
             .stream_player
             .lock()
@@ -768,6 +772,13 @@ impl MediaBackend for LiveKitBackend {
             set_screen_share_subscribed(&room, &identity, false);
         }
         Ok(())
+    }
+
+    fn play_cue(&self, cue: Cue) {
+        play_once(
+            self.flags.stream_output(),
+            cue_samples(cue, RENDER_SAMPLE_RATE),
+        );
     }
 }
 

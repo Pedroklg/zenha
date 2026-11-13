@@ -5,6 +5,7 @@ use tokio::sync::mpsc::UnboundedReceiver;
 
 use crate::api::{AudioDevices, FileTransfer, NoiseSuppression, Participant, SessionError};
 use crate::capture::CaptureEnd;
+use crate::cue::Cue;
 use crate::video::{CaptureTarget, FrameSlot, SharePreset};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -90,4 +91,5 @@ pub trait MediaBackend: Send + Sync + 'static {
         frames: FrameSlot,
     ) -> Result<(), SessionError>;
     async fn stop_watching(&self) -> Result<(), SessionError>;
+    fn play_cue(&self, cue: Cue);
 }

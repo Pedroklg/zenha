@@ -21,6 +21,7 @@ dotenvy = "0.15"
 deep_filter = { git = "https://github.com/Rikorose/DeepFilterNet", rev = "978576aa8400552a4ce9730838c635aa30db5e61", default-features = false, features = ["tract", "default-model"] }
 eframe = "0.37"
 futures-util = { version = "0.3", default-features = false }
+global-hotkey = "=0.10.0"
 http-body-util = "0.1"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp"] }
 ndarray = "0.15"

@@ -14,6 +14,7 @@ mod backoff;
 mod capture;
 mod chat;
 mod clock;
+mod cue;
 #[cfg(windows)]
 mod deep_filter;
 #[cfg(windows)]
@@ -56,6 +57,7 @@ pub use capture::{
     BgraFrame, CaptureEnd, FrameSink, FrameSource, Pacer, SlotSink, TestPatternSource, bgra_to_rgba,
 };
 pub use chat::CHAT_TOPIC;
+pub use cue::{Cue, cue_samples};
 pub use files::{FILE_TOPIC, is_image_mime, mime_for_name, received_path, sanitize_file_name};
 pub use handle::SessionHandle;
 #[cfg(windows)]

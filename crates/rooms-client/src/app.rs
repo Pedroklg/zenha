@@ -10,6 +10,8 @@ use crate::chat_images::ChatImages;
 use crate::core_session::CoreSession;
 use crate::demo::DemoSession;
 use crate::dialogs;
+#[cfg(windows)]
+use crate::global_keys::GlobalKeys;
 use crate::settings::{self, Settings};
 use crate::state::{AppState, ChatEntry, Screen, UserAction};
 use crate::ui_model::{SessionPort, UiCommand};
@@ -34,6 +36,8 @@ pub struct App {
     images: ChatImages,
     save_results: Receiver<Result<PathBuf, ()>>,
     save_sender: Sender<Result<PathBuf, ()>>,
+    #[cfg(windows)]
+    global_keys: Option<GlobalKeys>,
     fullscreen: bool,
 }
 
@@ -52,6 +56,8 @@ impl App {
             (Box::new(CoreSession::new(wake)), MEDIA_LABEL)
         };
         let (save_sender, save_results) = channel();
+        #[cfg(windows)]
+        let global_keys = GlobalKeys::new(ctx);
         Self {
             state: AppState::new(settings),
             session,
@@ -61,6 +67,8 @@ impl App {
             images: ChatImages::default(),
             save_results,
             save_sender,
+            #[cfg(windows)]
+            global_keys,
             fullscreen: false,
         }
     }
@@ -179,8 +187,23 @@ impl App {
 }
 
 impl eframe::App for App {
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+    fn logic(&mut self, _ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.pump_session();
+        #[cfg(windows)]
+        if let Some(keys) = &mut self.global_keys {
+            if let Some(failed) = keys.sync(&self.state.hotkeys.registrations()) {
+                self.state.set_hotkey_failures(failed);
+            }
+            let pressed: Vec<UserAction> = keys
+                .pressed()
+                .into_iter()
+                .map(UserAction::HotkeyPressed)
+                .collect();
+            self.dispatch(pressed);
+        }
+    }
+
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.pump_saves();
         if let Some(label) = self.banner {
             views::screens::demo_banner(ui, label);
@@ -191,6 +214,7 @@ impl eframe::App for App {
             form,
             rooms,
             audio,
+            hotkeys,
             picker,
             ..
         } = &mut self.state;
@@ -204,7 +228,7 @@ impl eframe::App for App {
             }
             Screen::Error { message } => views::screens::error(ui, message),
         };
-        actions.extend(views::settings::show(ui.ctx(), audio));
+        actions.extend(views::settings::show(ui.ctx(), audio, hotkeys));
         actions.extend(views::share::picker(ui.ctx(), picker));
         let actions = self.resolve_effects(ui.ctx(), actions);
         self.dispatch(actions);
