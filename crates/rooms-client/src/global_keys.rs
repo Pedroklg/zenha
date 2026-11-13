@@ -12,7 +12,7 @@ pub struct GlobalKeys {
     manager: GlobalHotKeyManager,
     active: Vec<(HotkeyAction, HotKey)>,
     applied: Vec<(HotkeyAction, String)>,
-    events: Receiver<u32>,
+    events: Receiver<(u32, bool)>,
 }
 
 impl GlobalKeys {
@@ -27,7 +27,11 @@ impl GlobalKeys {
         let (tx, events) = channel();
         let ctx = ctx.clone();
         GlobalHotKeyEvent::set_event_handler(Some(move |event: GlobalHotKeyEvent| {
-            if event.state == HotKeyState::Pressed && tx.send(event.id).is_ok() {
+            let pressed = match event.state {
+                HotKeyState::Pressed => true,
+                HotKeyState::Released => false,
+            };
+            if tx.send((event.id, pressed)).is_ok() {
                 ctx.request_repaint();
             }
         }));
@@ -70,13 +74,13 @@ impl GlobalKeys {
         Some(failed)
     }
 
-    pub fn pressed(&mut self) -> Vec<HotkeyAction> {
-        let mut actions = Vec::new();
-        while let Ok(id) = self.events.try_recv() {
+    pub fn events(&mut self) -> Vec<(HotkeyAction, bool)> {
+        let mut out = Vec::new();
+        while let Ok((id, pressed)) = self.events.try_recv() {
             if let Some(&(action, _)) = self.active.iter().find(|(_, hotkey)| hotkey.id() == id) {
-                actions.push(action);
+                out.push((action, pressed));
             }
         }
-        actions
+        out
     }
 }

@@ -8,8 +8,8 @@ use rooms_protocol::{
     ValidationError, validate_chat_text, validate_display_name, validate_room_name,
 };
 
-use crate::hotkeys::HotkeyAction;
-use crate::settings::{NoiseMode, Settings};
+use crate::hotkeys::{HotkeyAction, binding_label};
+use crate::settings::{NoiseMode, Settings, VoiceMode};
 use crate::ui_model::{
     AudioDeviceView, CaptureTargetView, Credentials, FeedHandle, FileTransferView, ParticipantView,
     SharePresetView, TargetKindView, UiCommand, UiEvent,
@@ -17,6 +17,7 @@ use crate::ui_model::{
 
 pub const MAX_CHAT_HISTORY: usize = 500;
 pub const ROOMS_REFRESH_INTERVAL: Duration = Duration::from_secs(3);
+pub const PTT_RELEASE_DELAY: Duration = Duration::from_millis(200);
 pub const DEFAULT_DEVICE_LABEL: &str = "Padrão do sistema";
 pub const MISSING_DEVICE_LABEL: &str = "(indisponível)";
 pub const LOADING_DEVICE_LABEL: &str = "Carregando...";
@@ -137,6 +138,7 @@ pub struct AudioState {
     pub input: Option<String>,
     pub output: Option<String>,
     pub noise: NoiseMode,
+    pub voice_mode: VoiceMode,
     pub stream_volume: u8,
     pub noise_gate: Option<i8>,
     pub mic_level: Option<MicLevelView>,
@@ -155,6 +157,7 @@ impl AudioState {
             input: settings.input_device.clone(),
             output: settings.output_device.clone(),
             noise: settings.noise_suppression,
+            voice_mode: settings.voice_mode,
             stream_volume: settings
                 .stream_volume
                 .unwrap_or(FULL_VOLUME)
@@ -177,6 +180,7 @@ impl AudioState {
 pub struct HotkeyState {
     pub mute: Option<String>,
     pub deafen: Option<String>,
+    pub ptt: Option<String>,
     pub capturing: Option<HotkeyAction>,
     pub capture_error: Option<String>,
     pub failed: Vec<HotkeyAction>,
@@ -187,6 +191,7 @@ impl HotkeyState {
         Self {
             mute: settings.mute_hotkey.clone(),
             deafen: settings.deafen_hotkey.clone(),
+            ptt: settings.ptt_hotkey.clone(),
             ..Self::default()
         }
     }
@@ -195,15 +200,17 @@ impl HotkeyState {
         match action {
             HotkeyAction::ToggleMute => self.mute.as_deref(),
             HotkeyAction::ToggleDeafen => self.deafen.as_deref(),
+            HotkeyAction::PushToTalk => self.ptt.as_deref(),
         }
     }
 
-    pub fn registrations(&self) -> Vec<(HotkeyAction, String)> {
+    pub fn registrations(&self, push_to_talk: bool) -> Vec<(HotkeyAction, String)> {
         if self.capturing.is_some() {
             return Vec::new();
         }
         HotkeyAction::ALL
             .into_iter()
+            .filter(|&action| action != HotkeyAction::PushToTalk || push_to_talk)
             .filter_map(|action| self.binding(action).map(|b| (action, b.to_owned())))
             .collect()
     }
@@ -472,12 +479,16 @@ pub struct RoomState {
     pub muted: bool,
     pub deafened: bool,
     muted_before_deafen: bool,
+    pub ptt_held: bool,
+    pub ptt_release_at: Option<Instant>,
+    pub mic_sent: bool,
     pub chat: ChatState,
     pub share: ShareState,
 }
 
 impl RoomState {
-    fn new(room: String, participants: Vec<ParticipantView>, muted: bool) -> Self {
+    fn new(room: String, participants: Vec<ParticipantView>, muted: bool, mode: VoiceMode) -> Self {
+        let mic_sent = muted || mode == VoiceMode::PushToTalk;
         Self {
             room,
             participants,
@@ -485,9 +496,25 @@ impl RoomState {
             muted,
             deafened: false,
             muted_before_deafen: muted,
+            ptt_held: false,
+            ptt_release_at: None,
+            mic_sent,
             chat: ChatState::new(),
             share: ShareState::default(),
         }
+    }
+
+    fn effective_muted(&self, mode: VoiceMode) -> bool {
+        self.muted
+            || (mode == VoiceMode::PushToTalk && !(self.ptt_held || self.ptt_release_at.is_some()))
+    }
+
+    fn sync_mic(&mut self, mode: VoiceMode) -> Option<UiCommand> {
+        let effective = self.effective_muted(mode);
+        (effective != self.mic_sent).then(|| {
+            self.mic_sent = effective;
+            UiCommand::SetMuted(effective)
+        })
     }
 
     fn upsert_participant(&mut self, participant: ParticipantView) {
@@ -501,28 +528,36 @@ impl RoomState {
         }
     }
 
-    fn toggle_mute(&mut self) -> Vec<UiCommand> {
+    fn toggle_mute(&mut self, mode: VoiceMode) -> Vec<UiCommand> {
         if self.deafened {
             return Vec::new();
         }
         self.muted = !self.muted;
         let cue = if self.muted { Cue::Muted } else { Cue::Unmuted };
-        vec![UiCommand::SetMuted(self.muted), UiCommand::PlayCue(cue)]
+        let mut commands = Vec::new();
+        if let Some(cmd) = self.sync_mic(mode) {
+            commands.push(cmd);
+        }
+        commands.push(UiCommand::PlayCue(cue));
+        commands
     }
 
-    fn toggle_deafen(&mut self) -> Vec<UiCommand> {
+    fn toggle_deafen(&mut self, mode: VoiceMode) -> Vec<UiCommand> {
         if self.deafened {
             self.deafened = false;
             self.muted = self.muted_before_deafen;
+            let effective = self.effective_muted(mode);
+            self.mic_sent = effective;
             vec![
                 UiCommand::SetDeafened(false),
-                UiCommand::SetMuted(self.muted),
+                UiCommand::SetMuted(effective),
                 UiCommand::PlayCue(Cue::Undeafened),
             ]
         } else {
             self.muted_before_deafen = self.muted;
             self.deafened = true;
             self.muted = true;
+            self.mic_sent = true;
             vec![
                 UiCommand::SetDeafened(true),
                 UiCommand::SetMuted(true),
@@ -582,6 +617,7 @@ pub enum UserAction {
     SelectInputDevice(Option<String>),
     SelectOutputDevice(Option<String>),
     SelectNoiseMode(NoiseMode),
+    SelectVoiceMode(VoiceMode),
     /// Applies the volume while the slider moves; `SaveAudioSettings` stores it once it stops.
     SetStreamVolume(u8),
     /// Applies the noise gate threshold at once; `SaveAudioSettings` stores it.
@@ -652,12 +688,65 @@ impl AppState {
             input_device: self.audio.input.clone(),
             output_device: self.audio.output.clone(),
             noise_suppression: self.audio.noise,
+            voice_mode: self.audio.voice_mode,
             stream_volume: (self.audio.stream_volume != FULL_VOLUME)
                 .then_some(self.audio.stream_volume),
             noise_gate_db: self.audio.noise_gate,
             mute_hotkey: self.hotkeys.mute.clone(),
             deafen_hotkey: self.hotkeys.deafen.clone(),
+            ptt_hotkey: self.hotkeys.ptt.clone(),
             ..self.form.to_settings()
+        }
+    }
+
+    pub fn push_to_talk(&mut self, pressed: bool, now: Instant) -> Vec<UiCommand> {
+        if self.audio.voice_mode != VoiceMode::PushToTalk {
+            return Vec::new();
+        }
+        let Screen::InRoom(room) = &mut self.screen else {
+            return Vec::new();
+        };
+        if pressed {
+            room.ptt_held = true;
+            room.ptt_release_at = None;
+            room.sync_mic(self.audio.voice_mode).into_iter().collect()
+        } else {
+            if room.ptt_held {
+                room.ptt_held = false;
+                room.ptt_release_at = Some(now + PTT_RELEASE_DELAY);
+            }
+            Vec::new()
+        }
+    }
+
+    pub fn poll_push_to_talk(&mut self, now: Instant) -> (Vec<UiCommand>, Option<Duration>) {
+        let Screen::InRoom(room) = &mut self.screen else {
+            return (Vec::new(), None);
+        };
+        let Some(deadline) = room.ptt_release_at else {
+            return (Vec::new(), None);
+        };
+        if now >= deadline {
+            room.ptt_release_at = None;
+            let commands = room.sync_mic(self.audio.voice_mode).into_iter().collect();
+            (commands, None)
+        } else {
+            (Vec::new(), Some(deadline - now))
+        }
+    }
+
+    pub fn push_to_talk_hint(&self) -> Option<String> {
+        if self.audio.voice_mode != VoiceMode::PushToTalk {
+            return None;
+        }
+        if let Screen::InRoom(room) = &self.screen
+            && !room.effective_muted(VoiceMode::PushToTalk)
+        {
+            return Some("Falando (push-to-talk)".to_owned());
+        }
+        match self.hotkeys.ptt.as_deref() {
+            Some(binding) => Some(format!("Segure {} para falar", binding_label(binding))),
+            None => Some("Defina a tecla de push-to-talk nas Configurações".to_owned()),
         }
     }
 
@@ -681,6 +770,7 @@ impl AppState {
     }
 
     pub fn handle_action(&mut self, action: UserAction) -> Vec<UiCommand> {
+        let voice_mode = self.audio.voice_mode;
         match action {
             UserAction::SubmitLogin => self.submit_login(),
             UserAction::CancelConnect => self.cancel_connect(),
@@ -692,8 +782,8 @@ impl AppState {
             }
             UserAction::Leave => self.leave(),
             UserAction::SwitchRoom(room) => self.switch_room(room),
-            UserAction::ToggleMute => self.with_room(RoomState::toggle_mute),
-            UserAction::ToggleDeafen => self.with_room(RoomState::toggle_deafen),
+            UserAction::ToggleMute => self.with_room(|room| room.toggle_mute(voice_mode)),
+            UserAction::ToggleDeafen => self.with_room(|room| room.toggle_deafen(voice_mode)),
             UserAction::SendChat => self.with_room(RoomState::send_chat),
             UserAction::AttachFile(path) => self.with_room(|_| vec![UiCommand::SendFile { path }]),
             UserAction::PickFile | UserAction::SaveReceivedFile { .. } => Vec::new(),
@@ -734,14 +824,18 @@ impl AppState {
                     return Vec::new();
                 }
                 match action {
-                    HotkeyAction::ToggleMute => self.with_room(RoomState::toggle_mute),
-                    HotkeyAction::ToggleDeafen => self.with_room(RoomState::toggle_deafen),
+                    HotkeyAction::ToggleMute => self.with_room(|room| room.toggle_mute(voice_mode)),
+                    HotkeyAction::ToggleDeafen => {
+                        self.with_room(|room| room.toggle_deafen(voice_mode))
+                    }
+                    HotkeyAction::PushToTalk => Vec::new(),
                 }
             }
             UserAction::RefreshAudioDevices => vec![UiCommand::RefreshAudioDevices],
             UserAction::SelectInputDevice(id) => self.select_input(id),
             UserAction::SelectOutputDevice(id) => self.select_output(id),
             UserAction::SelectNoiseMode(mode) => self.select_noise(mode),
+            UserAction::SelectVoiceMode(mode) => self.select_voice_mode(mode),
             UserAction::SetStreamVolume(percent) => {
                 let percent = percent.min(FULL_VOLUME);
                 if self.audio.stream_volume == percent {
@@ -848,7 +942,7 @@ impl AppState {
         if let Some(threshold) = settings.noise_gate_db {
             commands.push(UiCommand::SetNoiseGate(Some(threshold)));
         }
-        if settings.muted_on_join {
+        if settings.muted_on_join || settings.voice_mode == VoiceMode::PushToTalk {
             commands.push(UiCommand::SetMuted(true));
         }
         commands.push(UiCommand::Join { room: room.clone() });
@@ -933,13 +1027,25 @@ impl AppState {
         vec![UiCommand::SetNoiseSuppression(mode)]
     }
 
-    fn set_hotkey(&mut self, action: HotkeyAction, binding: Option<String>) {
-        let other = match action {
-            HotkeyAction::ToggleMute => HotkeyAction::ToggleDeafen,
-            HotkeyAction::ToggleDeafen => HotkeyAction::ToggleMute,
+    fn select_voice_mode(&mut self, mode: VoiceMode) -> Vec<UiCommand> {
+        if self.audio.voice_mode == mode {
+            return Vec::new();
+        }
+        self.audio.voice_mode = mode;
+        self.pending_save = Some(self.settings_snapshot());
+        let Screen::InRoom(room) = &mut self.screen else {
+            return Vec::new();
         };
+        room.ptt_held = false;
+        room.ptt_release_at = None;
+        room.sync_mic(mode).into_iter().collect()
+    }
+
+    fn set_hotkey(&mut self, action: HotkeyAction, binding: Option<String>) {
         if let Some(ref b) = binding
-            && self.hotkeys.binding(other) == Some(b.as_str())
+            && let Some(other) = HotkeyAction::ALL
+                .into_iter()
+                .find(|&other| other != action && self.hotkeys.binding(other) == Some(b.as_str()))
         {
             self.hotkeys.capture_error = Some(format!(
                 "Esse atalho já está em uso em \"{}\".",
@@ -950,6 +1056,7 @@ impl AppState {
         match action {
             HotkeyAction::ToggleMute => self.hotkeys.mute = binding,
             HotkeyAction::ToggleDeafen => self.hotkeys.deafen = binding,
+            HotkeyAction::PushToTalk => self.hotkeys.ptt = binding,
         }
         self.hotkeys.capturing = None;
         self.hotkeys.capture_error = None;
@@ -1039,7 +1146,12 @@ impl AppState {
     fn on_joined(&mut self, room: String, participants: Vec<ParticipantView>) {
         match &mut self.screen {
             Screen::Connecting { .. } => {
-                let state = RoomState::new(room, participants, self.form.muted_on_join);
+                let state = RoomState::new(
+                    room,
+                    participants,
+                    self.form.muted_on_join,
+                    self.audio.voice_mode,
+                );
                 self.screen = Screen::InRoom(Box::new(state));
                 self.last_refresh = None;
             }
@@ -1101,10 +1213,12 @@ mod tests {
             input_device: None,
             output_device: None,
             noise_suppression: NoiseMode::default(),
+            voice_mode: VoiceMode::default(),
             stream_volume: None,
             noise_gate_db: None,
             mute_hotkey: None,
             deafen_hotkey: None,
+            ptt_hotkey: None,
         }
     }
 
@@ -2161,6 +2275,7 @@ mod tests {
         let mut settings = valid_settings();
         settings.mute_hotkey = Some("control+KeyM".to_owned());
         settings.deafen_hotkey = Some("control+KeyD".to_owned());
+        settings.ptt_hotkey = Some("F9".to_owned());
         let mut state = AppState::new(&settings);
         assert_eq!(
             state.hotkeys.binding(HotkeyAction::ToggleMute),
@@ -2170,17 +2285,27 @@ mod tests {
             state.hotkeys.binding(HotkeyAction::ToggleDeafen),
             Some("control+KeyD")
         );
+        assert_eq!(state.hotkeys.binding(HotkeyAction::PushToTalk), Some("F9"));
         assert_eq!(
-            state.hotkeys.registrations(),
+            state.hotkeys.registrations(false),
             vec![
                 (HotkeyAction::ToggleMute, "control+KeyM".to_owned()),
                 (HotkeyAction::ToggleDeafen, "control+KeyD".to_owned()),
             ]
         );
+        assert_eq!(
+            state.hotkeys.registrations(true),
+            vec![
+                (HotkeyAction::ToggleMute, "control+KeyM".to_owned()),
+                (HotkeyAction::ToggleDeafen, "control+KeyD".to_owned()),
+                (HotkeyAction::PushToTalk, "F9".to_owned()),
+            ]
+        );
 
         state.handle_action(UserAction::StartHotkeyCapture(HotkeyAction::ToggleMute));
         assert_eq!(state.hotkeys.capturing, Some(HotkeyAction::ToggleMute));
-        assert!(state.hotkeys.registrations().is_empty());
+        assert!(state.hotkeys.registrations(false).is_empty());
+        assert!(state.hotkeys.registrations(true).is_empty());
 
         state.handle_action(UserAction::RejectHotkey("erro".to_owned()));
         assert_eq!(state.hotkeys.capture_error.as_deref(), Some("erro"));
@@ -2189,7 +2314,8 @@ mod tests {
         state.handle_action(UserAction::CancelHotkeyCapture);
         assert_eq!(state.hotkeys.capturing, None);
         assert_eq!(state.hotkeys.capture_error, None);
-        assert_eq!(state.hotkeys.registrations().len(), 2);
+        assert_eq!(state.hotkeys.registrations(false).len(), 2);
+        assert_eq!(state.hotkeys.registrations(true).len(), 3);
 
         state.handle_action(UserAction::OpenSettings);
         state.handle_action(UserAction::StartHotkeyCapture(HotkeyAction::ToggleDeafen));
@@ -2241,11 +2367,32 @@ mod tests {
             Some("shift+KeyD")
         );
 
+        state.handle_action(UserAction::StartHotkeyCapture(HotkeyAction::PushToTalk));
+        state.handle_action(UserAction::SetHotkey(
+            HotkeyAction::PushToTalk,
+            Some("shift+KeyD".to_owned()),
+        ));
+        assert_eq!(state.hotkeys.ptt, None);
+        assert_eq!(
+            state.hotkeys.capture_error.as_deref(),
+            Some("Esse atalho já está em uso em \"Ensurdecer\".")
+        );
+        state.handle_action(UserAction::SetHotkey(
+            HotkeyAction::PushToTalk,
+            Some("F9".to_owned()),
+        ));
+        assert_eq!(state.hotkeys.ptt.as_deref(), Some("F9"));
+        assert_eq!(
+            state.take_pending_save().unwrap().ptt_hotkey.as_deref(),
+            Some("F9")
+        );
+
         state.handle_action(UserAction::SetHotkey(HotkeyAction::ToggleMute, None));
         assert_eq!(state.hotkeys.mute, None);
         let saved = state.take_pending_save().unwrap();
         assert_eq!(saved.mute_hotkey, None);
         assert_eq!(saved.deafen_hotkey.as_deref(), Some("shift+KeyD"));
+        assert_eq!(saved.ptt_hotkey.as_deref(), Some("F9"));
     }
 
     #[test]
@@ -2335,5 +2482,278 @@ mod tests {
                 UiCommand::PlayCue(Cue::Undeafened)
             ]
         );
+    }
+
+    fn ptt_state_in_room() -> AppState {
+        let mut settings = valid_settings();
+        settings.voice_mode = VoiceMode::PushToTalk;
+        settings.ptt_hotkey = Some("control+Space".to_owned());
+        let mut state = AppState::new(&settings);
+        state.form.invite_code = "segredo".to_owned();
+        in_room(&mut state);
+        state.take_pending_save();
+        state
+    }
+
+    #[test]
+    fn login_in_push_to_talk_sends_single_mute_and_starts_unmuted_in_ui() {
+        let mut settings = valid_settings();
+        settings.voice_mode = VoiceMode::PushToTalk;
+        let mut state = AppState::new(&settings);
+        state.form.invite_code = "segredo".to_owned();
+        assert_eq!(
+            state.handle_action(UserAction::SubmitLogin),
+            vec![
+                UiCommand::SetMuted(true),
+                UiCommand::Join {
+                    room: "geral".to_owned()
+                }
+            ]
+        );
+        state.apply_event(UiEvent::Joined {
+            room: "geral".to_owned(),
+            participants: vec![],
+        });
+        assert!(!room(&state).muted);
+        assert!(room(&state).mic_sent);
+
+        let mut both = AppState::new(&Settings {
+            muted_on_join: true,
+            ..settings
+        });
+        both.form.invite_code = "segredo".to_owned();
+        assert_eq!(
+            both.handle_action(UserAction::SubmitLogin),
+            vec![
+                UiCommand::SetMuted(true),
+                UiCommand::Join {
+                    room: "geral".to_owned()
+                }
+            ]
+        );
+        both.apply_event(UiEvent::Joined {
+            room: "geral".to_owned(),
+            participants: vec![],
+        });
+        assert!(room(&both).muted);
+        assert!(room(&both).mic_sent);
+    }
+
+    #[test]
+    fn push_to_talk_opens_on_press_and_closes_after_release_delay() {
+        let mut state = ptt_state_in_room();
+        let t0 = Instant::now();
+        assert_eq!(
+            state.push_to_talk_hint().as_deref(),
+            Some("Segure Ctrl+Espaço para falar")
+        );
+
+        assert_eq!(
+            state.push_to_talk(true, t0),
+            vec![UiCommand::SetMuted(false)]
+        );
+        assert!(room(&state).ptt_held);
+        assert!(!room(&state).mic_sent);
+        assert_eq!(
+            state.push_to_talk_hint().as_deref(),
+            Some("Falando (push-to-talk)")
+        );
+        assert!(state.push_to_talk(true, t0).is_empty());
+
+        assert!(state.push_to_talk(false, t0).is_empty());
+        assert!(!room(&state).ptt_held);
+        assert_eq!(room(&state).ptt_release_at, Some(t0 + PTT_RELEASE_DELAY));
+        assert!(!room(&state).mic_sent);
+        assert_eq!(
+            state.push_to_talk_hint().as_deref(),
+            Some("Falando (push-to-talk)")
+        );
+
+        let (cmds, wait) = state.poll_push_to_talk(t0 + Duration::from_millis(50));
+        assert!(cmds.is_empty());
+        assert_eq!(wait, Some(Duration::from_millis(150)));
+        assert!(!room(&state).mic_sent);
+
+        let (cmds, wait) = state.poll_push_to_talk(t0 + PTT_RELEASE_DELAY);
+        assert_eq!(cmds, vec![UiCommand::SetMuted(true)]);
+        assert_eq!(wait, None);
+        assert_eq!(room(&state).ptt_release_at, None);
+        assert!(room(&state).mic_sent);
+        assert_eq!(
+            state.push_to_talk_hint().as_deref(),
+            Some("Segure Ctrl+Espaço para falar")
+        );
+        assert_eq!(
+            state.poll_push_to_talk(t0 + PTT_RELEASE_DELAY),
+            (Vec::new(), None)
+        );
+    }
+
+    #[test]
+    fn repressing_during_release_delay_cancels_timer_without_extra_command() {
+        let mut state = ptt_state_in_room();
+        let t0 = Instant::now();
+        assert_eq!(
+            state.push_to_talk(true, t0),
+            vec![UiCommand::SetMuted(false)]
+        );
+        assert!(state.push_to_talk(false, t0).is_empty());
+        assert!(
+            state
+                .push_to_talk(true, t0 + Duration::from_millis(100))
+                .is_empty()
+        );
+        assert!(room(&state).ptt_held);
+        assert_eq!(room(&state).ptt_release_at, None);
+        assert_eq!(
+            state.poll_push_to_talk(t0 + PTT_RELEASE_DELAY),
+            (Vec::new(), None)
+        );
+        assert!(!room(&state).mic_sent);
+    }
+
+    #[test]
+    fn manual_mute_overrides_push_to_talk() {
+        let mut state = ptt_state_in_room();
+        let t0 = Instant::now();
+        assert_eq!(
+            state.push_to_talk(true, t0),
+            vec![UiCommand::SetMuted(false)]
+        );
+        assert_eq!(
+            state.handle_action(UserAction::ToggleMute),
+            vec![UiCommand::SetMuted(true), UiCommand::PlayCue(Cue::Muted)]
+        );
+        assert!(room(&state).muted);
+        assert!(room(&state).mic_sent);
+        assert_eq!(
+            state.push_to_talk_hint().as_deref(),
+            Some("Segure Ctrl+Espaço para falar")
+        );
+
+        assert!(state.push_to_talk(false, t0).is_empty());
+        assert_eq!(
+            state.poll_push_to_talk(t0 + PTT_RELEASE_DELAY),
+            (Vec::new(), None)
+        );
+        assert!(state.push_to_talk(true, t0 + PTT_RELEASE_DELAY).is_empty());
+        assert!(room(&state).mic_sent);
+
+        assert_eq!(
+            state.handle_action(UserAction::ToggleMute),
+            vec![UiCommand::SetMuted(false), UiCommand::PlayCue(Cue::Unmuted)]
+        );
+        assert!(!room(&state).muted);
+        assert!(!room(&state).mic_sent);
+    }
+
+    #[test]
+    fn deafen_during_push_to_talk_mutes_and_undeafen_respects_ptt_state() {
+        let mut state = ptt_state_in_room();
+        let t0 = Instant::now();
+        assert_eq!(
+            state.push_to_talk(true, t0),
+            vec![UiCommand::SetMuted(false)]
+        );
+        assert_eq!(
+            state.handle_action(UserAction::ToggleDeafen),
+            vec![
+                UiCommand::SetDeafened(true),
+                UiCommand::SetMuted(true),
+                UiCommand::PlayCue(Cue::Deafened)
+            ]
+        );
+        assert!(room(&state).deafened);
+        assert!(room(&state).mic_sent);
+
+        assert_eq!(
+            state.handle_action(UserAction::ToggleDeafen),
+            vec![
+                UiCommand::SetDeafened(false),
+                UiCommand::SetMuted(false),
+                UiCommand::PlayCue(Cue::Undeafened)
+            ]
+        );
+        assert!(!room(&state).mic_sent);
+
+        state.handle_action(UserAction::ToggleDeafen);
+        state.push_to_talk(false, t0);
+        state.poll_push_to_talk(t0 + PTT_RELEASE_DELAY);
+        assert_eq!(
+            state.handle_action(UserAction::ToggleDeafen),
+            vec![
+                UiCommand::SetDeafened(false),
+                UiCommand::SetMuted(true),
+                UiCommand::PlayCue(Cue::Undeafened)
+            ]
+        );
+        assert!(!room(&state).muted);
+        assert!(room(&state).mic_sent);
+    }
+
+    #[test]
+    fn switching_voice_mode_in_room_resets_ptt_and_syncs_mic() {
+        let mut state = state_with_code();
+        in_room(&mut state);
+        state.take_pending_save();
+        assert_eq!(state.push_to_talk_hint(), None);
+
+        assert_eq!(
+            state.handle_action(UserAction::SelectVoiceMode(VoiceMode::PushToTalk)),
+            vec![UiCommand::SetMuted(true)]
+        );
+        assert_eq!(
+            state.take_pending_save().unwrap().voice_mode,
+            VoiceMode::PushToTalk
+        );
+        assert_eq!(
+            state.push_to_talk_hint().as_deref(),
+            Some("Defina a tecla de push-to-talk nas Configurações")
+        );
+        assert!(
+            state
+                .handle_action(UserAction::SelectVoiceMode(VoiceMode::PushToTalk))
+                .is_empty()
+        );
+
+        let t0 = Instant::now();
+        assert_eq!(
+            state.push_to_talk(true, t0),
+            vec![UiCommand::SetMuted(false)]
+        );
+        assert!(
+            state
+                .handle_action(UserAction::SelectVoiceMode(VoiceMode::VoiceActivity))
+                .is_empty()
+        );
+        assert!(!room(&state).ptt_held);
+        assert_eq!(room(&state).ptt_release_at, None);
+        assert!(!room(&state).mic_sent);
+
+        assert_eq!(
+            state.handle_action(UserAction::SelectVoiceMode(VoiceMode::PushToTalk)),
+            vec![UiCommand::SetMuted(true)]
+        );
+        assert_eq!(
+            state.handle_action(UserAction::SelectVoiceMode(VoiceMode::VoiceActivity)),
+            vec![UiCommand::SetMuted(false)]
+        );
+    }
+
+    #[test]
+    fn push_to_talk_outside_room_or_in_voice_activity_mode_does_nothing() {
+        let t0 = Instant::now();
+        let mut state = state_with_code();
+        state.handle_action(UserAction::SelectVoiceMode(VoiceMode::PushToTalk));
+        assert!(state.push_to_talk(true, t0).is_empty());
+        assert!(state.push_to_talk(false, t0).is_empty());
+        assert_eq!(state.poll_push_to_talk(t0), (Vec::new(), None));
+
+        let mut va = state_with_code();
+        in_room(&mut va);
+        assert!(va.push_to_talk(true, t0).is_empty());
+        assert!(va.push_to_talk(false, t0).is_empty());
+        assert!(!room(&va).ptt_held);
+        assert_eq!(va.poll_push_to_talk(t0), (Vec::new(), None));
     }
 }

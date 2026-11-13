@@ -13,6 +13,7 @@ pub fn show(
     renderer: &mut VideoRenderer,
     images: &mut ChatImages,
     stream_volume: u8,
+    ptt_hint: Option<&str>,
 ) -> Vec<UserAction> {
     let mut actions = Vec::new();
 
@@ -33,7 +34,7 @@ pub fn show(
 
     egui::Panel::bottom("bottom_bar").show(ui, |ui| {
         ui.add_space(4.0);
-        bottom_bar(ui, state, &mut actions);
+        bottom_bar(ui, state, ptt_hint, &mut actions);
         ui.add_space(4.0);
     });
 
@@ -177,7 +178,12 @@ fn participants(ui: &mut egui::Ui, state: &RoomState, actions: &mut Vec<UserActi
     });
 }
 
-fn bottom_bar(ui: &mut egui::Ui, state: &RoomState, actions: &mut Vec<UserAction>) {
+fn bottom_bar(
+    ui: &mut egui::Ui,
+    state: &RoomState,
+    ptt_hint: Option<&str>,
+    actions: &mut Vec<UserAction>,
+) {
     ui.horizontal(|ui| {
         let mute_text = if state.muted {
             "Microfone mudo"
@@ -187,6 +193,9 @@ fn bottom_bar(ui: &mut egui::Ui, state: &RoomState, actions: &mut Vec<UserAction
         let mute = egui::Button::new(mute_text).selected(state.muted);
         if ui.add_enabled(!state.deafened, mute).clicked() {
             actions.push(UserAction::ToggleMute);
+        }
+        if let Some(hint) = ptt_hint {
+            ui.small(hint);
         }
 
         let deafen_text = if state.deafened {

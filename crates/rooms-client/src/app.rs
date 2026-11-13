@@ -12,6 +12,10 @@ use crate::demo::DemoSession;
 use crate::dialogs;
 #[cfg(windows)]
 use crate::global_keys::GlobalKeys;
+#[cfg(windows)]
+use crate::hotkeys::HotkeyAction;
+#[cfg(windows)]
+use crate::settings::VoiceMode;
 use crate::settings::{self, Settings};
 use crate::state::{AppState, ChatEntry, Screen, UserAction};
 use crate::ui_model::{SessionPort, UiCommand};
@@ -187,19 +191,36 @@ impl App {
 }
 
 impl eframe::App for App {
-    fn logic(&mut self, _ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.pump_session();
+        let now = Instant::now();
         #[cfg(windows)]
         if let Some(keys) = &mut self.global_keys {
-            if let Some(failed) = keys.sync(&self.state.hotkeys.registrations()) {
+            let ptt = self.state.audio.voice_mode == VoiceMode::PushToTalk;
+            if let Some(failed) = keys.sync(&self.state.hotkeys.registrations(ptt)) {
                 self.state.set_hotkey_failures(failed);
             }
-            let pressed: Vec<UserAction> = keys
-                .pressed()
-                .into_iter()
-                .map(UserAction::HotkeyPressed)
-                .collect();
-            self.dispatch(pressed);
+            for (action, pressed) in keys.events() {
+                match action {
+                    HotkeyAction::ToggleMute | HotkeyAction::ToggleDeafen => {
+                        if pressed {
+                            self.dispatch(vec![UserAction::HotkeyPressed(action)]);
+                        }
+                    }
+                    HotkeyAction::PushToTalk => {
+                        for command in self.state.push_to_talk(pressed, now) {
+                            self.session.send(command);
+                        }
+                    }
+                }
+            }
+        }
+        let (commands, wait) = self.state.poll_push_to_talk(now);
+        for command in commands {
+            self.session.send(command);
+        }
+        if let Some(wait) = wait {
+            ctx.request_repaint_after(wait);
         }
     }
 
@@ -209,6 +230,7 @@ impl eframe::App for App {
             views::screens::demo_banner(ui, label);
         }
 
+        let ptt_hint = self.state.push_to_talk_hint();
         let AppState {
             screen,
             form,
@@ -223,9 +245,15 @@ impl eframe::App for App {
         let mut actions = match screen {
             Screen::Login => views::login::show(ui, form),
             Screen::Connecting { room } => views::screens::connecting(ui, room),
-            Screen::InRoom(room) => {
-                views::room::show(ui, room, rooms, renderer, images, audio.stream_volume)
-            }
+            Screen::InRoom(room) => views::room::show(
+                ui,
+                room,
+                rooms,
+                renderer,
+                images,
+                audio.stream_volume,
+                ptt_hint.as_deref(),
+            ),
             Screen::Error { message } => views::screens::error(ui, message),
         };
         actions.extend(views::settings::show(ui.ctx(), audio, hotkeys));

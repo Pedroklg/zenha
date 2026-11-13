@@ -1,7 +1,7 @@
 use eframe::egui;
 
 use crate::hotkeys::{HotkeyAction, binding_from_key, binding_label};
-use crate::settings::NoiseMode;
+use crate::settings::{NoiseMode, VoiceMode};
 use crate::state::{AudioState, DEFAULT_DEVICE_LABEL, HotkeyState, MicLevelView, UserAction};
 use crate::ui_model::AudioDeviceView;
 
@@ -94,14 +94,35 @@ fn content(
     if ui.button("Atualizar lista").clicked() {
         actions.push(UserAction::RefreshAudioDevices);
     }
+    ui.add_space(8.0);
+
+    ui.label("Modo de voz");
+    egui::ComboBox::from_id_salt("voice_mode")
+        .selected_text(audio.voice_mode.label())
+        .width(COMBO_WIDTH)
+        .show_ui(ui, |ui| {
+            for mode in VoiceMode::ALL {
+                if ui
+                    .selectable_label(audio.voice_mode == mode, mode.label())
+                    .clicked()
+                {
+                    actions.push(UserAction::SelectVoiceMode(mode));
+                }
+            }
+        });
 
     ui.separator();
     ui.heading("Atalhos globais");
     ui.small("Funcionam com o app minimizado e com um jogo em foco.");
-    hotkeys_section(ui, hotkeys, actions);
+    hotkeys_section(ui, audio.voice_mode, hotkeys, actions);
 }
 
-fn hotkeys_section(ui: &mut egui::Ui, hotkeys: &HotkeyState, actions: &mut Vec<UserAction>) {
+fn hotkeys_section(
+    ui: &mut egui::Ui,
+    voice_mode: VoiceMode,
+    hotkeys: &HotkeyState,
+    actions: &mut Vec<UserAction>,
+) {
     if let Some(capturing) = hotkeys.capturing {
         for event in ui.input(|i| i.events.clone()) {
             if let egui::Event::Key {
@@ -153,6 +174,15 @@ fn hotkeys_section(ui: &mut egui::Ui, hotkeys: &HotkeyState, actions: &mut Vec<U
                 }
             }
         });
+        if action == HotkeyAction::PushToTalk {
+            ui.small("Usado só no modo Push-to-talk.");
+            if voice_mode == VoiceMode::PushToTalk && hotkeys.ptt.is_none() {
+                ui.colored_label(
+                    ERROR_COLOR,
+                    "Defina a tecla de push-to-talk; sem ela o microfone fica fechado.",
+                );
+            }
+        }
         if hotkeys.capturing == Some(action)
             && let Some(err) = &hotkeys.capture_error
         {

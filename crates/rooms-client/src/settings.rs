@@ -33,6 +33,25 @@ impl NoiseMode {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VoiceMode {
+    #[default]
+    VoiceActivity,
+    PushToTalk,
+}
+
+impl VoiceMode {
+    pub const ALL: [VoiceMode; 2] = [Self::VoiceActivity, Self::PushToTalk];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::VoiceActivity => "Detecção de voz",
+            Self::PushToTalk => "Push-to-talk",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -43,6 +62,7 @@ pub struct Settings {
     pub input_device: Option<String>,
     pub output_device: Option<String>,
     pub noise_suppression: NoiseMode,
+    pub voice_mode: VoiceMode,
     /// Volume do som das transmissões, de 0 a 100; ausente significa 100.
     pub stream_volume: Option<u8>,
     /// Limiar da porta de ruído em dBFS (-70 a -20); ausente significa desligada.
@@ -50,6 +70,7 @@ pub struct Settings {
     /// Atalho global no formato do `global-hotkey` (ex.: "shift+control+KeyM"); ausente = nenhum.
     pub mute_hotkey: Option<String>,
     pub deafen_hotkey: Option<String>,
+    pub ptt_hotkey: Option<String>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -129,10 +150,12 @@ mod tests {
             input_device: Some("{0.0.1.00000000}.{abc}".to_owned()),
             output_device: None,
             noise_suppression: NoiseMode::Enhanced,
+            voice_mode: VoiceMode::PushToTalk,
             stream_volume: Some(40),
             noise_gate_db: Some(-45),
             mute_hotkey: Some("shift+control+KeyM".to_owned()),
             deafen_hotkey: Some("alt+KeyD".to_owned()),
+            ptt_hotkey: Some("F9".to_owned()),
         };
         save(&path, &settings).unwrap();
         assert_eq!(load(&path), settings);
@@ -203,6 +226,8 @@ mod tests {
         assert!(loaded.muted_on_join);
         assert_eq!(loaded.input_device, None);
         assert_eq!(loaded.output_device, None);
+        assert_eq!(loaded.voice_mode, VoiceMode::VoiceActivity);
+        assert_eq!(loaded.ptt_hotkey, None);
         std::fs::remove_dir_all(dir).unwrap();
     }
 

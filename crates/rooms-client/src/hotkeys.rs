@@ -6,15 +6,17 @@ use eframe::egui::{self, Key};
 pub enum HotkeyAction {
     ToggleMute,
     ToggleDeafen,
+    PushToTalk,
 }
 
 impl HotkeyAction {
-    pub const ALL: [HotkeyAction; 2] = [Self::ToggleMute, Self::ToggleDeafen];
+    pub const ALL: [HotkeyAction; 3] = [Self::ToggleMute, Self::ToggleDeafen, Self::PushToTalk];
 
     pub fn label(self) -> &'static str {
         match self {
             Self::ToggleMute => "Mutar microfone",
             Self::ToggleDeafen => "Ensurdecer",
+            Self::PushToTalk => "Push-to-talk",
         }
     }
 }
@@ -470,9 +472,14 @@ mod tests {
         assert_eq!(binding_label("alt+BracketLeft"), "Alt+BracketLeft");
         assert_eq!(HotkeyAction::ToggleMute.label(), "Mutar microfone");
         assert_eq!(HotkeyAction::ToggleDeafen.label(), "Ensurdecer");
+        assert_eq!(HotkeyAction::PushToTalk.label(), "Push-to-talk");
         assert_eq!(
             HotkeyAction::ALL,
-            [HotkeyAction::ToggleMute, HotkeyAction::ToggleDeafen]
+            [
+                HotkeyAction::ToggleMute,
+                HotkeyAction::ToggleDeafen,
+                HotkeyAction::PushToTalk
+            ]
         );
     }
 
