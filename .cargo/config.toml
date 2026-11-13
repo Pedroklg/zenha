@@ -1,0 +1,9 @@
+[alias]
+ci = "run --quiet --package xtask -- ci"
+xtask = "run --quiet --package xtask --"
+lint = "clippy --workspace --all-targets -- -D warnings"
+client = "run --package rooms-client"
+server = "run --package rooms-token-server"
+
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]

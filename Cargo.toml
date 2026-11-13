@@ -1,0 +1,65 @@
+[workspace]
+resolver = "3"
+members = ["crates/*", "xtask"]
+default-members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97"
+publish = false
+
+[workspace.dependencies]
+rooms-protocol = { path = "crates/rooms-protocol" }
+rooms-core = { path = "crates/rooms-core" }
+
+anyhow = "1.0"
+async-trait = "0.1"
+axum = "0.8"
+directories = "6.0"
+dotenvy = "0.15"
+deep_filter = { git = "https://github.com/Rikorose/DeepFilterNet", rev = "978576aa8400552a4ce9730838c635aa30db5e61", default-features = false, features = ["tract", "default-model"] }
+eframe = "0.37"
+futures-util = { version = "0.3", default-features = false }
+http-body-util = "0.1"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp"] }
+ndarray = "0.15"
+nnnoiseless = { version = "0.5.2", default-features = false }
+livekit = { version = "=0.10.1", default-features = false, features = ["native", "rustls-tls-webpki-roots"] }
+livekit-api = { version = "=0.10.1", default-features = false, features = ["services", "access-token", "rustls-tls-webpki-roots"] }
+rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std", "tls12"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+subtle = "2.6"
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
+thiserror = "2.0"
+tokio = { version = "1.54", features = ["macros", "rt-multi-thread", "net", "signal", "sync", "time"] }
+tower = { version = "0.5", features = ["util"] }
+tracing = "0.1"
+uuid = { version = "1.10", features = ["v4"] }
+wasapi = "=0.27.0"
+windows = { version = "0.62.2", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+unused_must_use = "deny"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+dbg_macro = "warn"
+expect_used = "warn"
+panic = "warn"
+todo = "warn"
+unwrap_used = "warn"
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "debuginfo"
