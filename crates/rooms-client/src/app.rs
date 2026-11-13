@@ -10,6 +10,7 @@ use crate::chat_images::ChatImages;
 use crate::core_session::CoreSession;
 use crate::demo::DemoSession;
 use crate::dialogs;
+use crate::format::server_host;
 #[cfg(windows)]
 use crate::global_keys::GlobalKeys;
 #[cfg(windows)]
@@ -18,6 +19,7 @@ use crate::hotkeys::HotkeyAction;
 use crate::settings::VoiceMode;
 use crate::settings::{self, Settings};
 use crate::state::{AppState, ChatEntry, Screen, UserAction};
+use crate::theme;
 #[cfg(windows)]
 use crate::tray::{Tray, TrayAction};
 use crate::ui_model::{SessionPort, UiCommand};
@@ -57,6 +59,7 @@ impl App {
         settings_path: Option<PathBuf>,
         demo_flag: bool,
     ) -> Self {
+        theme::install(ctx);
         let (session, banner): (Box<dyn SessionPort>, _) = if demo_flag {
             (Box::new(DemoSession::new()), Some(DEMO_LABEL))
         } else {
@@ -293,6 +296,7 @@ impl eframe::App for App {
                 ui,
                 room,
                 rooms,
+                server_host(&form.server_url),
                 renderer,
                 images,
                 audio.stream_volume,

@@ -153,6 +153,7 @@ pub enum UiEvent {
     Connecting,
     Joined {
         room: String,
+        local_identity: String,
         participants: Vec<ParticipantView>,
     },
     ParticipantJoined(ParticipantView),

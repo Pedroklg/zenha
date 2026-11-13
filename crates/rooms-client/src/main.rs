@@ -9,8 +9,10 @@ mod format;
 #[cfg(windows)]
 mod global_keys;
 mod hotkeys;
+mod icons;
 mod settings;
 mod state;
+mod theme;
 mod tray;
 mod ui_model;
 mod views;

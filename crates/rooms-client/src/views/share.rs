@@ -1,6 +1,7 @@
 use eframe::egui;
 
 use crate::state::{SharePicker, UserAction, WatchState, aspect_fit};
+use crate::theme;
 use crate::ui_model::{CaptureTargetView, SharePresetView};
 
 #[derive(Default)]
@@ -47,14 +48,14 @@ impl VideoRenderer {
         self.sync(ui.ctx(), watch);
         let avail = ui.available_size();
         let (rect, _) = ui.allocate_exact_size(avail, egui::Sense::hover());
-        ui.painter().rect_filled(rect, 0.0, egui::Color32::BLACK);
+        ui.painter().rect_filled(rect, 0.0, theme::VIDEO_BG);
         let Some(texture) = &self.texture else {
             ui.painter().text(
                 rect.center(),
                 egui::Align2::CENTER_CENTER,
                 "Aguardando vídeo...",
                 egui::FontId::proportional(16.0),
-                egui::Color32::GRAY,
+                theme::TEXT_WEAK,
             );
             return;
         };

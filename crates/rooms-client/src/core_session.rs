@@ -277,6 +277,7 @@ fn view(participant: Participant) -> ParticipantView {
 #[derive(Default)]
 struct Translator {
     room: Option<String>,
+    local_identity: String,
     participants: Vec<ParticipantView>,
     switch_pending: Cell<bool>,
 }
@@ -286,12 +287,16 @@ impl Translator {
         match event {
             Event::Connecting => vec![UiEvent::Connecting],
             Event::Joined {
-                room, participants, ..
+                room,
+                local_identity,
+                participants,
             } => {
                 self.room = Some(room.clone());
+                self.local_identity = local_identity.clone();
                 self.participants = participants.into_iter().map(view).collect();
                 vec![UiEvent::Joined {
                     room,
+                    local_identity,
                     participants: self.participants.clone(),
                 }]
             }
@@ -300,6 +305,7 @@ impl Translator {
                 match &self.room {
                     Some(room) => vec![UiEvent::Joined {
                         room: room.clone(),
+                        local_identity: self.local_identity.clone(),
                         participants: self.participants.clone(),
                     }],
                     None => Vec::new(),
@@ -315,12 +321,14 @@ impl Translator {
                     Vec::new()
                 } else {
                     self.room = None;
+                    self.local_identity.clear();
                     vec![UiEvent::Left]
                 }
             }
             Event::Failed(error) => {
                 self.switch_pending.set(false);
                 self.room = None;
+                self.local_identity.clear();
                 self.participants.clear();
                 vec![UiEvent::Failed {
                     message: describe(&error),
@@ -504,7 +512,8 @@ mod tests {
             translator.translate(Event::ParticipantList(vec![participant("pedro", "Pedro")]));
         assert!(matches!(
             &events[..],
-            [UiEvent::Joined { room, participants }] if room == "geral" && participants.len() == 1
+            [UiEvent::Joined { room, local_identity, participants }]
+                if room == "geral" && local_identity == "pedro" && participants.len() == 1
         ));
     }
 

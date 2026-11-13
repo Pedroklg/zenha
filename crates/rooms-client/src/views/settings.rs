@@ -3,6 +3,7 @@ use eframe::egui;
 use crate::hotkeys::{HotkeyAction, binding_from_key, binding_label};
 use crate::settings::{NoiseMode, VoiceMode};
 use crate::state::{AudioState, DEFAULT_DEVICE_LABEL, HotkeyState, MicLevelView, UserAction};
+use crate::theme;
 use crate::ui_model::AudioDeviceView;
 
 const COMBO_WIDTH: f32 = 320.0;
@@ -10,9 +11,6 @@ const GATE_MIN_DB: i8 = -70;
 const GATE_MAX_DB: i8 = -20;
 const GATE_DEFAULT_DB: i8 = -45;
 const METER_FLOOR_DB: f32 = -70.0;
-const OPEN_COLOR: egui::Color32 = egui::Color32::from_rgb(60, 180, 90);
-const CLOSED_COLOR: egui::Color32 = egui::Color32::from_rgb(130, 130, 130);
-const ERROR_COLOR: egui::Color32 = egui::Color32::from_rgb(220, 80, 80);
 
 pub fn show(
     ctx: &egui::Context,
@@ -199,7 +197,7 @@ fn hotkeys_section(
             ui.small("Usado só no modo Push-to-talk.");
             if voice_mode == VoiceMode::PushToTalk && hotkeys.ptt.is_none() {
                 ui.colored_label(
-                    ERROR_COLOR,
+                    theme::ERROR,
                     "Defina a tecla de push-to-talk; sem ela o microfone fica fechado.",
                 );
             }
@@ -207,11 +205,11 @@ fn hotkeys_section(
         if hotkeys.capturing == Some(action)
             && let Some(err) = &hotkeys.capture_error
         {
-            ui.colored_label(ERROR_COLOR, err);
+            ui.colored_label(theme::ERROR, err);
         }
         if hotkeys.failed.contains(&action) {
             ui.colored_label(
-                ERROR_COLOR,
+                theme::ERROR,
                 "Não foi possível registrar: outro programa já usa esse atalho.",
             );
         }
@@ -254,7 +252,11 @@ fn noise_gate(ui: &mut egui::Ui, audio: &AudioState, actions: &mut Vec<UserActio
             level_db,
             gate_open,
         }) => {
-            let color = if gate_open { OPEN_COLOR } else { CLOSED_COLOR };
+            let color = if gate_open {
+                theme::SPEAKING
+            } else {
+                theme::INACTIVE_DOT
+            };
             ui.add(
                 egui::ProgressBar::new(meter_fraction(level_db))
                     .desired_width(COMBO_WIDTH)

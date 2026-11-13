@@ -474,6 +474,7 @@ impl ChatState {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RoomState {
     pub room: String,
+    pub local_identity: String,
     pub participants: Vec<ParticipantView>,
     pub status: ConnectionStatus,
     pub muted: bool,
@@ -487,10 +488,17 @@ pub struct RoomState {
 }
 
 impl RoomState {
-    fn new(room: String, participants: Vec<ParticipantView>, muted: bool, mode: VoiceMode) -> Self {
+    fn new(
+        room: String,
+        local_identity: String,
+        participants: Vec<ParticipantView>,
+        muted: bool,
+        mode: VoiceMode,
+    ) -> Self {
         let mic_sent = muted || mode == VoiceMode::PushToTalk;
         Self {
             room,
+            local_identity,
             participants,
             status: ConnectionStatus::Connected,
             muted,
@@ -1124,7 +1132,11 @@ impl AppState {
                 self.audio.outputs = outputs;
                 self.audio.loaded = true;
             }
-            UiEvent::Joined { room, participants } => self.on_joined(room, participants),
+            UiEvent::Joined {
+                room,
+                local_identity,
+                participants,
+            } => self.on_joined(room, local_identity, participants),
             UiEvent::CaptureTargetsUpdated(targets) => self.picker.set_targets(targets),
             UiEvent::Failed { message } => {
                 self.picker.open = false;
@@ -1159,11 +1171,17 @@ impl AppState {
         }
     }
 
-    fn on_joined(&mut self, room: String, participants: Vec<ParticipantView>) {
+    fn on_joined(
+        &mut self,
+        room: String,
+        local_identity: String,
+        participants: Vec<ParticipantView>,
+    ) {
         match &mut self.screen {
             Screen::Connecting { .. } => {
                 let state = RoomState::new(
                     room,
+                    local_identity,
                     participants,
                     self.form.muted_on_join,
                     self.audio.voice_mode,
@@ -1175,6 +1193,7 @@ impl AppState {
                 if state.room != room {
                     state.reset_for_room(room);
                 }
+                state.local_identity = local_identity;
                 state.participants = participants;
                 state.status = ConnectionStatus::Connected;
                 state.share = ShareState::default();
@@ -1444,6 +1463,7 @@ mod tests {
         state.handle_action(UserAction::SubmitLogin);
         state.apply_event(UiEvent::Joined {
             room: "geral".to_owned(),
+            local_identity: "pedro".to_owned(),
             participants: vec![person("ana")],
         });
     }
@@ -1529,10 +1549,12 @@ mod tests {
 
         state.apply_event(UiEvent::Joined {
             room: "geral".to_owned(),
+            local_identity: "pedro".to_owned(),
             participants: vec![person("ana")],
         });
         let room = room(&state);
         assert_eq!(room.room, "geral");
+        assert_eq!(room.local_identity, "pedro");
         assert_eq!(room.participants.len(), 1);
         assert_eq!(room.status, ConnectionStatus::Connected);
     }
@@ -1553,6 +1575,7 @@ mod tests {
         );
         state.apply_event(UiEvent::Joined {
             room: "geral".to_owned(),
+            local_identity: "pedro".to_owned(),
             participants: vec![],
         });
         assert!(room(&state).muted);
@@ -1586,6 +1609,7 @@ mod tests {
         });
         state.apply_event(UiEvent::Joined {
             room: "geral".to_owned(),
+            local_identity: "pedro".to_owned(),
             participants: vec![],
         });
         assert_eq!(state.screen, Screen::Login);
@@ -1737,6 +1761,7 @@ mod tests {
         state.apply_event(UiEvent::ChatReceived(message(1)));
         state.apply_event(UiEvent::Joined {
             room: "musica".to_owned(),
+            local_identity: "pedro".to_owned(),
             participants: vec![],
         });
         assert_eq!(room(&state).room, "musica");
@@ -2268,6 +2293,7 @@ mod tests {
         state.apply_event(UiEvent::ScreenShareStarted);
         state.apply_event(UiEvent::Joined {
             room: "jogos".to_owned(),
+            local_identity: "pedro".to_owned(),
             participants: vec![person("ana")],
         });
         assert_eq!(room(&state).share, ShareState::default());
@@ -2465,6 +2491,7 @@ mod tests {
         );
         state.apply_event(UiEvent::Joined {
             room: "geral".to_owned(),
+            local_identity: "pedro".to_owned(),
             participants: vec![person("ana")],
         });
         assert!(room(&state).muted);
@@ -2529,6 +2556,7 @@ mod tests {
         );
         state.apply_event(UiEvent::Joined {
             room: "geral".to_owned(),
+            local_identity: "pedro".to_owned(),
             participants: vec![],
         });
         assert!(!room(&state).muted);
@@ -2550,6 +2578,7 @@ mod tests {
         );
         both.apply_event(UiEvent::Joined {
             room: "geral".to_owned(),
+            local_identity: "pedro".to_owned(),
             participants: vec![],
         });
         assert!(room(&both).muted);
@@ -2801,6 +2830,7 @@ mod tests {
 
         state.apply_event(UiEvent::Joined {
             room: "geral".to_owned(),
+            local_identity: "pedro".to_owned(),
             participants: vec![person("ana")],
         });
         assert_eq!(state.tray_muted(), Some(false));

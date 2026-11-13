@@ -299,6 +299,7 @@ impl DemoSession {
             join,
             UiEvent::Joined {
                 room,
+                local_identity: SELF_IDENTITY.to_owned(),
                 participants: vec![me, ana],
             },
         );
@@ -481,7 +482,8 @@ mod tests {
         assert_eq!(events.first(), Some(&UiEvent::Connecting));
         assert!(events.iter().any(|e| matches!(
             e,
-            UiEvent::Joined { room, participants } if room == "geral" && participants.len() == 2
+            UiEvent::Joined { room, local_identity, participants }
+                if room == "geral" && local_identity == SELF_IDENTITY && participants.len() == 2
         )));
         assert!(
             events

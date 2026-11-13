@@ -20,9 +20,40 @@ pub fn format_size(bytes: u64) -> String {
     format!("{value:.1} {}", UNITS[unit]).replace('.', ",")
 }
 
+pub fn server_host(url: &str) -> &str {
+    let trimmed = url.trim();
+    let without_scheme = trimmed
+        .strip_prefix("https://")
+        .or_else(|| trimmed.strip_prefix("http://"))
+        .unwrap_or(trimmed);
+    without_scheme
+        .split(['/', '?', '#'])
+        .next()
+        .unwrap_or(without_scheme)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn extracts_server_host_from_urls() {
+        assert_eq!(
+            server_host("https://voz.exemplo.com.br"),
+            "voz.exemplo.com.br"
+        );
+        assert_eq!(
+            server_host("https://voz.exemplo.com.br/token/"),
+            "voz.exemplo.com.br"
+        );
+        assert_eq!(server_host("http://localhost:8080/api"), "localhost:8080");
+        assert_eq!(
+            server_host("  https://zenha.servidor.local/  "),
+            "zenha.servidor.local"
+        );
+        assert_eq!(server_host("voz.exemplo.com.br/sala"), "voz.exemplo.com.br");
+        assert_eq!(server_host(""), "");
+    }
 
     #[test]
     fn formats_utc_and_offsets() {
