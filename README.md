@@ -32,6 +32,28 @@ cargo client -- --demo  # tudo simulado, sem servidor
 | `cargo client` | abre o `rooms-client` |
 | `cargo fmt --all` | formata o código |
 
+## Instalação e versões
+
+### Como instalar
+
+1. Baixe a versão mais recente na página **Releases** do GitHub:
+   - **Instalador** (`Zenha-<versão>-windows-x64-setup.exe`): instala por usuário em `%LOCALAPPDATA%\Programs\Zenha` (sem precisar de administrador), cria atalho no Menu Iniciar e registra o protocolo `zenha://`.
+   - **Portátil** (`Zenha-<versão>-windows-x64.zip`): extraia e execute `zenha.exe`.
+2. Como o executável ainda não possui assinatura digital, o Windows SmartScreen exibirá **"O Windows protegeu o computador"** na primeira execução. Clique em **"Mais informações"** e depois em **"Executar assim mesmo"**.
+
+As configurações ficam salvas em `%APPDATA%\zenha` e não são removidas ao desinstalar.
+
+### Como gerar uma versão
+
+Atualize `version` em `[workspace.package]` no [Cargo.toml](Cargo.toml), faça o commit e envie uma tag `vX.Y.Z` para disparar o workflow de release no GitHub Actions:
+
+```powershell
+git tag vX.Y.Z
+git push origin vX.Y.Z
+```
+
+Para gerar o pacote localmente em `dist\`, execute `scripts\package.cmd` (o instalador é compilado automaticamente se o Inno Setup 6 estiver instalado).
+
 ## Testes ponta a ponta
 
 No Windows, `scripts\e2e.cmd` (duplo clique ou `scripts\e2e.cmd --filter playout`) sobe o `livekit-server` e o servidor de tokens, roda bots por script e mede, com loopback do WASAPI, se o áudio remoto chega ao dispositivo de saída. O relatório fica em `dev-logs\e2e\report.md` (e `report.json`) e a saída do console em `dev-logs\e2e\console.log`. **Um tom de teste audível, em volume baixo, toca durante a execução.** Detalhes e limites em [docs/status.md](docs/status.md).

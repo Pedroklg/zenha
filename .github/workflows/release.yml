@@ -1,0 +1,74 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain from rust-toolchain.toml
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - name: Check tag matches workspace version
+        run: |
+          $tag = "${{ github.ref_name }}"
+          if ($tag -notmatch '^v(.+)$') {
+            throw "Tag '$tag' must start with 'v'"
+          }
+          $tagVersion = $Matches[1]
+          $inWorkspacePkg = $false
+          $workspaceVersion = $null
+          foreach ($line in Get-Content Cargo.toml) {
+            $trimmed = $line.Trim()
+            if ($trimmed -match '^\[(.+)\]$') {
+              $inWorkspacePkg = ($Matches[1] -eq 'workspace.package')
+            } elseif ($inWorkspacePkg -and $trimmed -match '^version\s*=\s*"([^"]+)"') {
+              $workspaceVersion = $Matches[1]
+              break
+            }
+          }
+          if (-not $workspaceVersion) {
+            throw 'Could not read [workspace.package].version from Cargo.toml'
+          }
+          if ($tagVersion -ne $workspaceVersion) {
+            throw "Tag version '$tagVersion' does not match workspace version '$workspaceVersion'"
+          }
+      - name: fmt, clippy, test
+        run: cargo ci
+      - name: Install Inno Setup
+        run: |
+          $iscc = Get-Command ISCC.exe -ErrorAction SilentlyContinue
+          $paths = @(
+            (Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'),
+            (Join-Path $env:ProgramFiles 'Inno Setup 6\ISCC.exe')
+          )
+          $found = $paths | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
+          if (-not $iscc -and -not $found) {
+            choco install innosetup -y
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+      - name: Package release artifacts
+        shell: cmd
+        run: scripts\package.cmd
+      - name: Create GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $version = $tag -replace '^v', ''
+          $zip = "dist\Zenha-$version-windows-x64.zip"
+          $setup = "dist\Zenha-$version-windows-x64-setup.exe"
+          if (-not (Test-Path $zip)) { throw "Missing artifact: $zip" }
+          if (-not (Test-Path $setup)) { throw "Missing artifact: $setup" }
+          gh release create $tag $setup $zip --title "Zenha $tag" --generate-notes
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
