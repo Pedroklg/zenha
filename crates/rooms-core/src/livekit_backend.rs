@@ -1577,3 +1577,20 @@ async fn pump_events(
         reason: "room event stream ended".to_owned(),
     });
 }
+
+#[cfg(test)]
+mod tests {
+    use livekit::webrtc::{
+        audio_source::{AudioSourceOptions, native::NativeAudioSource},
+        peer_connection_factory::{PeerConnectionFactory, native::PeerConnectionFactoryExt},
+    };
+
+    #[test]
+    fn audio_track_set_volume_accepts_in_and_out_of_range_values() {
+        let factory = PeerConnectionFactory::default();
+        let source = NativeAudioSource::new(AudioSourceOptions::default(), 48_000, 1, 100);
+        let track = factory.create_audio_track("test-volume", source);
+        track.set_volume(0.5);
+        track.set_volume(20.0);
+    }
+}

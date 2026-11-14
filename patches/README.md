@@ -6,8 +6,8 @@ Apache-2.0 by LiveKit, Inc.; see `webrtc-sys/NOTICE.md`.
 
 | Crate | Version | Change |
 | --- | --- | --- |
-| `webrtc-sys` | 0.3.53 | Unmodified copy (see below) |
-| `libwebrtc` | 0.4.0 | Unmodified copy (see below) |
+| `webrtc-sys` | 0.3.53 | Added `AudioTrack::set_volume(double)` FFI binding |
+| `libwebrtc` | 0.4.0 | Added `RtcAudioTrack::set_volume(f64)` clamped to `0.0..=10.0` |
 
 When upgrading the LiveKit SDK, copy the new versions from the cargo registry and reapply the
 changes listed here. Drop a crate from this folder once upstream ships the same API.
