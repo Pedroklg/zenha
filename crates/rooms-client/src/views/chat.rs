@@ -3,9 +3,10 @@ use rooms_protocol::MAX_CHAT_MESSAGE_LEN;
 
 use crate::chat_images::{ChatImages, ThumbState, fit_within};
 use crate::format::{DISPLAY_UTC_OFFSET_MINUTES, format_hhmm, format_size};
+use crate::icons;
 use crate::state::{ChatEntry, ChatState, UserAction};
 use crate::theme;
-use crate::ui_model::{FileTransferView, ParticipantView, TransferStateView};
+use crate::ui_model::{ChatMessageView, FileTransferView, ParticipantView, TransferStateView};
 
 const THUMB_MAX: (f32, f32) = (240.0, 180.0);
 const HEADER_HEIGHT: f32 = 64.0;
@@ -133,26 +134,25 @@ fn messages(
         .stick_to_bottom(true)
         .auto_shrink([false, false])
         .show(ui, |ui| {
+            if chat.has_more {
+                if ui
+                    .add_enabled(
+                        !chat.history_loading,
+                        egui::Button::new("Carregar anteriores"),
+                    )
+                    .clicked()
+                {
+                    actions.push(UserAction::LoadOlderChat);
+                }
+                ui.add_space(6.0);
+            }
             if chat.messages.is_empty() {
                 ui.weak("Nenhuma mensagem ainda.");
             }
             for entry in &chat.messages {
                 match entry {
                     ChatEntry::Text(message) => {
-                        let color =
-                            author_color(&message.sender, false, participants, local_identity);
-                        ui.horizontal_wrapped(|ui| {
-                            ui.label(
-                                RichText::new(&message.sender)
-                                    .font(theme::semibold(14.0))
-                                    .color(color),
-                            );
-                            ui.weak(format_hhmm(
-                                message.sent_at_unix_ms,
-                                DISPLAY_UTC_OFFSET_MINUTES,
-                            ));
-                        });
-                        ui.label(RichText::new(&message.text).color(theme::TEXT_SECONDARY));
+                        text_entry(ui, message, local_identity, actions);
                         ui.add_space(10.0);
                     }
                     ChatEntry::File(file) => {
@@ -162,6 +162,46 @@ fn messages(
                 }
             }
         });
+}
+
+fn text_entry(
+    ui: &mut egui::Ui,
+    message: &ChatMessageView,
+    local_identity: &str,
+    actions: &mut Vec<UserAction>,
+) {
+    let is_self = !local_identity.is_empty() && message.sender_id == local_identity;
+    let color = theme::name_color(&message.sender_id, is_self);
+    let entry = ui.push_id(&message.id, |ui| {
+        ui.horizontal_wrapped(|ui| {
+            ui.label(
+                RichText::new(&message.sender)
+                    .font(theme::semibold(14.0))
+                    .color(color),
+            );
+            ui.weak(format_hhmm(
+                message.sent_at_unix_ms,
+                DISPLAY_UTC_OFFSET_MINUTES,
+            ));
+            if message.saved {
+                let (icon_rect, icon_resp) =
+                    ui.allocate_exact_size(egui::Vec2::splat(13.0), egui::Sense::hover());
+                if ui.is_rect_visible(icon_rect) {
+                    icons::bookmark(ui.painter(), icon_rect, theme::TEXT_WEAK);
+                }
+                icon_resp.on_hover_text("Mensagem salva");
+            }
+        });
+        ui.label(RichText::new(&message.text).color(theme::TEXT_SECONDARY));
+    });
+    if message.saved && is_self {
+        entry.response.container_context_menu(|ui| {
+            if ui.button("Apagar mensagem").clicked() {
+                actions.push(UserAction::DeleteChat(message.id.clone()));
+                ui.close();
+            }
+        });
+    }
 }
 
 fn file_entry(
@@ -262,16 +302,26 @@ fn input(ui: &mut egui::Ui, chat: &mut ChatState, actions: &mut Vec<UserAction>)
         if attach.clicked() {
             actions.push(UserAction::PickFile);
         }
-        let response = ui.add(
-            egui::TextEdit::singleline(&mut chat.draft)
-                .hint_text("Escreva uma mensagem…")
-                .char_limit(MAX_CHAT_MESSAGE_LEN)
-                .desired_width(f32::INFINITY),
-        );
-        submitted = response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-        if submitted {
-            response.request_focus();
-        }
+        submitted = ui
+            .with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.checkbox(&mut chat.save, "Salvar");
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                    let response = ui.add(
+                        egui::TextEdit::singleline(&mut chat.draft)
+                            .hint_text("Escreva uma mensagem…")
+                            .char_limit(MAX_CHAT_MESSAGE_LEN)
+                            .desired_width(f32::INFINITY),
+                    );
+                    let enter =
+                        response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                    if enter {
+                        response.request_focus();
+                    }
+                    enter
+                })
+                .inner
+            })
+            .inner;
     });
     if chat.show_counter() {
         ui.weak(format!("{}/{}", chat.draft_len(), MAX_CHAT_MESSAGE_LEN));

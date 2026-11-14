@@ -120,6 +120,26 @@ fn draw_slash(painter: &Painter, rect: Rect, stroke: Stroke) {
     );
 }
 
+pub fn bookmark(painter: &Painter, rect: Rect, color: Color32) {
+    let w = rect.width();
+    let h = rect.height();
+    let left = rect.left() + w * 0.22;
+    let right = rect.right() - w * 0.22;
+    let top = rect.top() + h * 0.12;
+    let bottom = rect.bottom() - h * 0.10;
+    let notch = bottom - h * 0.24;
+    let top_left = Pos2::new(left, top);
+    let points = vec![
+        top_left,
+        Pos2::new(right, top),
+        Pos2::new(right, bottom),
+        Pos2::new(rect.center().x, notch),
+        Pos2::new(left, bottom),
+        top_left,
+    ];
+    painter.line(points, Stroke::new(1.5, color));
+}
+
 pub fn icon_button(
     ui: &mut egui::Ui,
     size: f32,

@@ -2,12 +2,12 @@ use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use rooms_protocol::{ChatMessage, RoomSummary};
+use rooms_protocol::RoomSummary;
 
 use crate::core_session::TestFeed;
 use crate::ui_model::{
-    AudioDeviceView, CaptureTargetView, FileTransferView, ParticipantView, SessionPort,
-    TargetKindView, TransferStateView, UiCommand, UiEvent,
+    AudioDeviceView, CaptureTargetView, ChatMessageView, FileTransferView, ParticipantView,
+    SessionPort, TargetKindView, TransferStateView, UiCommand, UiEvent,
 };
 
 fn is_image_name(name: &str) -> bool {
@@ -189,7 +189,9 @@ impl DemoSession {
             }
             UiCommand::SetMuted(muted) => self.set_muted(muted),
             UiCommand::SetDeafened(_) => {}
-            UiCommand::SendChat { text } => self.chat(text),
+            UiCommand::SendChat { text, save } => self.chat(text, save),
+            UiCommand::LoadChatHistory { before } => self.load_chat_history(before),
+            UiCommand::DeleteChat { id } => self.delete_chat(id),
             UiCommand::SendFile { path } => self.send_file(path),
             UiCommand::RefreshAudioDevices => self.publish_audio_devices(),
             UiCommand::SetInputDevice(id) => {
@@ -305,6 +307,14 @@ impl DemoSession {
                 participants: vec![me, ana],
             },
         );
+        self.schedule(
+            join,
+            UiEvent::ChatHistory {
+                messages: Self::initial_history(),
+                has_more: true,
+                before: None,
+            },
+        );
         self.ana_sharing = true;
         self.schedule(
             join + self.delays.remote_share,
@@ -351,18 +361,65 @@ impl DemoSession {
         }
     }
 
-    fn chat(&mut self, text: String) {
+    fn chat(&mut self, text: String, save: bool) {
         if self.room.is_none() {
             return;
         }
         self.chat_counter += 1;
-        let echo = Self::chat_message(self.chat_counter * 2 - 1, SELF_NAME, text);
+        let echo = Self::chat_message(
+            format!("demo-{}", self.chat_counter * 2 - 1),
+            SELF_IDENTITY,
+            SELF_NAME,
+            text,
+            save,
+            Self::now_unix_ms(),
+        );
         self.schedule(Duration::ZERO, UiEvent::ChatReceived(echo));
         if self.chat_counter.is_multiple_of(2) {
             let index = usize::try_from(self.chat_counter / 2).unwrap_or(0) % REPLIES.len();
-            let reply = Self::chat_message(self.chat_counter * 2, "Ana", REPLIES[index].to_owned());
+            let reply = Self::chat_message(
+                format!("demo-{}", self.chat_counter * 2),
+                "demo-ana",
+                "Ana",
+                REPLIES[index].to_owned(),
+                false,
+                Self::now_unix_ms(),
+            );
             self.schedule(self.delays.reply, UiEvent::ChatReceived(reply));
         }
+    }
+
+    fn load_chat_history(&mut self, before: Option<String>) {
+        if self.room.is_none() {
+            return;
+        }
+        let delay = self.delays.reply.min(Duration::from_millis(250));
+        let event = match before {
+            Some(cursor) => UiEvent::ChatHistory {
+                messages: Self::older_history(),
+                has_more: false,
+                before: Some(cursor),
+            },
+            None => UiEvent::ChatHistory {
+                messages: Self::initial_history(),
+                has_more: true,
+                before: None,
+            },
+        };
+        self.schedule(delay, event);
+    }
+
+    fn delete_chat(&mut self, id: String) {
+        if self.room.is_none() {
+            return;
+        }
+        self.schedule(
+            Duration::ZERO,
+            UiEvent::ChatDeleted {
+                id,
+                sender: SELF_IDENTITY.to_owned(),
+            },
+        );
     }
 
     fn send_file(&mut self, path: PathBuf) {
@@ -375,11 +432,7 @@ impl DemoSession {
             || "arquivo".to_owned(),
             |n| n.to_string_lossy().into_owned(),
         );
-        let sent_at_unix_ms = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .ok()
-            .and_then(|d| u64::try_from(d.as_millis()).ok())
-            .unwrap_or(0);
+        let sent_at_unix_ms = Self::now_unix_ms();
         let view = |state| FileTransferView {
             id: format!("demo-file-{}", self.file_counter),
             sender: SELF_NAME.to_owned(),
@@ -396,19 +449,74 @@ impl DemoSession {
         self.schedule(self.delays.reply, UiEvent::FileTransfer(finished));
     }
 
-    fn chat_message(id: u64, sender: &str, text: String) -> ChatMessage {
-        let sent_at_unix_ms = SystemTime::now()
+    fn now_unix_ms() -> u64 {
+        SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .ok()
             .and_then(|d| u64::try_from(d.as_millis()).ok())
-            .unwrap_or(0);
-        ChatMessage {
-            id: format!("demo-{id}"),
+            .unwrap_or(0)
+    }
+
+    fn chat_message(
+        id: String,
+        sender_id: &str,
+        sender: &str,
+        text: String,
+        saved: bool,
+        sent_at_unix_ms: u64,
+    ) -> ChatMessageView {
+        ChatMessageView {
+            id,
+            sender_id: sender_id.to_owned(),
             sender: sender.to_owned(),
             sent_at_unix_ms,
             text,
-            saved: false,
+            saved,
         }
+    }
+
+    fn initial_history() -> Vec<ChatMessageView> {
+        let now = Self::now_unix_ms();
+        vec![
+            Self::chat_message(
+                "demo-hist-3".to_owned(),
+                "demo-ana",
+                "Ana",
+                "Alguém topa chamada mais tarde?".to_owned(),
+                true,
+                now.saturating_sub(30 * 60_000),
+            ),
+            Self::chat_message(
+                "demo-hist-4".to_owned(),
+                SELF_IDENTITY,
+                SELF_NAME,
+                "Link da pauta já está no chat.".to_owned(),
+                true,
+                now.saturating_sub(15 * 60_000),
+            ),
+        ]
+    }
+
+    fn older_history() -> Vec<ChatMessageView> {
+        let now = Self::now_unix_ms();
+        vec![
+            Self::chat_message(
+                "demo-hist-1".to_owned(),
+                SELF_IDENTITY,
+                SELF_NAME,
+                "Bem-vindo à sala de demonstração.".to_owned(),
+                true,
+                now.saturating_sub(120 * 60_000),
+            ),
+            Self::chat_message(
+                "demo-hist-2".to_owned(),
+                "demo-ana",
+                "Ana",
+                "Combinado!".to_owned(),
+                true,
+                now.saturating_sub(60 * 60_000),
+            ),
+        ]
     }
 
     fn rooms(&self) -> Vec<RoomSummary> {
@@ -521,14 +629,16 @@ mod tests {
         joined(&mut session);
         session.send(UiCommand::SendChat {
             text: "oi".to_owned(),
+            save: false,
         });
         let first = drain(&mut session);
         assert!(matches!(
             first.as_slice(),
-            [UiEvent::ChatReceived(m)] if m.text == "oi" && m.sender == SELF_NAME
+            [UiEvent::ChatReceived(m)] if m.text == "oi" && m.sender == SELF_NAME && !m.saved
         ));
         session.send(UiCommand::SendChat {
             text: "tudo bem?".to_owned(),
+            save: false,
         });
         let second = drain(&mut session);
         assert_eq!(second.len(), 2);
@@ -570,6 +680,7 @@ mod tests {
         let mut session = DemoSession::with_delays(DemoDelays::instant());
         session.send(UiCommand::SendChat {
             text: "oi".to_owned(),
+            save: false,
         });
         assert!(drain(&mut session).is_empty());
     }
@@ -697,5 +808,51 @@ mod tests {
         });
         session.send(UiCommand::Leave);
         assert_eq!(drain(&mut session), vec![UiEvent::Left]);
+    }
+
+    #[test]
+    fn demo_supports_saved_messages_history_pages_and_deletion() {
+        let mut session = DemoSession::with_delays(DemoDelays::instant());
+        let events = joined(&mut session);
+        assert!(events.iter().any(|e| matches!(
+            e,
+            UiEvent::ChatHistory {
+                messages,
+                has_more: true,
+                before: None,
+            } if !messages.is_empty() && messages.iter().all(|m| m.saved)
+        )));
+
+        session.send(UiCommand::SendChat {
+            text: "salva".to_owned(),
+            save: true,
+        });
+        assert!(matches!(
+            drain(&mut session).as_slice(),
+            [UiEvent::ChatReceived(m)] if m.saved && m.sender_id == SELF_IDENTITY && m.text == "salva"
+        ));
+
+        session.send(UiCommand::LoadChatHistory {
+            before: Some("demo-hist-3".to_owned()),
+        });
+        assert!(matches!(
+            drain(&mut session).as_slice(),
+            [UiEvent::ChatHistory {
+                messages,
+                has_more: false,
+                before: Some(cursor),
+            }] if !messages.is_empty() && cursor == "demo-hist-3"
+        ));
+
+        session.send(UiCommand::DeleteChat {
+            id: "demo-hist-4".to_owned(),
+        });
+        assert_eq!(
+            drain(&mut session),
+            vec![UiEvent::ChatDeleted {
+                id: "demo-hist-4".to_owned(),
+                sender: SELF_IDENTITY.to_owned(),
+            }]
+        );
     }
 }

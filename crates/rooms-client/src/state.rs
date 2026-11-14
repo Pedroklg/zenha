@@ -1,19 +1,19 @@
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use rooms_core::Cue;
 use rooms_protocol::{
-    ChatMessage, MAX_CHAT_MESSAGE_LEN, MAX_DISPLAY_NAME_LEN, RoomSummary, ValidationError,
-    validate_chat_text, validate_display_name,
+    MAX_CHAT_MESSAGE_LEN, MAX_DISPLAY_NAME_LEN, RoomSummary, ValidationError, validate_chat_text,
+    validate_display_name,
 };
 
 use crate::cli::{StartupLink, compile_time_default_server, resolve_initial_server};
 use crate::hotkeys::{HotkeyAction, binding_label};
 use crate::settings::{NoiseMode, Settings, VoiceMode};
 use crate::ui_model::{
-    AudioDeviceView, CaptureTargetView, Credentials, FeedHandle, FileTransferView, ParticipantView,
-    SharePresetView, TargetKindView, UiCommand, UiEvent,
+    AudioDeviceView, CaptureTargetView, ChatMessageView, Credentials, FeedHandle, FileTransferView,
+    ParticipantView, SharePresetView, TargetKindView, UiCommand, UiEvent,
 };
 use crate::update::{AvailableUpdate, should_show_update};
 
@@ -376,7 +376,7 @@ impl ConnectionStatus {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ChatEntry {
-    Text(ChatMessage),
+    Text(ChatMessageView),
     File(FileTransferView),
 }
 
@@ -385,8 +385,12 @@ pub struct ChatState {
     pub messages: VecDeque<ChatEntry>,
     pub unread: usize,
     pub draft: String,
+    pub save: bool,
+    pub has_more: bool,
+    pub history_loading: bool,
     pub open: bool,
     pub notice: Option<String>,
+    pending_saved_drafts: VecDeque<String>,
 }
 
 impl ChatState {
@@ -395,9 +399,19 @@ impl ChatState {
             messages: VecDeque::new(),
             unread: 0,
             draft: String::new(),
+            save: false,
+            has_more: false,
+            history_loading: false,
             open: true,
             notice: None,
+            pending_saved_drafts: VecDeque::new(),
         }
+    }
+
+    fn contains_text_id(&self, id: &str) -> bool {
+        self.messages
+            .iter()
+            .any(|entry| matches!(entry, ChatEntry::Text(message) if message.id == id))
     }
 
     fn push(&mut self, entry: ChatEntry, counts_as_unread: bool) {
@@ -410,8 +424,62 @@ impl ChatState {
         }
     }
 
-    fn push_message(&mut self, message: ChatMessage) {
+    fn push_message(&mut self, message: ChatMessageView, local_identity: &str) {
+        if message.saved && !local_identity.is_empty() && message.sender_id == local_identity {
+            self.pending_saved_drafts.pop_front();
+        }
+        if self.contains_text_id(&message.id) {
+            return;
+        }
         self.push(ChatEntry::Text(message), true);
+    }
+
+    fn apply_history(&mut self, messages: Vec<ChatMessageView>, has_more: bool) {
+        self.history_loading = false;
+        self.has_more = has_more;
+        let existing: HashSet<String> = self
+            .messages
+            .iter()
+            .filter_map(|entry| match entry {
+                ChatEntry::Text(message) => Some(message.id.clone()),
+                ChatEntry::File(_) => None,
+            })
+            .collect();
+        let mut seen = HashSet::new();
+        let mut fresh = Vec::with_capacity(messages.len());
+        for message in messages {
+            if !existing.contains(&message.id) && seen.insert(message.id.clone()) {
+                fresh.push(message);
+            }
+        }
+        for message in fresh.into_iter().rev() {
+            self.messages.push_front(ChatEntry::Text(message));
+        }
+    }
+
+    pub fn oldest_saved_id(&self) -> Option<String> {
+        self.messages.iter().find_map(|entry| match entry {
+            ChatEntry::Text(message) if message.saved => Some(message.id.clone()),
+            _ => None,
+        })
+    }
+
+    fn delete_message(&mut self, id: &str, sender: &str) {
+        self.messages.retain(|entry| match entry {
+            ChatEntry::Text(message) => !(message.id == id && message.sender_id == sender),
+            ChatEntry::File(_) => true,
+        });
+    }
+
+    fn handle_failed(&mut self, message: String) {
+        self.notice = Some(message);
+        self.history_loading = false;
+        if let Some(draft) = self.pending_saved_drafts.pop_front()
+            && self.draft.is_empty()
+        {
+            self.draft = draft;
+            self.save = true;
+        }
     }
 
     fn apply_transfer(&mut self, view: FileTransferView) {
@@ -436,7 +504,11 @@ impl ChatState {
         self.messages.clear();
         self.unread = 0;
         self.draft.clear();
+        self.save = false;
+        self.has_more = false;
+        self.history_loading = false;
         self.notice = None;
+        self.pending_saved_drafts.clear();
     }
 
     pub fn draft_len(&self) -> usize {
@@ -626,8 +698,44 @@ impl RoomState {
             return Vec::new();
         }
         let text = self.chat.draft.trim().to_owned();
+        let save = self.chat.save;
         self.chat.draft.clear();
-        vec![UiCommand::SendChat { text }]
+        self.chat.save = false;
+        if save {
+            self.chat.pending_saved_drafts.push_back(text.clone());
+        }
+        vec![UiCommand::SendChat { text, save }]
+    }
+
+    fn load_older_chat(&mut self) -> Vec<UiCommand> {
+        if !self.chat.has_more || self.chat.history_loading {
+            return Vec::new();
+        }
+        let Some(before) = self.chat.oldest_saved_id() else {
+            return Vec::new();
+        };
+        self.chat.history_loading = true;
+        vec![UiCommand::LoadChatHistory {
+            before: Some(before),
+        }]
+    }
+
+    fn delete_chat(&self, id: String) -> Vec<UiCommand> {
+        if self.local_identity.is_empty() {
+            return Vec::new();
+        }
+        let owns_saved = self.chat.messages.iter().any(|entry| {
+            matches!(
+                entry,
+                ChatEntry::Text(message)
+                    if message.id == id && message.saved && message.sender_id == self.local_identity
+            )
+        });
+        if owns_saved {
+            vec![UiCommand::DeleteChat { id }]
+        } else {
+            Vec::new()
+        }
     }
 
     fn reset_for_room(&mut self, room: String) {
@@ -675,6 +783,8 @@ pub enum UserAction {
     Leave,
     SwitchRoom(String),
     SendChat,
+    LoadOlderChat,
+    DeleteChat(String),
     AttachFile(PathBuf),
     /// Effect handled by the app (file dialog); the state does not change.
     PickFile,
@@ -1030,6 +1140,8 @@ impl AppState {
             UserAction::ToggleMute => self.toggle_mute(),
             UserAction::ToggleDeafen => self.toggle_deafen(),
             UserAction::SendChat => self.with_room(RoomState::send_chat),
+            UserAction::LoadOlderChat => self.with_room(RoomState::load_older_chat),
+            UserAction::DeleteChat(id) => self.with_room(|room| room.delete_chat(id)),
             UserAction::AttachFile(path) => self.with_room(|_| vec![UiCommand::SendFile { path }]),
             UserAction::PickFile | UserAction::SaveReceivedFile { .. } => Vec::new(),
             UserAction::DismissChatNotice => self.with_room(|room| {
@@ -1659,7 +1771,14 @@ fn apply_room_event(state: &mut RoomState, event: UiEvent) {
             state.participants.retain(|p| p.identity != identity);
             state.share.apply(UiEvent::ParticipantLeft { identity });
         }
-        UiEvent::ChatReceived(message) => state.chat.push_message(message),
+        UiEvent::ChatReceived(message) => state.chat.push_message(message, &state.local_identity),
+        UiEvent::ChatHistory {
+            messages,
+            has_more,
+            before: _,
+        } => state.chat.apply_history(messages, has_more),
+        UiEvent::ChatDeleted { id, sender } => state.chat.delete_message(&id, &sender),
+        UiEvent::ChatFailed { message } => state.chat.handle_failed(message),
         UiEvent::FileTransfer(view) => state.chat.apply_transfer(view),
         share @ (UiEvent::ScreenShareStarted
         | UiEvent::ScreenShareStopped
@@ -1882,13 +2001,25 @@ mod tests {
         }
     }
 
-    fn message(id: usize) -> ChatMessage {
-        ChatMessage {
+    fn message(id: usize) -> ChatMessageView {
+        ChatMessageView {
             id: id.to_string(),
-            sender: "ana".to_owned(),
+            sender_id: "ana".to_owned(),
+            sender: "ANA".to_owned(),
             sent_at_unix_ms: 0,
             text: format!("msg {id}"),
             saved: false,
+        }
+    }
+
+    fn saved_message(id: &str, sender_id: &str, sender: &str, text: &str) -> ChatMessageView {
+        ChatMessageView {
+            id: id.to_owned(),
+            sender_id: sender_id.to_owned(),
+            sender: sender.to_owned(),
+            sent_at_unix_ms: 1000,
+            text: text.to_owned(),
+            saved: true,
         }
     }
 
@@ -2364,7 +2495,8 @@ mod tests {
         assert_eq!(
             state.handle_action(UserAction::SendChat),
             vec![UiCommand::SendChat {
-                text: "oi".to_owned()
+                text: "oi".to_owned(),
+                save: false,
             }]
         );
         assert!(room(&state).chat.draft.is_empty());
@@ -3647,5 +3779,216 @@ mod tests {
         };
         reloaded.set_available_update(v3.clone());
         assert_eq!(reloaded.visible_update(), Some(&v3));
+    }
+
+    #[test]
+    fn chat_history_initial_and_older_pages_order_and_pending_state() {
+        let mut state = state_with_code();
+        in_room(&mut state);
+        state.handle_action(UserAction::ToggleChat);
+        state.apply_event(UiEvent::ChatReceived(message(99)));
+        assert_eq!(room(&state).chat.unread, 1);
+
+        state.apply_event(UiEvent::ChatHistory {
+            messages: vec![
+                saved_message("h2", "ana", "Ana", "segunda"),
+                saved_message("h3", "pedro", "Pedro", "terceira"),
+            ],
+            has_more: true,
+            before: None,
+        });
+
+        let chat = &room(&state).chat;
+        assert!(chat.has_more);
+        assert!(!chat.history_loading);
+        assert_eq!(chat.unread, 1);
+        let ids: Vec<&str> = chat
+            .messages
+            .iter()
+            .filter_map(|e| match e {
+                ChatEntry::Text(m) => Some(m.id.as_str()),
+                ChatEntry::File(_) => None,
+            })
+            .collect();
+        assert_eq!(ids, vec!["h2", "h3", "99"]);
+
+        assert_eq!(
+            state.handle_action(UserAction::LoadOlderChat),
+            vec![UiCommand::LoadChatHistory {
+                before: Some("h2".to_owned()),
+            }]
+        );
+        assert!(room(&state).chat.history_loading);
+        assert!(state.handle_action(UserAction::LoadOlderChat).is_empty());
+
+        state.apply_event(UiEvent::ChatHistory {
+            messages: vec![
+                saved_message("h0", "ana", "Ana", "zero"),
+                saved_message("h1", "pedro", "Pedro", "um"),
+            ],
+            has_more: false,
+            before: Some("h2".to_owned()),
+        });
+
+        let chat = &room(&state).chat;
+        assert!(!chat.has_more);
+        assert!(!chat.history_loading);
+        let ids: Vec<&str> = chat
+            .messages
+            .iter()
+            .filter_map(|e| match e {
+                ChatEntry::Text(m) => Some(m.id.as_str()),
+                ChatEntry::File(_) => None,
+            })
+            .collect();
+        assert_eq!(ids, vec!["h0", "h1", "h2", "h3", "99"]);
+
+        state.handle_action(UserAction::SwitchRoom("jogos".to_owned()));
+        assert!(!room(&state).chat.has_more);
+        assert!(!room(&state).chat.history_loading);
+        assert!(room(&state).chat.messages.is_empty());
+    }
+
+    #[test]
+    fn chat_deduplicates_overlapping_live_and_history_ids() {
+        let mut state = state_with_code();
+        in_room(&mut state);
+        state.apply_event(UiEvent::ChatReceived(saved_message(
+            "s2",
+            "ana",
+            "Ana",
+            "ao vivo e salva",
+        )));
+        state.apply_event(UiEvent::ChatHistory {
+            messages: vec![
+                saved_message("s1", "ana", "Ana", "antiga"),
+                saved_message("s2", "ana", "Ana", "ao vivo e salva"),
+                saved_message("s2", "ana", "Ana", "ao vivo e salva"),
+            ],
+            has_more: false,
+            before: None,
+        });
+        state.apply_event(UiEvent::ChatReceived(saved_message(
+            "s1", "ana", "Ana", "antiga",
+        )));
+
+        let ids: Vec<&str> = room(&state)
+            .chat
+            .messages
+            .iter()
+            .filter_map(|e| match e {
+                ChatEntry::Text(m) => Some(m.id.as_str()),
+                ChatEntry::File(_) => None,
+            })
+            .collect();
+        assert_eq!(ids, vec!["s1", "s2"]);
+    }
+
+    #[test]
+    fn chat_delete_requires_saved_own_message_and_matching_sender() {
+        let mut state = state_with_code();
+        in_room(&mut state);
+        state.apply_event(UiEvent::ChatReceived(ChatMessageView {
+            id: "own-unsaved".to_owned(),
+            sender_id: "pedro".to_owned(),
+            sender: "Pedro".to_owned(),
+            sent_at_unix_ms: 1,
+            text: "nao salva".to_owned(),
+            saved: false,
+        }));
+        state.apply_event(UiEvent::ChatReceived(saved_message(
+            "own-saved",
+            "pedro",
+            "Pedro",
+            "minha salva",
+        )));
+        state.apply_event(UiEvent::ChatReceived(saved_message(
+            "other-saved",
+            "ana",
+            "Ana",
+            "da ana",
+        )));
+
+        assert!(
+            state
+                .handle_action(UserAction::DeleteChat("own-unsaved".to_owned()))
+                .is_empty()
+        );
+        assert!(
+            state
+                .handle_action(UserAction::DeleteChat("other-saved".to_owned()))
+                .is_empty()
+        );
+        assert_eq!(
+            state.handle_action(UserAction::DeleteChat("own-saved".to_owned())),
+            vec![UiCommand::DeleteChat {
+                id: "own-saved".to_owned(),
+            }]
+        );
+
+        state.apply_event(UiEvent::ChatDeleted {
+            id: "own-saved".to_owned(),
+            sender: "ana".to_owned(),
+        });
+        assert!(room(&state).chat.contains_text_id("own-saved"));
+
+        state.apply_event(UiEvent::ChatDeleted {
+            id: "own-saved".to_owned(),
+            sender: "pedro".to_owned(),
+        });
+        assert!(!room(&state).chat.contains_text_id("own-saved"));
+        assert!(room(&state).chat.contains_text_id("other-saved"));
+    }
+
+    #[test]
+    fn save_checkbox_resets_after_send_and_draft_recovers_on_chat_failure() {
+        let mut state = state_with_code();
+        in_room(&mut state);
+        assert!(!room(&state).chat.save);
+
+        if let Screen::InRoom(room) = &mut state.screen {
+            room.chat.draft = "aviso".to_owned();
+            room.chat.save = true;
+        }
+        assert_eq!(
+            state.handle_action(UserAction::SendChat),
+            vec![UiCommand::SendChat {
+                text: "aviso".to_owned(),
+                save: true,
+            }]
+        );
+        assert!(!room(&state).chat.save);
+        assert!(room(&state).chat.draft.is_empty());
+
+        state.apply_event(UiEvent::ChatFailed {
+            message: "Não foi possível salvar a mensagem.".to_owned(),
+        });
+        assert_eq!(
+            room(&state).chat.notice.as_deref(),
+            Some("Não foi possível salvar a mensagem.")
+        );
+        assert_eq!(room(&state).chat.draft, "aviso");
+        assert!(room(&state).chat.save);
+
+        assert_eq!(
+            state.handle_action(UserAction::SendChat),
+            vec![UiCommand::SendChat {
+                text: "aviso".to_owned(),
+                save: true,
+            }]
+        );
+        state.apply_event(UiEvent::ChatReceived(saved_message(
+            "s-ok", "pedro", "Pedro", "aviso",
+        )));
+        if let Screen::InRoom(room) = &mut state.screen {
+            room.chat.has_more = true;
+        }
+        state.handle_action(UserAction::LoadOlderChat);
+        assert!(room(&state).chat.history_loading);
+        state.apply_event(UiEvent::ChatFailed {
+            message: "Muitas mensagens seguidas. Espere alguns segundos.".to_owned(),
+        });
+        assert!(!room(&state).chat.history_loading);
+        assert!(room(&state).chat.draft.is_empty());
     }
 }

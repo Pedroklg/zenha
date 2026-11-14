@@ -15,9 +15,9 @@ use rooms_core::{
 
 use crate::settings::NoiseMode;
 use crate::ui_model::{
-    AudioDeviceView, CaptureTargetView, Credentials, FeedHandle, FileTransferView, FrameFeed,
-    ParticipantView, SessionPort, SharePresetView, TargetKindView, TransferStateView, UiCommand,
-    UiEvent, UiFrame,
+    AudioDeviceView, CaptureTargetView, ChatMessageView, Credentials, FeedHandle, FileTransferView,
+    FrameFeed, ParticipantView, SessionPort, SharePresetView, TargetKindView, TransferStateView,
+    UiCommand, UiEvent, UiFrame,
 };
 
 pub type Wake = Arc<dyn Fn() + Send + Sync>;
@@ -110,7 +110,9 @@ fn to_core(command: UiCommand) -> Command {
         UiCommand::Leave => Command::Leave,
         UiCommand::SetMuted(muted) => Command::SetMuted(muted),
         UiCommand::SetDeafened(deafened) => Command::SetDeafened(deafened),
-        UiCommand::SendChat { text } => Command::SendChat { text, save: false },
+        UiCommand::SendChat { text, save } => Command::SendChat { text, save },
+        UiCommand::LoadChatHistory { before } => Command::LoadChatHistory { before },
+        UiCommand::DeleteChat { id } => Command::DeleteChat { id },
         UiCommand::SendFile { path } => Command::SendFile { path },
         UiCommand::RefreshRooms => Command::RefreshRooms,
         UiCommand::RefreshAudioDevices => Command::RefreshAudioDevices,
@@ -242,6 +244,16 @@ fn describe(error: &SessionError) -> String {
             }
         },
         SessionError::Video(detail) => format!("Falha no vídeo: {detail}"),
+        SessionError::RateLimited => {
+            "Muitas mensagens seguidas. Espere alguns segundos.".to_owned()
+        }
+        SessionError::Unauthorized => {
+            "Não foi possível salvar: sessão expirada. Tente de novo.".to_owned()
+        }
+        SessionError::Chat(_) => {
+            "O servidor não respondeu ao chat salvo. A mensagem não foi salva; tente de novo."
+                .to_owned()
+        }
         other => other.to_string(),
     }
 }
@@ -284,6 +296,22 @@ struct Translator {
 }
 
 impl Translator {
+    fn chat_message_view(&self, message: rooms_protocol::ChatMessage) -> ChatMessageView {
+        let sender = self
+            .participants
+            .iter()
+            .find(|p| p.identity == message.sender)
+            .map_or_else(|| message.sender.clone(), |p| p.name.clone());
+        ChatMessageView {
+            id: message.id,
+            sender_id: message.sender,
+            sender,
+            sent_at_unix_ms: message.sent_at_unix_ms,
+            text: message.text,
+            saved: message.saved,
+        }
+    }
+
     fn translate(&mut self, event: Event) -> Vec<UiEvent> {
         match event {
             Event::Connecting => vec![UiEvent::Connecting],
@@ -356,15 +384,8 @@ impl Translator {
             Event::ParticipantSpeakingChanged { identity, speaking } => {
                 self.update(&identity, |p| p.speaking = speaking)
             }
-            Event::ChatReceived(mut message) => {
-                if let Some(sender) = self
-                    .participants
-                    .iter()
-                    .find(|p| p.identity == message.sender)
-                {
-                    message.sender = sender.name.clone();
-                }
-                vec![UiEvent::ChatReceived(message)]
+            Event::ChatReceived(message) => {
+                vec![UiEvent::ChatReceived(self.chat_message_view(message))]
             }
             Event::FileTransfer(transfer) => {
                 let sender = self
@@ -419,11 +440,38 @@ impl Translator {
                 feed: feed_handle(frames),
             }],
             Event::WatchingStopped => vec![UiEvent::WatchingStopped],
-            Event::ChatHistory { .. } | Event::ChatDeleted { .. } => Vec::new(),
+            Event::ChatHistory {
+                messages,
+                has_more,
+                before,
+            } => {
+                let messages = messages
+                    .into_iter()
+                    .map(|item| ChatMessageView {
+                        id: item.message.id,
+                        sender_id: item.sender_id,
+                        sender: item.message.sender,
+                        sent_at_unix_ms: item.message.sent_at_unix_ms,
+                        text: item.message.text,
+                        saved: item.message.saved,
+                    })
+                    .collect();
+                vec![UiEvent::ChatHistory {
+                    messages,
+                    has_more,
+                    before,
+                }]
+            }
+            Event::ChatDeleted { id, sender } => vec![UiEvent::ChatDeleted { id, sender }],
             Event::CommandFailed(error) => {
                 tracing::warn!(%error, "command failed");
                 match &error {
                     SessionError::InviteRejected => vec![UiEvent::InviteRejected],
+                    SessionError::RateLimited
+                    | SessionError::Unauthorized
+                    | SessionError::Chat(_) => vec![UiEvent::ChatFailed {
+                        message: describe(&error),
+                    }],
                     SessionError::TokenServer(_) => vec![UiEvent::RoomsFailed {
                         message: describe(&error),
                     }],
@@ -457,7 +505,7 @@ impl Translator {
 
 #[cfg(test)]
 mod tests {
-    use rooms_protocol::ChatMessage;
+    use rooms_protocol::{ChatMessage, SavedChatMessage};
 
     use super::*;
 
@@ -537,7 +585,10 @@ mod tests {
             text: "oi".to_owned(),
             saved: false,
         }));
-        assert!(matches!(&events[..], [UiEvent::ChatReceived(m)] if m.sender == "Ana"));
+        assert!(matches!(
+            &events[..],
+            [UiEvent::ChatReceived(m)] if m.sender_id == "ana" && m.sender == "Ana"
+        ));
     }
 
     #[test]
@@ -800,6 +851,113 @@ mod tests {
                 outputs: Vec::new(),
                 selected_input: Some("m1".to_owned()),
                 selected_output: None,
+            }]
+        );
+    }
+
+    #[test]
+    fn chat_commands_map_with_save_history_and_delete() {
+        assert_eq!(
+            to_core(UiCommand::SendChat {
+                text: "oi".to_owned(),
+                save: true,
+            }),
+            Command::SendChat {
+                text: "oi".to_owned(),
+                save: true,
+            }
+        );
+        assert_eq!(
+            to_core(UiCommand::LoadChatHistory {
+                before: Some("m1".to_owned()),
+            }),
+            Command::LoadChatHistory {
+                before: Some("m1".to_owned()),
+            }
+        );
+        assert_eq!(
+            to_core(UiCommand::DeleteChat {
+                id: "m2".to_owned(),
+            }),
+            Command::DeleteChat {
+                id: "m2".to_owned(),
+            }
+        );
+    }
+
+    #[test]
+    fn chat_history_and_delete_events_keep_sender_identity_and_name() {
+        let mut translator = Translator::default();
+        joined(&mut translator);
+        let events = translator.translate(Event::ChatHistory {
+            messages: vec![SavedChatMessage {
+                message: ChatMessage {
+                    id: "m1".to_owned(),
+                    sender: "Ana Silva".to_owned(),
+                    sent_at_unix_ms: 1000,
+                    text: "salva".to_owned(),
+                    saved: true,
+                },
+                sender_id: "ana".to_owned(),
+            }],
+            has_more: true,
+            before: Some("m2".to_owned()),
+        });
+        assert_eq!(
+            events,
+            vec![UiEvent::ChatHistory {
+                messages: vec![ChatMessageView {
+                    id: "m1".to_owned(),
+                    sender_id: "ana".to_owned(),
+                    sender: "Ana Silva".to_owned(),
+                    sent_at_unix_ms: 1000,
+                    text: "salva".to_owned(),
+                    saved: true,
+                }],
+                has_more: true,
+                before: Some("m2".to_owned()),
+            }]
+        );
+
+        let events = translator.translate(Event::ChatDeleted {
+            id: "m1".to_owned(),
+            sender: "ana".to_owned(),
+        });
+        assert_eq!(
+            events,
+            vec![UiEvent::ChatDeleted {
+                id: "m1".to_owned(),
+                sender: "ana".to_owned(),
+            }]
+        );
+    }
+
+    #[test]
+    fn chat_command_failures_translate_to_portuguese_notices() {
+        let mut translator = Translator::default();
+        joined(&mut translator);
+        assert_eq!(
+            translator.translate(Event::CommandFailed(SessionError::RateLimited)),
+            vec![UiEvent::ChatFailed {
+                message: "Muitas mensagens seguidas. Espere alguns segundos.".to_owned(),
+            }]
+        );
+        assert_eq!(
+            translator.translate(Event::CommandFailed(SessionError::Unauthorized)),
+            vec![UiEvent::ChatFailed {
+                message: "Não foi possível salvar: sessão expirada. Tente de novo.".to_owned(),
+            }]
+        );
+        assert!(matches!(
+            &translator.translate(Event::CommandFailed(SessionError::Chat("503".into())))[..],
+            [UiEvent::ChatFailed { .. }]
+        ));
+        assert_eq!(
+            translator.translate(Event::CommandFailed(SessionError::TokenServer(
+                "offline".into()
+            ))),
+            vec![UiEvent::RoomsFailed {
+                message: "Não foi possível falar com o servidor de tokens: offline".to_owned(),
             }]
         );
     }

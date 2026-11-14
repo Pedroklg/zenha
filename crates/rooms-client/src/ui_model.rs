@@ -2,7 +2,7 @@ use std::fmt;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use rooms_protocol::{ChatMessage, RoomSummary};
+use rooms_protocol::RoomSummary;
 
 use crate::settings::NoiseMode;
 
@@ -16,6 +16,13 @@ pub enum UiCommand {
     SetDeafened(bool),
     SendChat {
         text: String,
+        save: bool,
+    },
+    LoadChatHistory {
+        before: Option<String>,
+    },
+    DeleteChat {
+        id: String,
     },
     SendFile {
         path: PathBuf,
@@ -149,6 +156,16 @@ pub struct FileTransferView {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChatMessageView {
+    pub id: String,
+    pub sender_id: String,
+    pub sender: String,
+    pub sent_at_unix_ms: u64,
+    pub text: String,
+    pub saved: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UiEvent {
     Connecting,
     Joined {
@@ -171,7 +188,19 @@ pub enum UiEvent {
     RoomsFailed {
         message: String,
     },
-    ChatReceived(ChatMessage),
+    ChatReceived(ChatMessageView),
+    ChatHistory {
+        messages: Vec<ChatMessageView>,
+        has_more: bool,
+        before: Option<String>,
+    },
+    ChatDeleted {
+        id: String,
+        sender: String,
+    },
+    ChatFailed {
+        message: String,
+    },
     FileTransfer(FileTransferView),
     RoomsUpdated(Vec<RoomSummary>),
     AudioDevicesUpdated {
