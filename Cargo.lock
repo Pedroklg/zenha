@@ -5397,7 +5397,7 @@ dependencies = [
 
 [[package]]
 name = "rooms-client"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "directories",
@@ -5421,7 +5421,7 @@ dependencies = [
 
 [[package]]
 name = "rooms-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "deep_filter",
@@ -5443,7 +5443,7 @@ dependencies = [
 
 [[package]]
 name = "rooms-e2e"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "rooms-core",
@@ -5459,7 +5459,7 @@ dependencies = [
 
 [[package]]
 name = "rooms-protocol"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -5468,7 +5468,7 @@ dependencies = [
 
 [[package]]
 name = "rooms-token-server"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "argon2",
@@ -8209,7 +8209,7 @@ checksum = "e450f9b2ed1dff33c94c12589a87338689467b9c4f5d8a5710bd09a847d2c8a7"
 
 [[package]]
 name = "xtask"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "image",
 ]
