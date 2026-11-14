@@ -60,6 +60,9 @@ jobs:
       - name: Package release artifacts
         shell: cmd
         run: scripts\package.cmd
+        env:
+          ZENHA_DEFAULT_SERVER: ${{ vars.ZENHA_DEFAULT_SERVER }}
+          ZENHA_RELEASES_REPO: ${{ github.repository }}
       - name: Create GitHub Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
