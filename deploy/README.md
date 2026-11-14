@@ -1,12 +1,14 @@
 # Deploy
 
-Ponto de partida para a T20. **Nada aqui foi testado ainda**; confira cada chave na documentação do LiveKit antes de usar.
+See [docs/deploy.md](../docs/deploy.md) for the complete Azure infrastructure-as-code, Cloudflare DNS, server bootstrap, GitHub Actions OIDC deployment, budget alerts, latency measurement, and cost guide.
 
-- `livekit.example.yaml`: copie para `livekit.prod.yaml` (ignorado pelo git) e preencha chave e segredo.
-- `docker-compose.yml`: LiveKit em rede do host, servidor de tokens e Caddy para TLS.
-- `Caddyfile`: troque os domínios.
+## Files in `deploy/`
 
-Portas a abrir: 443/TCP, 7881/TCP, 7882/UDP e, se usar o TURN embutido, 3478/UDP.
-
-Gerar chave e segredo de produção: `livekit-server generate-keys`.
-Gerar hash da senha do servidor (`ROOMS_INVITE_CODE_HASH`): `echo sua-senha | rooms-token-server hash-password`.
+- [`azure/main.bicep`](azure/main.bicep) — Azure Bicep template (VNet, subnet, NSG, static Standard Public IP with DNS label, NIC, `Standard_B2ats_v2` Ubuntu 24.04 LTS VM).
+- [`azure/main.bicepparam`](azure/main.bicepparam) — Example Bicep parameter file (no secrets).
+- [`azure/cloud-init.yaml`](azure/cloud-init.yaml) — Cloud-init config installing Docker Engine + Compose plugin from official repositories, creating `/opt/zenha`, and enabling unattended security upgrades.
+- [`Dockerfile`](Dockerfile) — Multi-stage build for `rooms-token-server` (runs as non-root `zenha` user).
+- [`docker-compose.yml`](docker-compose.yml) — Production stack in `/opt/zenha` (`livekit/livekit-server:v1.13.11`, `rooms-token-server` from GHCR via `ZENHA_IMAGE`, `caddy:2.11.9-alpine`).
+- [`Caddyfile`](Caddyfile) — Reverse proxy for `{$TOKEN_DOMAIN}` (`127.0.0.1:8787`) and `{$RTC_DOMAIN}` (`127.0.0.1:7880`) with automatic HTTPS.
+- [`livekit.example.yaml`](livekit.example.yaml) — Reference LiveKit configuration (`7880` signaling, `7881/TCP`, `7882/UDP`, `use_external_ip` / `node_ip`).
+- [`setup-server.sh`](setup-server.sh) — Idempotent one-time VM bootstrap script (generates LiveKit keys, writes `/opt/zenha/.env` and `/opt/zenha/livekit.yaml` with mode `0600`, and starts Docker Compose).
