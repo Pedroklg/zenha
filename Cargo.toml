@@ -2,6 +2,7 @@
 resolver = "3"
 members = ["crates/*", "xtask"]
 default-members = ["crates/*"]
+exclude = ["patches"]
 
 [workspace.package]
 version = "0.1.0"
@@ -69,3 +70,7 @@ opt-level = 3
 lto = "thin"
 codegen-units = 1
 strip = "debuginfo"
+
+[patch.crates-io]
+webrtc-sys = { path = "patches/webrtc-sys" }
+libwebrtc = { path = "patches/libwebrtc" }
