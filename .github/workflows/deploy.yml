@@ -67,7 +67,7 @@ jobs:
             --resource-group "${AZURE_RESOURCE_GROUP}" \
             --name "${AZURE_VM_NAME}" \
             --command-id RunShellScript \
-            --scripts '
+            --scripts '#!/usr/bin/env bash
               set -euo pipefail
               IMAGE="$1"
               ENV_FILE="/opt/zenha/.env"
@@ -96,5 +96,5 @@ jobs:
             --parameters "${ZENHA_IMAGE}" \
             --query 'value[0].message' -o tsv)"
           echo "${OUTPUT}"
-          # run-command succeeds even when the script fails, so check the marker.
+          # run-command runs the script with sh unless it has a shebang, and succeeds even when the script fails.
           grep -q ZENHA_DEPLOY_OK <<<"${OUTPUT}"
