@@ -8,12 +8,14 @@ use rooms_protocol::{
     validate_chat_text, validate_display_name,
 };
 
+use crate::cli::{StartupLink, compile_time_default_server, resolve_initial_server};
 use crate::hotkeys::{HotkeyAction, binding_label};
 use crate::settings::{NoiseMode, Settings, VoiceMode};
 use crate::ui_model::{
     AudioDeviceView, CaptureTargetView, Credentials, FeedHandle, FileTransferView, ParticipantView,
     SharePresetView, TargetKindView, UiCommand, UiEvent,
 };
+use crate::update::{AvailableUpdate, should_show_update};
 
 pub const MAX_CHAT_HISTORY: usize = 500;
 pub const ROOMS_REFRESH_INTERVAL: Duration = Duration::from_secs(3);
@@ -713,6 +715,7 @@ pub enum UserAction {
     Watch(String),
     StopWatching,
     ToggleFullscreen,
+    DismissUpdate,
 }
 
 #[derive(Debug)]
@@ -741,11 +744,22 @@ pub struct AppState {
     session_deafened: bool,
     last_refresh: Option<Instant>,
     pending_save: Option<Settings>,
+    available_update: Option<AvailableUpdate>,
+    dismissed_update_version: Option<String>,
 }
 
 impl AppState {
     pub fn new(settings: &Settings, saved_password: Option<String>) -> Self {
-        let form = LoginForm::from_settings(settings);
+        Self::new_with_build_default(settings, saved_password, compile_time_default_server())
+    }
+
+    pub fn new_with_build_default(
+        settings: &Settings,
+        saved_password: Option<String>,
+        build_default_server: Option<&str>,
+    ) -> Self {
+        let mut form = LoginForm::from_settings(settings);
+        form.server_url = resolve_initial_server(&form.server_url, build_default_server);
         let server = form.server_url.trim().to_owned();
         let saved_password = saved_password.filter(|p| !p.is_empty() && !server.is_empty());
         let open_lobby = form.is_valid() && saved_password.is_some();
@@ -780,7 +794,47 @@ impl AppState {
             session_deafened: false,
             last_refresh: None,
             pending_save: None,
+            available_update: None,
+            dismissed_update_version: settings.dismissed_update_version.clone(),
         }
+    }
+
+    pub fn apply_startup_link(&mut self, link: StartupLink) {
+        match link {
+            StartupLink::None => {}
+            StartupLink::Invite(invite) => {
+                self.screen = Screen::Onboarding;
+                self.active_password.clear();
+                self.pending_password_save = None;
+                self.apply_invite(invite);
+                if self.can_submit_onboarding() {
+                    let commands = self.submit_onboarding();
+                    self.pending_commands.extend(commands);
+                }
+            }
+            StartupLink::Invalid(raw) => match self.screen {
+                Screen::Onboarding => {
+                    self.onboarding.link_open = !raw.trim().is_empty();
+                    self.paste_invite_link(raw);
+                }
+                Screen::Lobby => {
+                    if !raw.trim().is_empty() {
+                        self.lobby_error = Some("Link de convite inválido.".to_owned());
+                    }
+                }
+                Screen::Connecting { .. } | Screen::InRoom(_) => {}
+            },
+        }
+    }
+
+    pub fn set_available_update(&mut self, update: AvailableUpdate) {
+        self.available_update = Some(update);
+    }
+
+    pub fn visible_update(&self) -> Option<&AvailableUpdate> {
+        self.available_update
+            .as_ref()
+            .filter(|update| should_show_update(update, self.dismissed_update_version.as_deref()))
     }
 
     pub fn tray_muted(&self) -> Option<bool> {
@@ -873,6 +927,7 @@ impl AppState {
             deafen_hotkey: self.hotkeys.deafen.clone(),
             ptt_hotkey: self.hotkeys.ptt.clone(),
             close_to_tray: self.close_to_tray,
+            dismissed_update_version: self.dismissed_update_version.clone(),
             ..self.form.to_settings()
         }
     }
@@ -1107,6 +1162,13 @@ impl AppState {
                 }
                 Vec::new()
             }
+            UserAction::DismissUpdate => {
+                if let Some(update) = &self.available_update {
+                    self.dismissed_update_version = Some(update.version.clone());
+                    self.pending_save = Some(self.settings_snapshot());
+                }
+                Vec::new()
+            }
         }
     }
 
@@ -1171,19 +1233,23 @@ impl AppState {
         }
     }
 
+    fn apply_invite(&mut self, invite: crate::invite::Invite) {
+        self.form.server_url = invite.server.clone();
+        self.form.invite_code = invite.password.clone();
+        if invite.password.is_empty() {
+            self.onboarding.link_pasted_server = None;
+        } else {
+            self.onboarding.link_pasted_server = Some(invite.server);
+            self.onboarding.password_rejected = false;
+        }
+        self.onboarding.link_open = false;
+        self.onboarding.link_input.clear();
+        self.onboarding.link_error = None;
+    }
+
     fn paste_invite_link(&mut self, text: String) {
         if let Some(invite) = crate::invite::parse(&text) {
-            self.form.server_url = invite.server.clone();
-            self.form.invite_code = invite.password.clone();
-            if invite.password.is_empty() {
-                self.onboarding.link_pasted_server = None;
-            } else {
-                self.onboarding.link_pasted_server = Some(invite.server);
-                self.onboarding.password_rejected = false;
-            }
-            self.onboarding.link_open = false;
-            self.onboarding.link_input.clear();
-            self.onboarding.link_error = None;
+            self.apply_invite(invite);
         } else {
             self.onboarding.link_input = text;
             self.onboarding.link_error = (!self.onboarding.link_input.trim().is_empty())
@@ -1636,6 +1702,7 @@ mod tests {
             deafen_hotkey: None,
             ptt_hotkey: None,
             close_to_tray: true,
+            dismissed_update_version: None,
         }
     }
 
@@ -3475,5 +3542,109 @@ mod tests {
                 }
             ]
         );
+    }
+
+    #[test]
+    fn build_default_server_prefills_empty_onboarding_without_overwriting_saved() {
+        let state = AppState::new_with_build_default(
+            &Settings::default(),
+            None,
+            Some("  https://voz.padrao.com  "),
+        );
+        assert_eq!(state.screen, Screen::Onboarding);
+        assert_eq!(state.form.server_url, "https://voz.padrao.com");
+
+        let saved_state = AppState::new_with_build_default(
+            &valid_settings(),
+            None,
+            Some("https://voz.padrao.com"),
+        );
+        assert_eq!(saved_state.form.server_url, "http://localhost:8080");
+    }
+
+    #[test]
+    fn startup_invite_link_without_name_prefills_onboarding_and_hides_password() {
+        let mut state = AppState::new_with_build_default(&Settings::default(), None, None);
+        state.apply_startup_link(StartupLink::Invite(crate::invite::Invite {
+            server: "https://voz.exemplo.com".to_owned(),
+            password: "segredo".to_owned(),
+        }));
+        assert_eq!(state.screen, Screen::Onboarding);
+        assert_eq!(state.form.server_url, "https://voz.exemplo.com");
+        assert!(!state.show_password_field());
+        assert_eq!(state.credentials().invite_code, "segredo");
+        assert!(state.take_pending_commands().is_empty());
+    }
+
+    #[test]
+    fn startup_invite_link_with_valid_name_switches_server_and_enters_lobby() {
+        let mut state =
+            AppState::new_with_build_default(&valid_settings(), Some("antiga".to_owned()), None);
+        assert_eq!(state.screen, Screen::Lobby);
+
+        state.apply_startup_link(StartupLink::Invite(crate::invite::Invite {
+            server: "https://novo.servidor.com".to_owned(),
+            password: "nova".to_owned(),
+        }));
+
+        assert_eq!(state.screen, Screen::Lobby);
+        let creds = state.credentials();
+        assert_eq!(creds.token_server_url, "https://novo.servidor.com");
+        assert_eq!(creds.display_name, "Pedro");
+        assert_eq!(creds.invite_code, "nova");
+        assert_eq!(state.take_pending_commands(), vec![UiCommand::RefreshRooms]);
+    }
+
+    #[test]
+    fn startup_invalid_link_shows_error_without_disrupting_startup() {
+        let mut onboarding = AppState::new_with_build_default(&Settings::default(), None, None);
+        onboarding.apply_startup_link(StartupLink::Invalid("zenha://quebrado".to_owned()));
+        assert_eq!(onboarding.screen, Screen::Onboarding);
+        assert!(onboarding.onboarding.link_open);
+        assert_eq!(onboarding.onboarding.link_input, "zenha://quebrado");
+        assert_eq!(
+            onboarding.onboarding.link_error.as_deref(),
+            Some("Link de convite inválido.")
+        );
+
+        let mut lobby =
+            AppState::new_with_build_default(&valid_settings(), Some("segredo".to_owned()), None);
+        lobby.apply_startup_link(StartupLink::Invalid("algo-errado".to_owned()));
+        assert_eq!(lobby.screen, Screen::Lobby);
+        assert_eq!(
+            lobby.lobby_error.as_deref(),
+            Some("Link de convite inválido.")
+        );
+    }
+
+    #[test]
+    fn available_update_dismisses_and_reappears_for_newer_version() {
+        let mut state =
+            AppState::new_with_build_default(&valid_settings(), Some("segredo".to_owned()), None);
+        assert_eq!(state.visible_update(), None);
+
+        let v2 = AvailableUpdate {
+            version: "0.2.0".to_owned(),
+            url: "https://github.com/Pedroklg/zenha/releases/tag/v0.2.0".to_owned(),
+        };
+        state.set_available_update(v2.clone());
+        assert_eq!(state.visible_update(), Some(&v2));
+
+        state.handle_action(UserAction::DismissUpdate);
+        assert_eq!(state.visible_update(), None);
+        let saved = state.take_pending_save().unwrap();
+        assert_eq!(saved.dismissed_update_version.as_deref(), Some("0.2.0"));
+
+        let mut reloaded =
+            AppState::new_with_build_default(&saved, Some("segredo".to_owned()), None);
+        reloaded.set_available_update(v2);
+        assert_eq!(reloaded.visible_update(), None);
+
+        let v3 = AvailableUpdate {
+            version: "0.3.0".to_owned(),
+            url: "https://github.com/Pedroklg/zenha/releases/tag/v0.3.0".to_owned(),
+        };
+        reloaded.set_available_update(v3.clone());
+        assert_eq!(reloaded.visible_update(), Some(&v3));
     }
 }

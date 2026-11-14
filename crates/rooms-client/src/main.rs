@@ -2,6 +2,7 @@
 
 mod app;
 mod chat_images;
+mod cli;
 mod core_session;
 mod credentials;
 mod demo;
@@ -13,10 +14,13 @@ mod hotkeys;
 mod icons;
 mod invite;
 mod settings;
+#[cfg(windows)]
+mod single_instance;
 mod state;
 mod theme;
 mod tray;
 mod ui_model;
+mod update;
 mod views;
 
 use eframe::egui;
@@ -28,7 +32,19 @@ fn main() -> anyhow::Result<()> {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
 
-    let demo_flag = std::env::args().skip(1).any(|arg| arg == "--demo");
+    let launch = cli::parse_args(std::env::args().skip(1));
+    let demo_flag = launch.demo;
+    let startup_link = launch.startup_link;
+    #[cfg(windows)]
+    let instance = if demo_flag {
+        None
+    } else {
+        let raw_link = std::env::args().skip(1).find(|arg| !arg.trim().is_empty());
+        match single_instance::start(raw_link.as_deref()) {
+            single_instance::Startup::Run(listener) => listener,
+            single_instance::Startup::Exit => return Ok(()),
+        }
+    };
     let raw_settings_path = settings::default_path();
     let mut settings = raw_settings_path
         .as_deref()
@@ -71,6 +87,9 @@ fn main() -> anyhow::Result<()> {
                 saved_password,
                 settings_path,
                 demo_flag,
+                startup_link,
+                #[cfg(windows)]
+                instance,
             )))
         }),
     )

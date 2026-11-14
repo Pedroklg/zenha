@@ -1,12 +1,13 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::mpsc::{Receiver, Sender, channel};
+use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
 use std::time::{Duration, Instant};
 
 use eframe::egui;
 
 use crate::chat_images::ChatImages;
+use crate::cli::{self, StartupLink};
 use crate::core_session::CoreSession;
 use crate::credentials;
 use crate::demo::DemoSession;
@@ -19,11 +20,14 @@ use crate::hotkeys::HotkeyAction;
 #[cfg(windows)]
 use crate::settings::VoiceMode;
 use crate::settings::{self, Settings};
+#[cfg(windows)]
+use crate::single_instance::Listener;
 use crate::state::{AppState, ChatEntry, CredentialOp, Screen, UserAction};
 use crate::theme;
 #[cfg(windows)]
 use crate::tray::{Tray, TrayAction};
 use crate::ui_model::{SessionPort, UiCommand};
+use crate::update::{self, AvailableUpdate};
 use crate::views;
 
 const REPAINT_INTERVAL: Duration = Duration::from_millis(100);
@@ -46,6 +50,9 @@ pub struct App {
     images: ChatImages,
     save_results: Receiver<Result<PathBuf, ()>>,
     save_sender: Sender<Result<PathBuf, ()>>,
+    update_rx: Option<Receiver<AvailableUpdate>>,
+    #[cfg(windows)]
+    forwarded_links: Option<Receiver<String>>,
     #[cfg(windows)]
     global_keys: Option<GlobalKeys>,
     #[cfg(windows)]
@@ -61,6 +68,8 @@ impl App {
         saved_password: Option<String>,
         settings_path: Option<PathBuf>,
         demo_flag: bool,
+        startup_link: StartupLink,
+        #[cfg(windows)] instance: Option<Listener>,
     ) -> Self {
         theme::install(ctx);
         let (mut session, banner): (Box<dyn SessionPort>, _) = if demo_flag {
@@ -70,16 +79,25 @@ impl App {
             let wake = Arc::new(move || ctx.request_repaint());
             (Box::new(CoreSession::new(wake)), MEDIA_LABEL)
         };
-        let state = AppState::new(settings, saved_password);
+        let mut state = AppState::new(settings, saved_password);
+        state.apply_startup_link(startup_link);
         if matches!(state.screen, Screen::Lobby) {
             session.configure(state.credentials());
         }
         let (save_sender, save_results) = channel();
+        let update_rx = (!demo_flag)
+            .then(|| update::spawn_check(ctx.clone()))
+            .flatten();
+        #[cfg(windows)]
+        let forwarded_links = instance.map(|listener| {
+            let _ = listener.ctx.set(ctx.clone());
+            listener.links
+        });
         #[cfg(windows)]
         let global_keys = GlobalKeys::new(ctx);
         #[cfg(windows)]
         let tray = Tray::new(ctx);
-        Self {
+        let mut app = Self {
             state,
             session,
             settings_path,
@@ -89,13 +107,18 @@ impl App {
             images: ChatImages::default(),
             save_results,
             save_sender,
+            update_rx,
+            #[cfg(windows)]
+            forwarded_links,
             #[cfg(windows)]
             global_keys,
             #[cfg(windows)]
             tray,
             quitting: false,
             fullscreen: false,
-        }
+        };
+        app.flush_state_effects();
+        app
     }
 
     fn has_tray(&self) -> bool {
@@ -117,6 +140,47 @@ impl App {
             self.session.send(command);
         }
         self.flush_state_effects();
+    }
+
+    fn pump_update(&mut self) {
+        let Some(rx) = &self.update_rx else {
+            return;
+        };
+        match rx.try_recv() {
+            Ok(update) => {
+                self.state.set_available_update(update);
+                self.update_rx = None;
+            }
+            Err(TryRecvError::Disconnected) => {
+                self.update_rx = None;
+            }
+            Err(TryRecvError::Empty) => {}
+        }
+    }
+
+    #[cfg(windows)]
+    fn pump_forwarded_links(&mut self, ctx: &egui::Context) {
+        let links: Vec<String> = self
+            .forwarded_links
+            .as_ref()
+            .map(|rx| rx.try_iter().collect())
+            .unwrap_or_default();
+        for raw in links {
+            bring_to_front(ctx);
+            if matches!(
+                self.state.screen,
+                Screen::Connecting { .. } | Screen::InRoom(_)
+            ) {
+                continue;
+            }
+            let link = cli::parse_args([raw]).startup_link;
+            let is_invite = matches!(link, StartupLink::Invite(_));
+            self.state.apply_startup_link(link);
+            if is_invite && matches!(self.state.screen, Screen::Lobby) {
+                self.session.configure(self.state.credentials());
+            }
+            self.flush_state_effects();
+        }
     }
 
     fn send_commands(&mut self, commands: Vec<UiCommand>) {
@@ -259,6 +323,9 @@ impl App {
 impl eframe::App for App {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.pump_session();
+        self.pump_update();
+        #[cfg(windows)]
+        self.pump_forwarded_links(ctx);
         let now = Instant::now();
         #[cfg(windows)]
         if let Some(keys) = &mut self.global_keys {
@@ -292,11 +359,7 @@ impl eframe::App for App {
         if let Some(actions) = self.tray.as_mut().map(Tray::actions) {
             for action in actions {
                 match action {
-                    TrayAction::Open => {
-                        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
-                        ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
-                        ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
-                    }
+                    TrayAction::Open => bring_to_front(ctx),
                     TrayAction::ToggleMute => {
                         self.dispatch(ctx, vec![UserAction::ToggleMute]);
                     }
@@ -320,6 +383,7 @@ impl eframe::App for App {
 
         let show_password = self.state.show_password_field();
         let ptt_hint = self.state.push_to_talk_hint();
+        let available_update = self.state.visible_update().cloned();
         let AppState {
             screen,
             form,
@@ -346,6 +410,7 @@ impl eframe::App for App {
                 rooms,
                 server_host(&form.server_url),
                 lobby_error.as_deref(),
+                available_update.as_ref(),
             ),
             Screen::Connecting { room } => views::screens::connecting(ui, room),
             Screen::InRoom(room) => views::room::show(
@@ -357,6 +422,7 @@ impl eframe::App for App {
                 images,
                 audio.stream_volume,
                 ptt_hint.as_deref(),
+                available_update.as_ref(),
             ),
         };
         actions.extend(views::settings::show(
@@ -400,4 +466,11 @@ impl eframe::App for App {
         };
         ui.ctx().request_repaint_after(interval);
     }
+}
+
+#[cfg(windows)]
+fn bring_to_front(ctx: &egui::Context) {
+    ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+    ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+    ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
 }

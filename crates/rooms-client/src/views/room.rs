@@ -12,6 +12,7 @@ use crate::state::{
 };
 use crate::theme;
 use crate::ui_model::ParticipantView;
+use crate::update::AvailableUpdate;
 
 const SIDEBAR_WIDTH: f32 = 256.0;
 const HEADER_HEIGHT: f32 = 64.0;
@@ -28,6 +29,7 @@ pub fn show(
     images: &mut ChatImages,
     stream_volume: u8,
     ptt_hint: Option<&str>,
+    available_update: Option<&AvailableUpdate>,
 ) -> Vec<UserAction> {
     let mut actions = Vec::new();
 
@@ -56,11 +58,14 @@ pub fn show(
     };
     sidebar(
         ui,
-        user,
-        Some(&state.room),
-        &state.participants,
-        rooms,
-        server_host,
+        SidebarArgs {
+            user,
+            current_room: Some(&state.room),
+            participants: &state.participants,
+            rooms,
+            server_host,
+            available_update,
+        },
         &mut actions,
     );
 
@@ -90,6 +95,7 @@ pub fn show_lobby(
     rooms: &[RoomSummary],
     server_host: &str,
     error: Option<&str>,
+    available_update: Option<&AvailableUpdate>,
 ) -> Vec<UserAction> {
     let mut actions = Vec::new();
     let user = SidebarUser {
@@ -99,7 +105,18 @@ pub fn show_lobby(
         muted: voice.muted,
         deafened: voice.deafened,
     };
-    sidebar(ui, user, None, &[], rooms, server_host, &mut actions);
+    sidebar(
+        ui,
+        SidebarArgs {
+            user,
+            current_room: None,
+            participants: &[],
+            rooms,
+            server_host,
+            available_update,
+        },
+        &mut actions,
+    );
 
     egui::Panel::top("lobby_header")
         .exact_size(HEADER_HEIGHT)
@@ -166,15 +183,16 @@ struct SidebarUser<'a> {
     deafened: bool,
 }
 
-fn sidebar(
-    ui: &mut egui::Ui,
-    user: SidebarUser<'_>,
-    current_room: Option<&str>,
-    participants: &[ParticipantView],
-    rooms: &[RoomSummary],
-    server_host: &str,
-    actions: &mut Vec<UserAction>,
-) {
+struct SidebarArgs<'a> {
+    user: SidebarUser<'a>,
+    current_room: Option<&'a str>,
+    participants: &'a [ParticipantView],
+    rooms: &'a [RoomSummary],
+    server_host: &'a str,
+    available_update: Option<&'a AvailableUpdate>,
+}
+
+fn sidebar(ui: &mut egui::Ui, args: SidebarArgs<'_>, actions: &mut Vec<UserAction>) {
     egui::Panel::left("rooms_panel")
         .exact_size(SIDEBAR_WIDTH)
         .resizable(false)
@@ -200,9 +218,9 @@ fn sidebar(
                                 .font(theme::display(20.0))
                                 .color(theme::TEXT),
                         );
-                        if !server_host.is_empty() {
+                        if !args.server_host.is_empty() {
                             ui.label(
-                                RichText::new(server_host)
+                                RichText::new(args.server_host)
                                     .size(12.0)
                                     .color(theme::TEXT_WEAK),
                             );
@@ -226,7 +244,11 @@ fn sidebar(
                     let top = ui.max_rect().top() - 12.0;
                     ui.painter()
                         .hline(full.x_range(), top, Stroke::new(1.0, theme::BORDER));
-                    user_footer(ui, user, actions);
+                    user_footer(ui, args.user, actions);
+                    if let Some(update) = args.available_update {
+                        ui.add_space(8.0);
+                        update_footer(ui, update, actions);
+                    }
                 });
 
             egui::CentralPanel::default()
@@ -236,8 +258,45 @@ fn sidebar(
                         .inner_margin(Margin::same(12)),
                 )
                 .show(ui, |ui| {
-                    rooms_list(ui, current_room, participants, rooms, actions);
+                    rooms_list(
+                        ui,
+                        args.current_room,
+                        args.participants,
+                        args.rooms,
+                        actions,
+                    );
                 });
+        });
+}
+
+fn update_footer(ui: &mut egui::Ui, update: &AvailableUpdate, actions: &mut Vec<UserAction>) {
+    egui::Frame::new()
+        .fill(theme::CONTROL)
+        .stroke(Stroke::new(1.0, theme::BORDER))
+        .corner_radius(CornerRadius::same(6))
+        .inner_margin(Margin::symmetric(8, 5))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                let link_text = RichText::new(format!("Nova versão {}", update.version))
+                    .size(12.0)
+                    .color(theme::ACCENT_TEXT);
+                if ui
+                    .add(egui::Link::new(link_text))
+                    .on_hover_text("Abrir página do release")
+                    .clicked()
+                {
+                    ui.ctx().open_url(egui::OpenUrl::new_tab(&update.url));
+                }
+
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    let close =
+                        egui::Button::new(RichText::new("×").size(12.0).color(theme::TEXT_WEAK))
+                            .frame(false);
+                    if ui.add(close).on_hover_text("Dispensar").clicked() {
+                        actions.push(UserAction::DismissUpdate);
+                    }
+                });
+            });
         });
 }
 

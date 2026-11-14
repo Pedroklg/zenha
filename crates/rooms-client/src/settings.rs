@@ -77,6 +77,7 @@ pub struct Settings {
     pub deafen_hotkey: Option<String>,
     pub ptt_hotkey: Option<String>,
     pub close_to_tray: bool,
+    pub dismissed_update_version: Option<String>,
 }
 
 impl Default for Settings {
@@ -97,6 +98,7 @@ impl Default for Settings {
             deafen_hotkey: None,
             ptt_hotkey: None,
             close_to_tray: true,
+            dismissed_update_version: None,
         }
     }
 }
@@ -253,6 +255,7 @@ mod tests {
             deafen_hotkey: Some("alt+KeyD".to_owned()),
             ptt_hotkey: Some("F9".to_owned()),
             close_to_tray: false,
+            dismissed_update_version: Some("0.2.0".to_owned()),
         };
         save(&path, &settings).unwrap();
         assert_eq!(load(&path), settings);
@@ -372,5 +375,24 @@ mod tests {
         assert!(!is_valid_client_id_hex("short"));
         assert!(!is_valid_client_id_hex("0123456789ABCDEF0123456789abcdef"));
         assert!(!is_valid_client_id_hex("0123456789abcdef0123456789abcdeg"));
+    }
+
+    #[test]
+    fn dismissed_update_version_defaults_to_none_and_round_trips() {
+        let dir = temp_dir("dismissed-update");
+        let path = dir.join(FILE_NAME);
+        std::fs::write(&path, r#"{"display_name":"Ana"}"#).unwrap();
+        assert_eq!(load(&path).dismissed_update_version, None);
+
+        let settings = Settings {
+            dismissed_update_version: Some("0.3.1".to_owned()),
+            ..Settings::default()
+        };
+        save(&path, &settings).unwrap();
+        assert_eq!(
+            load(&path).dismissed_update_version.as_deref(),
+            Some("0.3.1")
+        );
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }
