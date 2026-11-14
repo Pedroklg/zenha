@@ -1,3 +1,4 @@
+mod chat_store;
 mod config;
 mod directory;
 mod routes;
@@ -8,9 +9,10 @@ use std::sync::Arc;
 use anyhow::Context;
 use tokio::net::TcpListener;
 
+use crate::chat_store::ChatStore;
 use crate::config::Config;
 use crate::directory::LiveKitDirectory;
-use crate::routes::{AppState, router};
+use crate::routes::{AppState, ChatRateLimiter, router};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -34,12 +36,35 @@ async fn main() -> anyhow::Result<()> {
     let config = Config::from_env().context("loading configuration")?;
     tracing::info!(?config, "starting");
 
+    let db_path = config.chat_db_path.clone();
+    let chat = match tokio::task::spawn_blocking(move || ChatStore::open(&db_path)).await {
+        Ok(Ok(store)) => Some(Arc::new(store)),
+        Ok(Err(err)) => {
+            tracing::error!(
+                path = %config.chat_db_path.display(),
+                %err,
+                "failed to open chat database; chat routes will return 503"
+            );
+            None
+        }
+        Err(err) => {
+            tracing::error!(
+                path = %config.chat_db_path.display(),
+                %err,
+                "chat database init task failed; chat routes will return 503"
+            );
+            None
+        }
+    };
+
     let listener = TcpListener::bind(config.bind_addr)
         .await
         .with_context(|| format!("binding {}", config.bind_addr))?;
 
     let state = AppState {
         directory: Arc::new(LiveKitDirectory::new(&config)),
+        chat,
+        chat_limiter: Arc::new(ChatRateLimiter::default()),
         config: Arc::new(config),
     };
 

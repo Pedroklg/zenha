@@ -15,6 +15,7 @@ async-trait.workspace = true
 axum.workspace = true
 dotenvy.workspace = true
 livekit-api.workspace = true
+rusqlite.workspace = true
 serde_json.workspace = true
 subtle.workspace = true
 thiserror.workspace = true

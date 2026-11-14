@@ -1,5 +1,6 @@
 use std::fmt;
 use std::net::SocketAddr;
+use std::path::PathBuf;
 
 use argon2::{Argon2, PasswordHash, PasswordHasher};
 use rooms_protocol::validate_room_name;
@@ -8,6 +9,7 @@ const DEFAULT_BIND_ADDR: &str = "127.0.0.1:8787";
 const DEFAULT_TOKEN_TTL_SECS: u64 = 3600;
 const MAX_TOKEN_TTL_SECS: u64 = 24 * 3600;
 const DEFAULT_ROOM_LIST: &str = "geral,jogos,afk";
+const DEFAULT_CHAT_DB: &str = "chat.db";
 
 #[derive(Clone)]
 pub struct Config {
@@ -19,6 +21,7 @@ pub struct Config {
     pub livekit_api_secret: String,
     pub token_ttl_secs: u64,
     pub rooms: Vec<String>,
+    pub chat_db_path: PathBuf,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -79,6 +82,11 @@ impl Config {
             code
         };
 
+        let chat_db_path = lookup("ROOMS_CHAT_DB")
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| DEFAULT_CHAT_DB.to_owned());
+
         Ok(Self {
             bind_addr,
             invite_code,
@@ -88,6 +96,7 @@ impl Config {
             livekit_api_secret: required("LIVEKIT_API_SECRET")?,
             token_ttl_secs: parse_token_ttl(lookup("ROOMS_TOKEN_TTL_SECS").as_deref())?,
             rooms: parse_room_list(lookup("ROOMS_ROOM_LIST").as_deref())?,
+            chat_db_path: PathBuf::from(chat_db_path),
         })
     }
 }
@@ -150,6 +159,7 @@ impl fmt::Debug for Config {
             .field("livekit_url", &self.livekit_url)
             .field("token_ttl_secs", &self.token_ttl_secs)
             .field("rooms", &self.rooms)
+            .field("chat_db_path", &self.chat_db_path)
             .finish_non_exhaustive()
     }
 }
@@ -224,6 +234,27 @@ mod tests {
         assert_eq!(config.token_ttl_secs, 3600);
         assert_eq!(config.rooms, vec!["geral", "jogos", "afk"]);
         assert_eq!(config.bind_addr.to_string(), "127.0.0.1:8787");
+        assert_eq!(config.chat_db_path, std::path::Path::new("chat.db"));
+    }
+
+    #[test]
+    fn from_lookup_reads_chat_db_path() {
+        let config = Config::from_lookup(|name| match name {
+            "ROOMS_CHAT_DB" => Some("  /var/lib/zenha/chat.db  ".to_owned()),
+            _ => lookup(name),
+        })
+        .unwrap();
+        assert_eq!(
+            config.chat_db_path,
+            std::path::Path::new("/var/lib/zenha/chat.db")
+        );
+
+        let blank = Config::from_lookup(|name| match name {
+            "ROOMS_CHAT_DB" => Some("   ".to_owned()),
+            _ => lookup(name),
+        })
+        .unwrap();
+        assert_eq!(blank.chat_db_path, std::path::Path::new("chat.db"));
     }
 
     #[test]
