@@ -1,0 +1,100 @@
+name: deploy
+
+on:
+  workflow_run:
+    workflows: ["server-image"]
+    types:
+      - completed
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Image tag to deploy (for example v0.1.0 or latest)"
+        required: true
+        default: "latest"
+        type: string
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Resolve image reference
+        id: image
+        run: |
+          set -euo pipefail
+          OWNER="$(printf '%s' "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ inputs.tag }}"
+          elif [[ "${{ github.event.workflow_run.head_branch }}" == v* ]]; then
+            TAG="${{ github.event.workflow_run.head_branch }}"
+          else
+            TAG="latest"
+          fi
+          if [[ ! "${TAG}" =~ ^[A-Za-z0-9._-]+$ ]]; then
+            echo "error: invalid image tag '${TAG}'" >&2
+            exit 1
+          fi
+          echo "ref=ghcr.io/${OWNER}/zenha-token-server:${TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to Azure via OIDC
+        uses: azure/login@v3
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID || secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID || secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID || secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Update container stack on Azure VM
+        env:
+          AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP || secrets.AZURE_RESOURCE_GROUP }}
+          AZURE_VM_NAME: ${{ vars.AZURE_VM_NAME || secrets.AZURE_VM_NAME || 'zenha-vm' }}
+          ZENHA_IMAGE: ${{ steps.image.outputs.ref }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${AZURE_RESOURCE_GROUP}" ]]; then
+            echo "error: AZURE_RESOURCE_GROUP must be configured in environment variables or secrets" >&2
+            exit 1
+          fi
+          OUTPUT="$(az vm run-command invoke \
+            --resource-group "${AZURE_RESOURCE_GROUP}" \
+            --name "${AZURE_VM_NAME}" \
+            --command-id RunShellScript \
+            --scripts '
+              set -euo pipefail
+              IMAGE="$1"
+              ENV_FILE="/opt/zenha/.env"
+              if [[ ! -f "${ENV_FILE}" ]]; then
+                echo "error: ${ENV_FILE} not found; run deploy/setup-server.sh first" >&2
+                exit 1
+              fi
+              if grep -q "^ZENHA_IMAGE=" "${ENV_FILE}"; then
+                sed -i "s|^ZENHA_IMAGE=.*|ZENHA_IMAGE=${IMAGE}|" "${ENV_FILE}"
+              else
+                printf "\nZENHA_IMAGE=%s\n" "${IMAGE}" >> "${ENV_FILE}"
+              fi
+              chmod 0600 "${ENV_FILE}"
+              cd /opt/zenha
+              docker compose pull && docker compose up -d --remove-orphans
+              for i in $(seq 1 15); do
+                if curl -fsS http://127.0.0.1:8787/health >/dev/null 2>&1; then
+                  echo ZENHA_DEPLOY_OK
+                  exit 0
+                fi
+                sleep 2
+              done
+              echo "error: token-server health check failed after update" >&2
+              exit 1
+            ' \
+            --parameters "${ZENHA_IMAGE}" \
+            --query 'value[0].message' -o tsv)"
+          echo "${OUTPUT}"
+          # run-command succeeds even when the script fails, so check the marker.
+          grep -q ZENHA_DEPLOY_OK <<<"${OUTPUT}"
