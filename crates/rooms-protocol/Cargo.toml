@@ -4,6 +4,7 @@ description = "Tipos compartilhados entre o cliente e o servidor de tokens"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+license.workspace = true
 publish.workspace = true
 
 [dependencies]

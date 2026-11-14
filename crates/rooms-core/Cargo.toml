@@ -4,6 +4,7 @@ description = "Sessão, áudio, captura e vídeo. Única crate que conhece o SDK
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+license.workspace = true
 publish.workspace = true
 
 [features]
