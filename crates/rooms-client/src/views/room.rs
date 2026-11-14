@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use eframe::egui::{
     self, Align, Color32, CornerRadius, Layout, Margin, RichText, Sense, Stroke, Vec2,
 };
@@ -8,7 +10,8 @@ use super::share::VideoRenderer;
 use crate::chat_images::ChatImages;
 use crate::icons;
 use crate::state::{
-    ConnectionStatus, LobbyVoiceState, LocalShare, RoomState, UserAction, WatchState,
+    ConnectionStatus, DEFAULT_PARTICIPANT_VOLUME, LobbyVoiceState, LocalShare,
+    MAX_PARTICIPANT_VOLUME, RoomState, UserAction, WatchState, participant_volume_for,
 };
 use crate::theme;
 use crate::ui_model::ParticipantView;
@@ -28,6 +31,7 @@ pub fn show(
     renderer: &mut VideoRenderer,
     images: &mut ChatImages,
     stream_volume: u8,
+    participant_volumes: &BTreeMap<String, u16>,
     ptt_hint: Option<&str>,
     available_update: Option<&AvailableUpdate>,
 ) -> Vec<UserAction> {
@@ -80,9 +84,17 @@ pub fn show(
     }
 
     if let Some(watch) = state.share.watching.clone() {
-        watching_center(ui, state, &watch, renderer, stream_volume, &mut actions);
+        watching_center(
+            ui,
+            state,
+            &watch,
+            renderer,
+            stream_volume,
+            participant_volumes,
+            &mut actions,
+        );
     } else {
-        main_center(ui, state, &mut actions);
+        main_center(ui, state, participant_volumes, &mut actions);
     }
 
     actions
@@ -474,7 +486,12 @@ fn occupant_row(ui: &mut egui::Ui, name: &str, speaking: bool) {
     });
 }
 
-fn main_center(ui: &mut egui::Ui, state: &RoomState, actions: &mut Vec<UserAction>) {
+fn main_center(
+    ui: &mut egui::Ui,
+    state: &RoomState,
+    participant_volumes: &BTreeMap<String, u16>,
+    actions: &mut Vec<UserAction>,
+) {
     egui::Panel::top("room_header")
         .exact_size(HEADER_HEIGHT)
         .show_separator_line(false)
@@ -596,7 +613,7 @@ fn main_center(ui: &mut egui::Ui, state: &RoomState, actions: &mut Vec<UserActio
         )
         .show(ui, |ui| {
             share_error_banner(ui, state.share.error.as_deref(), actions);
-            participants_grid(ui, state, actions);
+            participants_grid(ui, state, participant_volumes, actions);
         });
 }
 
@@ -606,6 +623,7 @@ fn watching_center(
     watch: &WatchState,
     renderer: &mut VideoRenderer,
     stream_volume: u8,
+    participant_volumes: &BTreeMap<String, u16>,
     actions: &mut Vec<UserAction>,
 ) {
     let presenter_name = state
@@ -669,7 +687,7 @@ fn watching_center(
             share_error_banner(ui, state.share.error.as_deref(), actions);
             stream_volume_box(ui, stream_volume, actions);
             ui.add_space(8.0);
-            compact_participants_strip(ui, state);
+            compact_participants_strip(ui, state, participant_volumes, actions);
             ui.add_space(10.0);
 
             egui::Frame::new()
@@ -729,12 +747,18 @@ fn stream_volume_box(ui: &mut egui::Ui, stream_volume: u8, actions: &mut Vec<Use
         });
 }
 
-fn compact_participants_strip(ui: &mut egui::Ui, state: &RoomState) {
+fn compact_participants_strip(
+    ui: &mut egui::Ui,
+    state: &RoomState,
+    participant_volumes: &BTreeMap<String, u16>,
+    actions: &mut Vec<UserAction>,
+) {
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = Vec2::new(8.0, 6.0);
         for participant in &state.participants {
             let is_self =
                 !state.local_identity.is_empty() && participant.identity == state.local_identity;
+            let volume = participant_volume_for(participant_volumes, &participant.identity);
             let border = if participant.speaking {
                 Stroke::new(1.5, theme::SPEAKING)
             } else {
@@ -745,7 +769,7 @@ fn compact_participants_strip(ui: &mut egui::Ui, state: &RoomState) {
             } else {
                 theme::TEXT_SECONDARY
             };
-            egui::Frame::new()
+            let chip_response = egui::Frame::new()
                 .fill(theme::PANEL)
                 .stroke(border)
                 .corner_radius(CornerRadius::same(18))
@@ -759,18 +783,26 @@ fn compact_participants_strip(ui: &mut egui::Ui, state: &RoomState) {
                             &participant.name,
                             theme::avatar_color(&participant.identity, is_self),
                         );
-                        let label = if participant.muted {
+                        let mut label = if participant.muted {
                             format!("{} (mudo)", participant.name)
                         } else {
                             participant.name.clone()
                         };
+                        if let Some(badge) = participant_volume_badge(volume, is_self) {
+                            label.push_str(" · ");
+                            label.push_str(&badge);
+                        }
                         ui.label(
                             RichText::new(label)
                                 .font(theme::semibold(13.0))
                                 .color(text_color),
                         );
                     });
-                });
+                })
+                .response;
+            if !is_self {
+                participant_volume_menu(&chip_response, &participant.identity, volume, actions);
+            }
         }
     });
 }
@@ -795,7 +827,12 @@ fn share_error_banner(ui: &mut egui::Ui, error: Option<&str>, actions: &mut Vec<
     ui.add_space(12.0);
 }
 
-fn participants_grid(ui: &mut egui::Ui, state: &RoomState, actions: &mut Vec<UserAction>) {
+fn participants_grid(
+    ui: &mut egui::Ui,
+    state: &RoomState,
+    participant_volumes: &BTreeMap<String, u16>,
+    actions: &mut Vec<UserAction>,
+) {
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .show(ui, |ui| {
@@ -812,8 +849,10 @@ fn participants_grid(ui: &mut egui::Ui, state: &RoomState, actions: &mut Vec<Use
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = gap;
                     for participant in pair {
+                        let volume =
+                            participant_volume_for(participant_volumes, &participant.identity);
                         ui.allocate_ui(Vec2::new(card_width, 84.0), |ui| {
-                            participant_card(ui, state, participant, card_width, actions);
+                            participant_card(ui, state, participant, volume, card_width, actions);
                         });
                     }
                 });
@@ -826,6 +865,7 @@ fn participant_card(
     ui: &mut egui::Ui,
     state: &RoomState,
     participant: &ParticipantView,
+    volume: u16,
     width: f32,
     actions: &mut Vec<UserAction>,
 ) {
@@ -838,7 +878,7 @@ fn participant_card(
         theme::PANEL
     };
 
-    egui::Frame::new()
+    let card_response = egui::Frame::new()
         .fill(theme::PANEL)
         .stroke(Stroke::new(2.0, border_color))
         .corner_radius(CornerRadius::same(12))
@@ -868,7 +908,7 @@ fn participant_card(
                     |ui| {
                         ui.spacing_mut().item_spacing.y = 4.0;
                         ui.horizontal(|ui| {
-                            ui.spacing_mut().item_spacing.x = 4.0;
+                            ui.spacing_mut().item_spacing.x = 6.0;
                             ui.label(
                                 RichText::new(&participant.name)
                                     .font(theme::semibold(15.0))
@@ -878,6 +918,8 @@ fn participant_card(
                                 ui.label(
                                     RichText::new("(você)").size(13.0).color(theme::TEXT_WEAK),
                                 );
+                            } else if let Some(badge) = participant_volume_badge(volume, is_self) {
+                                ui.label(RichText::new(badge).size(12.0).color(theme::TEXT_WEAK));
                             }
                         });
 
@@ -919,7 +961,97 @@ fn participant_card(
                     });
                 }
             });
+        })
+        .response;
+
+    if !is_self {
+        participant_volume_menu(&card_response, &participant.identity, volume, actions);
+    }
+}
+
+fn participant_volume_badge(volume: u16, is_self: bool) -> Option<String> {
+    if is_self || volume == DEFAULT_PARTICIPANT_VOLUME {
+        None
+    } else {
+        Some(format!("{volume}%"))
+    }
+}
+
+fn participant_volume_menu(
+    card_response: &egui::Response,
+    identity: &str,
+    current_volume: u16,
+    actions: &mut Vec<UserAction>,
+) {
+    let ctx = &card_response.ctx;
+    let popup_id = egui::Id::unique(("participant_volume_popup", identity));
+    let dirty_id = popup_id.with("dirty");
+    let mut needs_save = ctx.data_mut(|d| d.get_temp::<bool>(dirty_id).unwrap_or(false));
+
+    let popup = egui::Popup::menu(card_response)
+        .id(popup_id)
+        .open_memory(if card_response.container_secondary_clicked() {
+            Some(egui::SetOpenCommand::Bool(true))
+        } else if card_response.container_clicked() {
+            Some(egui::SetOpenCommand::Bool(false))
+        } else {
+            None
+        })
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+        .at_pointer_fixed()
+        .show(|ui| {
+            ui.spacing_mut().item_spacing.y = 6.0;
+            ui.label(
+                RichText::new("Volume")
+                    .font(theme::semibold(13.0))
+                    .color(theme::TEXT),
+            );
+            ui.spacing_mut().slider_width = 160.0;
+            let mut value = current_volume;
+            let slider = ui.add(
+                egui::Slider::new(&mut value, 0..=MAX_PARTICIPANT_VOLUME)
+                    .step_by(5.0)
+                    .suffix("%"),
+            );
+            if value != current_volume {
+                actions.push(UserAction::SetParticipantVolume {
+                    identity: identity.to_owned(),
+                    percent: value,
+                });
+                needs_save = true;
+            }
+            if slider.drag_stopped() || (slider.changed() && !slider.dragged()) {
+                actions.push(UserAction::SaveAudioSettings);
+                needs_save = false;
+            }
+            if ui.button("Restaurar 100%").clicked() {
+                if current_volume != DEFAULT_PARTICIPANT_VOLUME
+                    || value != DEFAULT_PARTICIPANT_VOLUME
+                {
+                    actions.push(UserAction::SetParticipantVolume {
+                        identity: identity.to_owned(),
+                        percent: DEFAULT_PARTICIPANT_VOLUME,
+                    });
+                }
+                actions.push(UserAction::SaveAudioSettings);
+                needs_save = false;
+                ui.close();
+            }
         });
+
+    let closing = popup.as_ref().is_some_and(|p| p.response.should_close())
+        || !egui::Popup::is_id_open(ctx, popup_id);
+    if needs_save && closing {
+        actions.push(UserAction::SaveAudioSettings);
+        needs_save = false;
+    }
+    ctx.data_mut(|d| {
+        if needs_save {
+            d.insert_temp(dirty_id, true);
+        } else {
+            d.remove::<bool>(dirty_id);
+        }
+    });
 }
 
 fn chat_toggle_button(ui: &mut egui::Ui, open: bool, unread: usize) -> bool {
@@ -1019,5 +1151,16 @@ mod tests {
         assert!(is_occupant_speaking(true, "Ana", &list));
         assert!(!is_occupant_speaking(false, "Ana", &list));
         assert!(!is_occupant_speaking(true, "Bruno", &list));
+    }
+
+    #[test]
+    fn participant_volume_badge_shows_only_for_non_default_remote_participants() {
+        assert_eq!(participant_volume_badge(100, false), None);
+        assert_eq!(participant_volume_badge(70, false), Some("70%".to_owned()));
+        assert_eq!(
+            participant_volume_badge(165, false),
+            Some("165%".to_owned())
+        );
+        assert_eq!(participant_volume_badge(70, true), None);
     }
 }

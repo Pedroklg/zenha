@@ -117,6 +117,9 @@ fn to_core(command: UiCommand) -> Command {
         UiCommand::SetInputDevice(id) => Command::SetInputDevice(id),
         UiCommand::SetOutputDevice(id) => Command::SetOutputDevice(id),
         UiCommand::SetStreamVolume(percent) => Command::SetStreamVolume(percent),
+        UiCommand::SetParticipantVolume { identity, percent } => {
+            Command::SetParticipantVolume { identity, percent }
+        }
         UiCommand::SetNoiseGate(threshold) => Command::SetNoiseGate(threshold),
         UiCommand::SetNoiseSuppression(mode) => Command::SetNoiseSuppression(match mode {
             NoiseMode::Off => NoiseSuppression::Off,
@@ -800,6 +803,20 @@ mod tests {
                 selected_input: Some("m1".to_owned()),
                 selected_output: None,
             }]
+        );
+    }
+
+    #[test]
+    fn participant_volume_ui_command_translates_to_core() {
+        assert_eq!(
+            to_core(UiCommand::SetParticipantVolume {
+                identity: "alice".to_owned(),
+                percent: 135,
+            }),
+            Command::SetParticipantVolume {
+                identity: "alice".to_owned(),
+                percent: 135,
+            }
         );
     }
 }

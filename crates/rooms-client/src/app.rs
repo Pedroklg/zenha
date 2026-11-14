@@ -421,6 +421,7 @@ impl eframe::App for App {
                 renderer,
                 images,
                 audio.stream_volume,
+                &audio.participant_volumes,
                 ptt_hint.as_deref(),
                 available_update.as_ref(),
             ),
