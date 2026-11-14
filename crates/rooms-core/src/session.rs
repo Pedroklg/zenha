@@ -4,7 +4,8 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use rooms_protocol::{
-    MAX_FILE_BYTES, TokenRequest, validate_client_id, validate_display_name, validate_room_name,
+    MAX_FILE_BYTES, SaveChatRequest, SavedChatMessage, TokenRequest, validate_chat_text,
+    validate_client_id, validate_display_name, validate_room_name,
 };
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::time::Sleep;
@@ -12,7 +13,7 @@ use tokio::time::Sleep;
 use crate::api::{Command, Event, FileTransfer, SessionConfig, SessionError, TransferState};
 use crate::backend::{BackendEvent, ConnectedRoom, MediaBackend};
 use crate::backoff::ReconnectPolicy;
-use crate::chat::{self, CHAT_TOPIC};
+use crate::chat::{self, CHAT_DELETE_TOPIC, CHAT_TOPIC};
 use crate::clock::unix_ms;
 use crate::files::{mime_for_name, sanitize_file_name};
 use crate::handle::EventSink;
@@ -22,7 +23,12 @@ use crate::video::{FrameSlot, SharePreset};
 const NOISE_GATE_MIN_DB: i8 = -70;
 const NOISE_GATE_MAX_DB: i8 = -20;
 
-type Attempt = Pin<Box<dyn Future<Output = Result<ConnectedRoom, SessionError>> + Send>>;
+struct AttemptConnected {
+    jwt: String,
+    room: ConnectedRoom,
+}
+
+type Attempt = Pin<Box<dyn Future<Output = Result<AttemptConnected, SessionError>> + Send>>;
 
 enum Phase {
     Idle,
@@ -33,6 +39,7 @@ enum Phase {
     },
     Connected {
         room: String,
+        jwt: String,
         local_identity: String,
         events: UnboundedReceiver<BackendEvent>,
         reconnecting: bool,
@@ -46,7 +53,7 @@ enum Phase {
 
 enum Input {
     Backend(Option<BackendEvent>),
-    Attempt(Result<ConnectedRoom, SessionError>),
+    Attempt(Result<AttemptConnected, SessionError>),
     BackoffElapsed,
 }
 
@@ -114,18 +121,26 @@ impl Session {
         self.sink.emit(event);
     }
 
-    fn start_attempt(&mut self, room: String, retry: Option<u32>) {
-        let request = TokenRequest {
+    fn token_request(&self, room: &str) -> TokenRequest {
+        TokenRequest {
             client_id: self.config.client_id.clone(),
             display_name: self.config.display_name.clone(),
-            room: room.clone(),
+            room: room.to_owned(),
             invite_code: self.config.invite_code.clone(),
-        };
+        }
+    }
+
+    fn start_attempt(&mut self, room: String, retry: Option<u32>) {
+        let request = self.token_request(&room);
         let tokens = self.tokens.clone();
         let backend = self.backend.clone();
         let attempt: Attempt = Box::pin(async move {
             let token = tokens.fetch_token(request).await?;
-            backend.connect(&token.livekit_url, &token.token).await
+            let connected = backend.connect(&token.livekit_url, &token.token).await?;
+            Ok(AttemptConnected {
+                jwt: token.token,
+                room: connected,
+            })
         });
         self.phase = Phase::Connecting {
             room,
@@ -188,7 +203,9 @@ impl Session {
                     self.emit(Event::CommandFailed(err));
                 }
             }
-            Command::SendChat { text } => self.send_chat(&text).await,
+            Command::SendChat { text, save } => self.send_chat(&text, save).await,
+            Command::LoadChatHistory { before } => self.load_chat_history(before).await,
+            Command::DeleteChat { id } => self.delete_chat(&id).await,
             Command::SendFile { path } => self.send_file(path).await,
             Command::RefreshRooms => self.refresh_rooms(),
             Command::RefreshAudioDevices => self.publish_audio_devices().await,
@@ -319,21 +336,151 @@ impl Session {
         self.start_attempt(room, None);
     }
 
-    async fn send_chat(&mut self, text: &str) {
+    async fn run_chat_request<T, F, Fut>(&mut self, op: F) -> Result<T, SessionError>
+    where
+        F: Fn(Arc<dyn TokenClient>, String, String) -> Fut,
+        Fut: Future<Output = Result<T, SessionError>>,
+    {
+        let (room, jwt) = match &self.phase {
+            Phase::Connected { room, jwt, .. } => (room.clone(), jwt.clone()),
+            _ => return Err(SessionError::NotInRoom),
+        };
+        let tokens = self.tokens.clone();
+        match op(tokens.clone(), jwt, room.clone()).await {
+            Err(SessionError::Unauthorized) => {
+                // Renew only the JWT on 401 so active LiveKit media tracks stay uninterrupted.
+                let request = self.token_request(&room);
+                let renewed = tokens.fetch_token(request).await?;
+                if let Phase::Connected {
+                    jwt: current_jwt,
+                    room: current_room,
+                    ..
+                } = &mut self.phase
+                    && *current_room == room
+                {
+                    *current_jwt = renewed.token.clone();
+                }
+                op(tokens, renewed.token, room).await
+            }
+            other => other,
+        }
+    }
+
+    async fn fetch_history_page(
+        &mut self,
+        before: Option<String>,
+    ) -> Result<(Vec<SavedChatMessage>, bool), SessionError> {
+        if let Some(cursor) = &before {
+            chat::validate_chat_id(cursor)?;
+        }
+        let page = self
+            .run_chat_request(|tokens, jwt, room| {
+                let before = before.clone();
+                async move {
+                    tokens
+                        .fetch_chat_history(&jwt, &room, before.as_deref())
+                        .await
+                }
+            })
+            .await?;
+        Ok((page.messages, page.has_more))
+    }
+
+    async fn send_chat(&mut self, text: &str, save: bool) {
         let Phase::Connected { local_identity, .. } = &self.phase else {
             self.emit(Event::CommandFailed(SessionError::NotInRoom));
             return;
         };
+        let local_identity = local_identity.clone();
         let id = uuid::Uuid::new_v4().to_string();
-        let (message, payload) = match chat::build_outgoing(id, local_identity, text, unix_ms()) {
-            Ok(built) => built,
+        let sent_at_unix_ms = unix_ms();
+        let (message, payload) = if save {
+            if let Err(err) = validate_chat_text(text) {
+                self.emit(Event::CommandFailed(SessionError::InvalidInput(
+                    err.to_string(),
+                )));
+                return;
+            }
+            let request = SaveChatRequest {
+                id,
+                text: text.to_owned(),
+                sent_at_unix_ms,
+            };
+            let saved_message = match self
+                .run_chat_request(|tokens, jwt, room| {
+                    let request = request.clone();
+                    async move { tokens.save_chat(&jwt, &room, request).await }
+                })
+                .await
+            {
+                Ok(message) => message,
+                Err(err) => {
+                    self.emit(Event::CommandFailed(err));
+                    return;
+                }
+            };
+            let payload = match chat::encode_message(&saved_message) {
+                Ok(payload) => payload,
+                Err(err) => {
+                    self.emit(Event::CommandFailed(err));
+                    return;
+                }
+            };
+            (saved_message, payload)
+        } else {
+            match chat::build_outgoing(id, &local_identity, text, sent_at_unix_ms) {
+                Ok(built) => built,
+                Err(err) => {
+                    self.emit(Event::CommandFailed(err));
+                    return;
+                }
+            }
+        };
+        match self.backend.send_data(CHAT_TOPIC, payload).await {
+            Ok(()) => self.emit(Event::ChatReceived(message)),
+            Err(err) => self.emit(Event::CommandFailed(err)),
+        }
+    }
+
+    async fn load_chat_history(&mut self, before: Option<String>) {
+        match self.fetch_history_page(before.clone()).await {
+            Ok((messages, has_more)) => self.emit(Event::ChatHistory {
+                messages,
+                has_more,
+                before,
+            }),
+            Err(err) => self.emit(Event::CommandFailed(err)),
+        }
+    }
+
+    async fn delete_chat(&mut self, id: &str) {
+        let Phase::Connected { local_identity, .. } = &self.phase else {
+            self.emit(Event::CommandFailed(SessionError::NotInRoom));
+            return;
+        };
+        let local_identity = local_identity.clone();
+        let payload = match chat::build_delete_outgoing(id) {
+            Ok(payload) => payload,
             Err(err) => {
                 self.emit(Event::CommandFailed(err));
                 return;
             }
         };
-        match self.backend.send_data(CHAT_TOPIC, payload).await {
-            Ok(()) => self.emit(Event::ChatReceived(message)),
+        if let Err(err) = self
+            .run_chat_request(|tokens, jwt, room| {
+                let id = id.to_owned();
+                async move { tokens.delete_chat(&jwt, &room, &id).await }
+            })
+            .await
+        {
+            self.emit(Event::CommandFailed(err));
+            return;
+        }
+        match self.backend.send_data(CHAT_DELETE_TOPIC, payload).await {
+            Ok(()) => self.emit(Event::ChatDeleted {
+                id: id.to_owned(),
+                sender: local_identity,
+            }),
             Err(err) => self.emit(Event::CommandFailed(err)),
         }
     }
@@ -423,7 +570,7 @@ impl Session {
         }
     }
 
-    async fn on_attempt(&mut self, result: Result<ConnectedRoom, SessionError>) {
+    async fn on_attempt(&mut self, result: Result<AttemptConnected, SessionError>) {
         let Phase::Connecting { room, retry, .. } = std::mem::replace(&mut self.phase, Phase::Idle)
         else {
             return;
@@ -442,11 +589,20 @@ impl Session {
         }
     }
 
-    async fn on_connected(&mut self, room: String, retry: Option<u32>, connected: ConnectedRoom) {
-        let ConnectedRoom {
-            local_identity,
-            participants,
-            events,
+    async fn on_connected(
+        &mut self,
+        room: String,
+        retry: Option<u32>,
+        connected: AttemptConnected,
+    ) {
+        let AttemptConnected {
+            jwt,
+            room:
+                ConnectedRoom {
+                    local_identity,
+                    participants,
+                    events,
+                },
         } = connected;
         if let Err(err) = self.backend.set_microphone_muted(self.muted).await {
             tracing::warn!(%err, "could not apply microphone state");
@@ -456,6 +612,7 @@ impl Session {
         }
         self.phase = Phase::Connected {
             room: room.clone(),
+            jwt,
             local_identity: local_identity.clone(),
             events,
             reconnecting: false,
@@ -469,6 +626,16 @@ impl Session {
                 local_identity,
                 participants,
             });
+            match self.fetch_history_page(None).await {
+                Ok((messages, has_more)) => self.emit(Event::ChatHistory {
+                    messages,
+                    has_more,
+                    before: None,
+                }),
+                Err(err) => {
+                    tracing::warn!(%err, "could not load initial chat history");
+                }
+            }
         }
     }
 
@@ -509,6 +676,10 @@ impl Session {
                     && let Some(message) = chat::parse_incoming(&sender, &payload)
                 {
                     self.emit(Event::ChatReceived(message));
+                } else if topic == CHAT_DELETE_TOPIC
+                    && let Some(id) = chat::parse_incoming_delete(&payload)
+                {
+                    self.emit(Event::ChatDeleted { id, sender });
                 }
             }
             Some(BackendEvent::FileTransfer(transfer)) => {
@@ -590,7 +761,7 @@ impl Session {
 mod tests {
     use std::time::Duration;
 
-    use rooms_protocol::{ChatMessage, RoomSummary};
+    use rooms_protocol::{ChatDeleted, ChatHistoryResponse, ChatMessage, RoomSummary};
     use tokio::sync::mpsc;
     use tokio::time::Instant;
 
@@ -662,6 +833,10 @@ mod tests {
             });
             assert_eq!(self.next().await, Event::Connecting);
             assert!(matches!(self.next().await, Event::Joined { .. }));
+            assert!(matches!(
+                self.next().await,
+                Event::ChatHistory { before: None, .. }
+            ));
         }
     }
 
@@ -679,6 +854,14 @@ mod tests {
                 room: "geral".to_owned(),
                 local_identity: "local".to_owned(),
                 participants: vec![participant("a")],
+            }
+        );
+        assert_eq!(
+            h.next().await,
+            Event::ChatHistory {
+                messages: Vec::new(),
+                has_more: false,
+                before: None,
             }
         );
         assert_eq!(h.tokens.requests()[0].client_id, "client-pedro");
@@ -812,12 +995,14 @@ mod tests {
         h.join("geral").await;
         h.send(Command::SendChat {
             text: "oi".to_owned(),
+            save: false,
         });
         let Event::ChatReceived(echo) = h.next().await else {
             panic!("expected echo");
         };
         assert_eq!(echo.sender, "local");
         assert_eq!(echo.text, "oi");
+        assert!(!echo.saved);
         assert!(echo.sent_at_unix_ms > 0);
 
         let sent = h.backend.calls().into_iter().find_map(|call| match call {
@@ -837,6 +1022,7 @@ mod tests {
         let mut h = harness();
         h.send(Command::SendChat {
             text: "oi".to_owned(),
+            save: false,
         });
         assert_eq!(
             h.next().await,
@@ -845,6 +1031,7 @@ mod tests {
         h.join("geral").await;
         h.send(Command::SendChat {
             text: "   ".to_owned(),
+            save: false,
         });
         assert!(matches!(
             h.next().await,
@@ -1229,6 +1416,10 @@ mod tests {
         assert_eq!(h.next().await, Event::Left);
         assert_eq!(h.next().await, Event::Connecting);
         assert!(matches!(h.next().await, Event::Joined { .. }));
+        assert!(matches!(
+            h.next().await,
+            Event::ChatHistory { before: None, .. }
+        ));
         h.backend.emit(BackendEvent::Disconnected {
             reason: "network".to_owned(),
         });
@@ -1675,6 +1866,284 @@ mod tests {
         assert_eq!(
             cues,
             vec![Cue::Muted, Cue::Unmuted, Cue::Deafened, Cue::Undeafened]
+        );
+    }
+
+    fn saved_item(id: &str, text: &str) -> SavedChatMessage {
+        SavedChatMessage {
+            message: ChatMessage {
+                id: id.to_owned(),
+                sender: "pedro".to_owned(),
+                sent_at_unix_ms: 100,
+                text: text.to_owned(),
+                saved: true,
+            },
+            sender_id: "client-pedro".to_owned(),
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn save_true_posts_before_publishing_with_saved_flag_and_emits_local() {
+        let mut h = harness();
+        h.join("geral").await;
+        h.send(Command::SendChat {
+            text: "nota importante".to_owned(),
+            save: true,
+        });
+        let Event::ChatReceived(echo) = h.next().await else {
+            panic!("expected chat received");
+        };
+        assert!(echo.saved);
+        assert_eq!(echo.text, "nota importante");
+        assert_eq!(echo.sender, "pedro");
+
+        let save_calls = h.tokens.save_calls();
+        assert_eq!(save_calls.len(), 1);
+        assert_eq!(save_calls[0].0, "token-geral-1");
+        assert_eq!(save_calls[0].1, "geral");
+        assert_eq!(save_calls[0].2.id, echo.id);
+        assert_eq!(save_calls[0].2.text, "nota importante");
+
+        let sent = h.backend.calls().into_iter().find_map(|call| match call {
+            BackendCall::SendData { topic, payload } => Some((topic, payload)),
+            _ => None,
+        });
+        let (topic, payload) = sent.unwrap();
+        assert_eq!(topic, CHAT_TOPIC);
+        let published: ChatMessage = serde_json::from_slice(&payload).unwrap();
+        assert!(published.saved);
+        assert_eq!(published, echo);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn save_failure_emits_command_failed_and_does_not_publish() {
+        let mut h = harness();
+        h.join("geral").await;
+        h.tokens.push_save_result(Err(SessionError::RateLimited));
+        h.send(Command::SendChat {
+            text: "oi".to_owned(),
+            save: true,
+        });
+        assert_eq!(
+            h.next().await,
+            Event::CommandFailed(SessionError::RateLimited)
+        );
+        assert!(
+            !h.backend
+                .calls()
+                .iter()
+                .any(|call| matches!(call, BackendCall::SendData { .. }))
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn unauthorized_chat_call_refreshes_token_retries_once_and_does_not_loop() {
+        let mut h = harness();
+        h.join("geral").await;
+        assert_eq!(h.backend.connect_count(), 1);
+        assert_eq!(h.tokens.requests().len(), 1);
+
+        // Single 401 refreshes JWT, retries once, updates stored token, and does not reconnect LiveKit.
+        h.tokens.push_save_result(Err(SessionError::Unauthorized));
+        h.send(Command::SendChat {
+            text: "primeira".to_owned(),
+            save: true,
+        });
+        let Event::ChatReceived(first) = h.next().await else {
+            panic!("expected retry success");
+        };
+        assert_eq!(first.text, "primeira");
+        assert!(first.saved);
+        assert_eq!(h.tokens.requests().len(), 2);
+        assert_eq!(h.backend.connect_count(), 1);
+        assert_eq!(h.tokens.save_calls()[0].0, "token-geral-1");
+        assert_eq!(h.tokens.save_calls()[1].0, "token-geral-2");
+
+        // Next call reuses the refreshed JWT directly.
+        h.send(Command::SendChat {
+            text: "segunda".to_owned(),
+            save: true,
+        });
+        assert!(matches!(h.next().await, Event::ChatReceived(_)));
+        assert_eq!(h.tokens.requests().len(), 2);
+        assert_eq!(h.tokens.save_calls()[2].0, "token-geral-2");
+
+        // Double 401 stops after one retry without looping infinitely.
+        h.tokens.push_save_result(Err(SessionError::Unauthorized));
+        h.tokens.push_save_result(Err(SessionError::Unauthorized));
+        h.send(Command::SendChat {
+            text: "falha".to_owned(),
+            save: true,
+        });
+        assert_eq!(
+            h.next().await,
+            Event::CommandFailed(SessionError::Unauthorized)
+        );
+        assert_eq!(h.tokens.requests().len(), 3);
+        assert_eq!(h.tokens.save_calls().len(), 5);
+        assert_eq!(h.tokens.save_calls()[3].0, "token-geral-2");
+        assert_eq!(h.tokens.save_calls()[4].0, "token-geral-3");
+        assert_eq!(h.backend.connect_count(), 1);
+        let published_count = h
+            .backend
+            .calls()
+            .into_iter()
+            .filter(
+                |call| matches!(call, BackendCall::SendData { topic, .. } if topic == CHAT_TOPIC),
+            )
+            .count();
+        assert_eq!(published_count, 2);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn join_auto_loads_history_and_load_chat_history_forwards_before() {
+        let mut h = harness();
+        let page1 = ChatHistoryResponse {
+            messages: vec![saved_item("m2", "dois"), saved_item("m1", "um")],
+            has_more: true,
+        };
+        let page2 = ChatHistoryResponse {
+            messages: vec![saved_item("m0", "zero")],
+            has_more: false,
+        };
+        h.tokens.set_chat_history_page(None, page1.clone());
+        h.tokens
+            .set_chat_history_page(Some("m1".to_owned()), page2.clone());
+
+        h.send(Command::Join {
+            room: "geral".to_owned(),
+        });
+        assert_eq!(h.next().await, Event::Connecting);
+        assert!(matches!(h.next().await, Event::Joined { .. }));
+        assert_eq!(
+            h.next().await,
+            Event::ChatHistory {
+                messages: page1.messages,
+                has_more: true,
+                before: None,
+            }
+        );
+
+        h.send(Command::LoadChatHistory {
+            before: Some("m1".to_owned()),
+        });
+        assert_eq!(
+            h.next().await,
+            Event::ChatHistory {
+                messages: page2.messages,
+                has_more: false,
+                before: Some("m1".to_owned()),
+            }
+        );
+        assert_eq!(h.tokens.history_calls().len(), 2);
+
+        // Explicit LoadChatHistory failure emits CommandFailed.
+        h.tokens.push_history_result(Err(SessionError::RateLimited));
+        h.send(Command::LoadChatHistory { before: None });
+        assert_eq!(
+            h.next().await,
+            Event::CommandFailed(SessionError::RateLimited)
+        );
+        assert_eq!(h.tokens.history_calls().len(), 3);
+
+        // Reconnect must not auto-fetch initial history again.
+        h.backend.emit(BackendEvent::Disconnected {
+            reason: "drop".to_owned(),
+        });
+        assert_eq!(h.next().await, Event::Reconnecting);
+        assert_eq!(h.next().await, Event::Reconnected);
+        assert!(matches!(h.next().await, Event::ParticipantList(_)));
+        assert_eq!(h.tokens.history_calls().len(), 3);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn initial_history_failure_does_not_fail_session_or_emit_empty_history() {
+        let mut h = harness();
+        h.tokens
+            .push_history_result(Err(SessionError::TokenServer("unavailable".to_owned())));
+        h.send(Command::Join {
+            room: "geral".to_owned(),
+        });
+        assert_eq!(h.next().await, Event::Connecting);
+        assert!(matches!(h.next().await, Event::Joined { .. }));
+        assert!(h.backend.is_connected());
+
+        h.send(Command::SendChat {
+            text: "ping".to_owned(),
+            save: false,
+        });
+        assert!(matches!(h.next().await, Event::ChatReceived(msg) if msg.text == "ping"));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn delete_chat_publishes_on_delete_topic_and_incoming_uses_backend_identity() {
+        let mut h = harness();
+        h.join("geral").await;
+        h.send(Command::DeleteChat {
+            id: "msg-1".to_owned(),
+        });
+        assert_eq!(
+            h.next().await,
+            Event::ChatDeleted {
+                id: "msg-1".to_owned(),
+                sender: "local".to_owned(),
+            }
+        );
+        assert_eq!(
+            h.tokens.delete_calls(),
+            vec![(
+                "token-geral-1".to_owned(),
+                "geral".to_owned(),
+                "msg-1".to_owned()
+            )]
+        );
+        let published_delete = h.backend.calls().into_iter().find_map(|call| match call {
+            BackendCall::SendData { topic, payload } if topic == CHAT_DELETE_TOPIC => Some(payload),
+            _ => None,
+        });
+        assert_eq!(
+            serde_json::from_slice::<ChatDeleted>(&published_delete.unwrap()).unwrap(),
+            ChatDeleted {
+                id: "msg-1".to_owned()
+            }
+        );
+
+        // DELETE server failure does not publish or emit ChatDeleted.
+        h.tokens.push_delete_result(Err(SessionError::TokenServer(
+            "message not found".to_owned(),
+        )));
+        h.send(Command::DeleteChat {
+            id: "msg-2".to_owned(),
+        });
+        assert!(matches!(h.next().await, Event::CommandFailed(_)));
+        let delete_publishes = h
+            .backend
+            .calls()
+            .into_iter()
+            .filter(|call| matches!(call, BackendCall::SendData { topic, .. } if topic == CHAT_DELETE_TOPIC))
+            .count();
+        assert_eq!(delete_publishes, 1);
+
+        // Incoming invalid payloads on chat.delete are dropped; valid uses backend identity.
+        h.backend
+            .emit(data(CHAT_DELETE_TOPIC, b"not json".to_vec()));
+        h.backend.emit(data(
+            CHAT_DELETE_TOPIC,
+            serde_json::to_vec(&ChatDeleted { id: String::new() }).unwrap(),
+        ));
+        h.backend.emit(data(
+            CHAT_DELETE_TOPIC,
+            serde_json::to_vec(&ChatDeleted {
+                id: "msg-9".to_owned(),
+            })
+            .unwrap(),
+        ));
+        assert_eq!(
+            h.next().await,
+            Event::ChatDeleted {
+                id: "msg-9".to_owned(),
+                sender: "ana".to_owned(),
+            }
         );
     }
 }

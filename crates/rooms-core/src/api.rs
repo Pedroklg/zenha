@@ -1,7 +1,7 @@
 use std::fmt;
 use std::path::PathBuf;
 
-use rooms_protocol::{ChatMessage, RoomSummary};
+use rooms_protocol::{ChatMessage, RoomSummary, SavedChatMessage};
 
 use crate::capture::CaptureEnd;
 use crate::cue::Cue;
@@ -102,6 +102,13 @@ pub enum Command {
     SetDeafened(bool),
     SendChat {
         text: String,
+        save: bool,
+    },
+    LoadChatHistory {
+        before: Option<String>,
+    },
+    DeleteChat {
+        id: String,
     },
     SendFile {
         path: PathBuf,
@@ -155,6 +162,20 @@ pub enum Event {
         speaking: bool,
     },
     ChatReceived(ChatMessage),
+    /// Página do histórico de mensagens salvas retornada pelo servidor.
+    ChatHistory {
+        messages: Vec<SavedChatMessage>,
+        has_more: bool,
+        before: Option<String>,
+    },
+    /// Indica que uma mensagem salva foi removida.
+    ///
+    /// A interface (T31c) deve conferir a autoria comparando `sender` com o
+    /// `sender_id` ou identidade local que já possui antes de remover o item.
+    ChatDeleted {
+        id: String,
+        sender: String,
+    },
     FileTransfer(FileTransfer),
     RoomsUpdated(Vec<RoomSummary>),
     AudioDevicesUpdated(AudioDevices),
@@ -186,6 +207,10 @@ pub enum SessionError {
     TokenServer(String),
     #[error("invite code rejected")]
     InviteRejected,
+    #[error("room token rejected")]
+    Unauthorized,
+    #[error("too many chat messages; try again in a few seconds")]
+    RateLimited,
     #[error("connection to the media server failed: {0}")]
     Connection(String),
     #[error("invalid input: {0}")]

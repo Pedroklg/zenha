@@ -56,7 +56,7 @@ pub use backoff::{ReconnectPolicy, backoff_delay};
 pub use capture::{
     BgraFrame, CaptureEnd, FrameSink, FrameSource, Pacer, SlotSink, TestPatternSource, bgra_to_rgba,
 };
-pub use chat::CHAT_TOPIC;
+pub use chat::{CHAT_DELETE_TOPIC, CHAT_TOPIC};
 pub use cue::{Cue, cue_samples};
 pub use files::{FILE_TOPIC, is_image_mime, mime_for_name, received_path, sanitize_file_name};
 pub use handle::SessionHandle;

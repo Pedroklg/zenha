@@ -1,11 +1,13 @@
+use std::collections::{HashMap, VecDeque};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use async_trait::async_trait;
-use rooms_protocol::{RoomSummary, TokenRequest, TokenResponse};
+use rooms_protocol::{
+    ChatHistoryResponse, ChatMessage, RoomSummary, SaveChatRequest, TokenRequest, TokenResponse,
+};
 use tokio::sync::mpsc::{self, UnboundedSender};
 use tokio::time::Instant;
-
-use std::path::PathBuf;
 
 use crate::api::{
     AudioDevice, AudioDevices, FileTransfer, NoiseSuppression, Participant, SessionError,
@@ -385,6 +387,13 @@ struct TokenState {
     reject_invite: bool,
     remaining_failures: u32,
     rooms: Vec<RoomSummary>,
+    chat_history_pages: HashMap<Option<String>, ChatHistoryResponse>,
+    save_calls: Vec<(String, String, SaveChatRequest)>,
+    history_calls: Vec<(String, String, Option<String>)>,
+    delete_calls: Vec<(String, String, String)>,
+    save_results: VecDeque<Result<ChatMessage, SessionError>>,
+    history_results: VecDeque<Result<ChatHistoryResponse, SessionError>>,
+    delete_results: VecDeque<Result<(), SessionError>>,
 }
 
 #[derive(Debug, Clone)]
@@ -406,6 +415,13 @@ impl FakeTokenClient {
                 reject_invite: false,
                 remaining_failures: 0,
                 rooms: Vec::new(),
+                chat_history_pages: HashMap::new(),
+                save_calls: Vec::new(),
+                history_calls: Vec::new(),
+                delete_calls: Vec::new(),
+                save_results: VecDeque::new(),
+                history_results: VecDeque::new(),
+                delete_results: VecDeque::new(),
             })),
         }
     }
@@ -424,6 +440,34 @@ impl FakeTokenClient {
 
     pub fn requests(&self) -> Vec<TokenRequest> {
         lock(&self.state).requests.clone()
+    }
+
+    pub fn set_chat_history_page(&self, before: Option<String>, page: ChatHistoryResponse) {
+        lock(&self.state).chat_history_pages.insert(before, page);
+    }
+
+    pub fn push_save_result(&self, result: Result<ChatMessage, SessionError>) {
+        lock(&self.state).save_results.push_back(result);
+    }
+
+    pub fn push_history_result(&self, result: Result<ChatHistoryResponse, SessionError>) {
+        lock(&self.state).history_results.push_back(result);
+    }
+
+    pub fn push_delete_result(&self, result: Result<(), SessionError>) {
+        lock(&self.state).delete_results.push_back(result);
+    }
+
+    pub fn save_calls(&self) -> Vec<(String, String, SaveChatRequest)> {
+        lock(&self.state).save_calls.clone()
+    }
+
+    pub fn history_calls(&self) -> Vec<(String, String, Option<String>)> {
+        lock(&self.state).history_calls.clone()
+    }
+
+    pub fn delete_calls(&self) -> Vec<(String, String, String)> {
+        lock(&self.state).delete_calls.clone()
     }
 }
 
@@ -451,5 +495,68 @@ impl TokenClient for FakeTokenClient {
             return Err(SessionError::InviteRejected);
         }
         Ok(state.rooms.clone())
+    }
+
+    async fn save_chat(
+        &self,
+        jwt: &str,
+        room: &str,
+        request: SaveChatRequest,
+    ) -> Result<ChatMessage, SessionError> {
+        let mut state = lock(&self.state);
+        state
+            .save_calls
+            .push((jwt.to_owned(), room.to_owned(), request.clone()));
+        if let Some(result) = state.save_results.pop_front() {
+            return result;
+        }
+        let sender = state
+            .requests
+            .iter()
+            .rev()
+            .find(|req| req.room == room)
+            .map_or_else(|| "local".to_owned(), |req| req.display_name.clone());
+        Ok(ChatMessage {
+            id: request.id,
+            sender,
+            sent_at_unix_ms: request.sent_at_unix_ms,
+            text: request.text,
+            saved: true,
+        })
+    }
+
+    async fn fetch_chat_history(
+        &self,
+        jwt: &str,
+        room: &str,
+        before: Option<&str>,
+    ) -> Result<ChatHistoryResponse, SessionError> {
+        let mut state = lock(&self.state);
+        let cursor = before.map(str::to_owned);
+        state
+            .history_calls
+            .push((jwt.to_owned(), room.to_owned(), cursor.clone()));
+        if let Some(result) = state.history_results.pop_front() {
+            return result;
+        }
+        Ok(state
+            .chat_history_pages
+            .get(&cursor)
+            .cloned()
+            .unwrap_or(ChatHistoryResponse {
+                messages: Vec::new(),
+                has_more: false,
+            }))
+    }
+
+    async fn delete_chat(&self, jwt: &str, room: &str, id: &str) -> Result<(), SessionError> {
+        let mut state = lock(&self.state);
+        state
+            .delete_calls
+            .push((jwt.to_owned(), room.to_owned(), id.to_owned()));
+        if let Some(result) = state.delete_results.pop_front() {
+            return result;
+        }
+        Ok(())
     }
 }

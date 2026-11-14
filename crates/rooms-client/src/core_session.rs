@@ -110,7 +110,7 @@ fn to_core(command: UiCommand) -> Command {
         UiCommand::Leave => Command::Leave,
         UiCommand::SetMuted(muted) => Command::SetMuted(muted),
         UiCommand::SetDeafened(deafened) => Command::SetDeafened(deafened),
-        UiCommand::SendChat { text } => Command::SendChat { text },
+        UiCommand::SendChat { text } => Command::SendChat { text, save: false },
         UiCommand::SendFile { path } => Command::SendFile { path },
         UiCommand::RefreshRooms => Command::RefreshRooms,
         UiCommand::RefreshAudioDevices => Command::RefreshAudioDevices,
@@ -419,6 +419,7 @@ impl Translator {
                 feed: feed_handle(frames),
             }],
             Event::WatchingStopped => vec![UiEvent::WatchingStopped],
+            Event::ChatHistory { .. } | Event::ChatDeleted { .. } => Vec::new(),
             Event::CommandFailed(error) => {
                 tracing::warn!(%error, "command failed");
                 match &error {

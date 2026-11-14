@@ -98,7 +98,10 @@ impl BotCommand {
             Self::Leave => Command::Leave,
             Self::SetMuted { muted } => Command::SetMuted(*muted),
             Self::SetDeafened { deafened } => Command::SetDeafened(*deafened),
-            Self::SendChat { text } => Command::SendChat { text: text.clone() },
+            Self::SendChat { text } => Command::SendChat {
+                text: text.clone(),
+                save: false,
+            },
             Self::SendFile { path } => Command::SendFile { path: path.into() },
             Self::SetOutputDevice { id } => Command::SetOutputDevice(id.clone()),
             Self::SetInputDevice { id } => Command::SetInputDevice(id.clone()),
@@ -197,6 +200,8 @@ pub fn error_kind(error: &SessionError) -> &'static str {
     match error {
         SessionError::TokenServer(_) => "token_server",
         SessionError::InviteRejected => "invite_rejected",
+        SessionError::Unauthorized => "unauthorized",
+        SessionError::RateLimited => "rate_limited",
         SessionError::Connection(_) => "connection",
         SessionError::InvalidInput(_) => "invalid_input",
         SessionError::NotInRoom => "not_in_room",
@@ -429,6 +434,7 @@ impl BotEvent {
                 identity: identity.clone(),
             },
             Event::WatchingStopped => Self::WatchingStopped,
+            Event::ChatHistory { .. } | Event::ChatDeleted { .. } => return None,
             Event::CommandFailed(error) => Self::CommandFailed {
                 error: error.into(),
             },
