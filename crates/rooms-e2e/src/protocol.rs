@@ -630,6 +630,7 @@ mod tests {
             sender: "t".into(),
             sent_at_unix_ms: 9,
             text: "oi".into(),
+            saved: false,
         });
         assert_eq!(
             BotEvent::from_core(&chat),

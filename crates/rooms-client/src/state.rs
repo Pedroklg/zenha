@@ -1888,6 +1888,7 @@ mod tests {
             sender: "ana".to_owned(),
             sent_at_unix_ms: 0,
             text: format!("msg {id}"),
+            saved: false,
         }
     }
 

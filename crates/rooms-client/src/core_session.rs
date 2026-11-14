@@ -534,6 +534,7 @@ mod tests {
             sender: "ana".to_owned(),
             sent_at_unix_ms: 0,
             text: "oi".to_owned(),
+            saved: false,
         }));
         assert!(matches!(&events[..], [UiEvent::ChatReceived(m)] if m.sender == "Ana"));
     }

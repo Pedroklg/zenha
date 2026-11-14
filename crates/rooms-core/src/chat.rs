@@ -18,6 +18,7 @@ pub fn build_outgoing(
         sender: sender.to_owned(),
         sent_at_unix_ms,
         text: text.to_owned(),
+        saved: false,
     };
     let payload =
         serde_json::to_vec(&message).map_err(|err| SessionError::Internal(err.to_string()))?;
@@ -55,6 +56,7 @@ mod tests {
             sender: sender.to_owned(),
             sent_at_unix_ms: 5,
             text: text.to_owned(),
+            saved: false,
         };
         serde_json::to_vec(&message).unwrap_or_default()
     }

@@ -10,6 +10,8 @@ pub const MAX_CLIENT_ID_LEN: usize = 64;
 pub const MAX_CHAT_MESSAGE_LEN: usize = 2000;
 pub const MAX_FILE_BYTES: u64 = 50 * 1024 * 1024;
 pub const MAX_FILE_NAME_LEN: usize = 120;
+pub const MAX_CHAT_ID_LEN: usize = 64;
+pub const CHAT_HISTORY_PAGE: usize = 100;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TokenRequest {
@@ -47,6 +49,32 @@ pub struct ChatMessage {
     pub sender: String,
     pub sent_at_unix_ms: u64,
     pub text: String,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub saved: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SaveChatRequest {
+    pub id: String,
+    pub text: String,
+    pub sent_at_unix_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SavedChatMessage {
+    pub message: ChatMessage,
+    pub sender_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChatHistoryResponse {
+    pub messages: Vec<SavedChatMessage>,
+    pub has_more: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChatDeleted {
+    pub id: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
@@ -126,10 +154,58 @@ mod tests {
             sender: "pedro".to_owned(),
             sent_at_unix_ms: 1_700_000_000_000,
             text: "olá".to_owned(),
+            saved: false,
         };
         let json = serde_json::to_string(&message).unwrap();
         let parsed: ChatMessage = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed, message);
+    }
+
+    #[test]
+    fn unsaved_chat_message_omits_the_flag_and_old_payloads_still_parse() {
+        let json = r#"{"id":"1","sender":"ana","sent_at_unix_ms":5,"text":"oi"}"#;
+        let parsed: ChatMessage = serde_json::from_str(json).unwrap();
+        assert!(!parsed.saved);
+        assert!(!serde_json::to_string(&parsed).unwrap().contains("saved"));
+    }
+
+    #[test]
+    fn chat_history_types_round_trip_through_json() {
+        let history = ChatHistoryResponse {
+            messages: vec![SavedChatMessage {
+                message: ChatMessage {
+                    id: "a-1".to_owned(),
+                    sender: "Ana".to_owned(),
+                    sent_at_unix_ms: 7,
+                    text: "fica salvo".to_owned(),
+                    saved: true,
+                },
+                sender_id: "0123".to_owned(),
+            }],
+            has_more: true,
+        };
+        let json = serde_json::to_string(&history).unwrap();
+        assert_eq!(
+            serde_json::from_str::<ChatHistoryResponse>(&json).unwrap(),
+            history
+        );
+
+        let request = SaveChatRequest {
+            id: "a-1".to_owned(),
+            text: "fica salvo".to_owned(),
+            sent_at_unix_ms: 7,
+        };
+        let json = serde_json::to_string(&request).unwrap();
+        assert_eq!(
+            serde_json::from_str::<SaveChatRequest>(&json).unwrap(),
+            request
+        );
+
+        let deleted = ChatDeleted {
+            id: "a-1".to_owned(),
+        };
+        let json = serde_json::to_string(&deleted).unwrap();
+        assert_eq!(serde_json::from_str::<ChatDeleted>(&json).unwrap(), deleted);
     }
 
     #[test]

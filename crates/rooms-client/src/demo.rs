@@ -407,6 +407,7 @@ impl DemoSession {
             sender: sender.to_owned(),
             sent_at_unix_ms,
             text,
+            saved: false,
         }
     }
 
