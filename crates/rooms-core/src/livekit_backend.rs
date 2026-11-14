@@ -46,6 +46,7 @@ use crate::livekit_files;
 use crate::livekit_video::{self, DesktopCaptureSource, LocalShare, Watch};
 use crate::mic_capture::{CAPTURE_SAMPLE_RATE, MicCapture};
 use crate::noise::{Denoiser, NoiseGate, RnnoiseDenoiser};
+use crate::participant_volume::{ParticipantVolumes, volume_gain};
 use crate::share_audio::{
     AudioScope, SHARE_AUDIO_CHANNELS, SHARE_AUDIO_SAMPLE_RATE, ShareAudioCapture,
 };
@@ -73,6 +74,8 @@ struct Flags {
     stream_output: StdMutex<Option<String>>,
     /// Sound of the screen share being watched.
     stream_player: StdMutex<Option<StreamPlayer>>,
+    /// Per-participant voice gain overrides (`0..=200`, `100` omitted).
+    participant_volumes: StdMutex<ParticipantVolumes>,
 }
 
 impl Flags {
@@ -108,6 +111,24 @@ impl Flags {
             .unwrap_or_else(PoisonError::into_inner) = device;
         if let Some(track) = self.stop_stream() {
             self.play_stream(track);
+        }
+    }
+
+    fn set_participant_volume(&self, identity: &str, percent: u16) -> u16 {
+        self.participant_volumes
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .set(identity, percent)
+    }
+
+    fn apply_participant_volume(&self, identity: &str, track: &RtcAudioTrack) {
+        let gain = self
+            .participant_volumes
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .gain_for(identity);
+        if let Some(gain) = gain {
+            track.set_volume(gain);
         }
     }
 }
@@ -510,7 +531,7 @@ impl LiveKitBackend {
             "connected to the room"
         );
 
-        sweep_publications(&room, &tx);
+        sweep_publications(&room, &tx, &self.flags);
         let mut slot = self.connection.lock().await;
         let events = tokio::spawn(pump_events(
             room_events,
@@ -680,6 +701,28 @@ impl MediaBackend for LiveKitBackend {
         self.flags
             .stream_attenuation
             .store(100u8.saturating_sub(percent), Ordering::SeqCst);
+        Ok(())
+    }
+
+    async fn set_participant_volume(
+        &self,
+        identity: &str,
+        percent: u16,
+    ) -> Result<(), SessionError> {
+        let clamped = self.flags.set_participant_volume(identity, percent);
+        let gain = volume_gain(clamped);
+        let applied_to_tracks = if let Some(room) = self.current_room().await {
+            apply_participant_volume(&room, identity, gain)
+        } else {
+            0
+        };
+        tracing::debug!(
+            identity,
+            percent = clamped,
+            gain,
+            applied_to_tracks,
+            "participant volume updated"
+        );
         Ok(())
     }
 
@@ -1308,6 +1351,22 @@ fn find_participant(room: &Room, identity: &str) -> Option<RemoteParticipant> {
         .find(|participant| participant.identity().as_str() == identity)
 }
 
+fn apply_participant_volume(room: &Room, identity: &str, gain: f64) -> usize {
+    let Some(participant) = find_participant(room, identity) else {
+        return 0;
+    };
+    let mut applied = 0;
+    for publication in participant.track_publications().into_values() {
+        if wants_audio(&publication)
+            && let Some(RemoteTrack::Audio(audio)) = publication.track()
+        {
+            audio.rtc_track().set_volume(gain);
+            applied += 1;
+        }
+    }
+    applied
+}
+
 fn set_screen_share_subscribed(room: &Room, identity: &str, subscribed: bool) {
     let Some(participant) = find_participant(room, identity) else {
         return;
@@ -1321,12 +1380,15 @@ fn set_screen_share_subscribed(room: &Room, identity: &str, subscribed: bool) {
 
 /// The room is joined with auto-subscribe off: audio is subscribed explicitly here and
 /// on every later publication, video only when the user chooses to watch it.
-fn sweep_publications(room: &Room, events: &UnboundedSender<BackendEvent>) {
+fn sweep_publications(room: &Room, events: &UnboundedSender<BackendEvent>, flags: &Flags) {
     for participant in room.remote_participants().into_values() {
         let identity = String::from(participant.identity());
         for publication in participant.track_publications().into_values() {
             if wants_audio(&publication) {
                 publication.set_subscribed(true);
+                if let Some(RemoteTrack::Audio(audio)) = publication.track() {
+                    flags.apply_participant_volume(&identity, &audio.rtc_track());
+                }
             } else if is_screen_share(&publication) {
                 let _ = events.send(BackendEvent::RemoteScreenShareStarted {
                     identity: identity.clone(),
@@ -1443,6 +1505,11 @@ fn translate(
                 }
                 if stream {
                     flags.play_stream(audio.rtc_track());
+                } else {
+                    flags.apply_participant_volume(
+                        participant.identity().as_str(),
+                        &audio.rtc_track(),
+                    );
                 }
                 let deafened = flags.output_muted.load(Ordering::SeqCst);
                 if deafened {
@@ -1585,6 +1652,8 @@ mod tests {
         peer_connection_factory::{PeerConnectionFactory, native::PeerConnectionFactoryExt},
     };
 
+    use super::*;
+
     #[test]
     fn audio_track_set_volume_accepts_in_and_out_of_range_values() {
         let factory = PeerConnectionFactory::default();
@@ -1592,5 +1661,22 @@ mod tests {
         let track = factory.create_audio_track("test-volume", source);
         track.set_volume(0.5);
         track.set_volume(20.0);
+    }
+
+    #[tokio::test]
+    async fn participant_volume_flags_store_clamp_and_apply_to_audio_track() {
+        let backend = LiveKitBackend::new();
+        backend.set_participant_volume("alice", 250).await.unwrap();
+        backend.set_participant_volume("bob", 100).await.unwrap();
+
+        let factory = PeerConnectionFactory::default();
+        let source = NativeAudioSource::new(AudioSourceOptions::default(), 48_000, 1, 100);
+        let track = factory.create_audio_track("test-participant-volume", source);
+        backend.flags.apply_participant_volume("alice", &track);
+        backend.flags.apply_participant_volume("bob", &track);
+
+        let guard = backend.flags.participant_volumes.lock().unwrap();
+        assert_eq!(guard.gain_for("alice"), Some(2.0));
+        assert_eq!(guard.gain_for("bob"), None);
     }
 }

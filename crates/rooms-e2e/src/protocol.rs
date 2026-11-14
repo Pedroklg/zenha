@@ -54,6 +54,11 @@ pub enum BotCommand {
     SetStreamVolume {
         percent: u8,
     },
+    #[serde(alias = "set-participant-volume")]
+    SetParticipantVolume {
+        identity: String,
+        percent: u16,
+    },
     #[serde(alias = "set-noise-gate")]
     SetNoiseGate {
         db: Option<i8>,
@@ -109,6 +114,10 @@ impl BotCommand {
                 NoiseKind::Maximum => NoiseSuppression::Maximum,
             }),
             Self::SetStreamVolume { percent } => Command::SetStreamVolume(*percent),
+            Self::SetParticipantVolume { identity, percent } => Command::SetParticipantVolume {
+                identity: identity.clone(),
+                percent: *percent,
+            },
             Self::SetNoiseGate { db } => Command::SetNoiseGate(*db),
             Self::RefreshDevices => Command::RefreshAudioDevices,
             Self::StartShare => Command::StartScreenShare {
@@ -736,6 +745,35 @@ mod tests {
         assert_eq!(
             BotCommand::SetNoiseGate { db: Some(-40) }.to_core(),
             Some(Command::SetNoiseGate(Some(-40)))
+        );
+    }
+
+    #[test]
+    fn participant_volume_command_parses_and_translates() {
+        assert_eq!(
+            parse_command(r#"{"cmd":"set-participant-volume","identity":"alice","percent":70}"#),
+            Ok(BotCommand::SetParticipantVolume {
+                identity: "alice".to_owned(),
+                percent: 70,
+            })
+        );
+        assert_eq!(
+            parse_command(r#"{"cmd":"set_participant_volume","identity":"alice","percent":150}"#),
+            Ok(BotCommand::SetParticipantVolume {
+                identity: "alice".to_owned(),
+                percent: 150,
+            })
+        );
+        assert_eq!(
+            BotCommand::SetParticipantVolume {
+                identity: "alice".to_owned(),
+                percent: 70,
+            }
+            .to_core(),
+            Some(Command::SetParticipantVolume {
+                identity: "alice".to_owned(),
+                percent: 70,
+            })
         );
     }
 }

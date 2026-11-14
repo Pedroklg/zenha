@@ -33,6 +33,7 @@ mod livekit_video;
 mod mic_capture;
 mod no_media;
 mod noise;
+mod participant_volume;
 mod session;
 #[cfg(windows)]
 mod share_audio;

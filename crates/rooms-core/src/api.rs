@@ -113,6 +113,11 @@ pub enum Command {
     SetNoiseSuppression(NoiseSuppression),
     /// Volume do som da transmissão assistida, de 0 a 100.
     SetStreamVolume(u8),
+    /// Volume de um participante remoto, de 0 a 200 (100 é o padrão).
+    SetParticipantVolume {
+        identity: String,
+        percent: u16,
+    },
     /// Limiar da porta de ruído em dBFS, de -70 a -20; `None` a desliga.
     SetNoiseGate(Option<i8>),
     RefreshCaptureTargets,
