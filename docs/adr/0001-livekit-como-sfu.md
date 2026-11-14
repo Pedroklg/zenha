@@ -5,7 +5,7 @@
 
 ## Context
 
-The app serves 8 to 10 people with voice and screen sharing. In a P2P mesh, the broadcaster encodes and uploads video once per viewer, which does not fit typical home upload bandwidth. The goal is to write all custom code in Rust.
+The app targets a small group with voice and screen sharing. In a P2P mesh, the broadcaster encodes and uploads video once per viewer, which does not fit typical home upload bandwidth. The goal is to write all custom code in Rust.
 
 ## Decision
 

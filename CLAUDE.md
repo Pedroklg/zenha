@@ -1,6 +1,6 @@
 # voice-rooms
 
-App desktop Windows em Rust: salas de voz, chat de texto e transmissão de tela para 8 a 10 amigos. SFU: `livekit-server` auto-hospedado (binário pronto). Todo o código próprio é Rust.
+App desktop Windows em Rust: salas de voz, chat de texto e transmissão de tela para um grupo pequeno de amigos. SFU: `livekit-server` auto-hospedado (binário pronto). Todo o código próprio é Rust.
 
 Plano e tasks: `docs/plan.md`. Arquitetura: `docs/architecture.md`. Decisões: `docs/adr/`.
 
