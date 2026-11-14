@@ -24,3 +24,6 @@ Thumbs.db
 /tools/
 /dev-logs/
 /dist/
+
+# Backups do chat salvo baixados por scripts/server.cmd backup
+/backups/
