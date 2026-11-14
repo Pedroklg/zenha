@@ -14,6 +14,7 @@ use crate::api::{
 };
 use crate::backend::{BackendEvent, ConnectedRoom, MediaBackend};
 use crate::cue::Cue;
+use crate::participant_volume::ParticipantVolumes;
 use crate::token::TokenClient;
 use crate::video::{CaptureTarget, FrameSlot, SharePreset, VideoFrame};
 
@@ -43,6 +44,10 @@ pub enum BackendCall {
     SetOutputDevice(Option<String>),
     SetNoiseSuppression(NoiseSuppression),
     SetStreamVolume(u8),
+    SetParticipantVolume {
+        identity: String,
+        percent: u16,
+    },
     SetNoiseGate(Option<i8>),
     ListCaptureTargets,
     StartScreenShare {
@@ -76,6 +81,7 @@ struct BackendState {
     share_failure: Option<SessionError>,
     sharing: Option<(String, SharePreset)>,
     watching: Option<(String, FrameSlot)>,
+    participant_volumes: ParticipantVolumes,
 }
 
 #[derive(Debug, Clone)]
@@ -110,6 +116,7 @@ impl FakeBackend {
                 share_failure: None,
                 sharing: None,
                 watching: None,
+                participant_volumes: ParticipantVolumes::default(),
             })),
         }
     }
@@ -186,6 +193,10 @@ impl FakeBackend {
 
     pub fn calls(&self) -> Vec<BackendCall> {
         lock(&self.state).calls.clone()
+    }
+
+    pub fn participant_volume_gain(&self, identity: &str) -> Option<f64> {
+        lock(&self.state).participant_volumes.gain_for(identity)
     }
 
     pub fn connect_count(&self) -> usize {
@@ -313,6 +324,20 @@ impl MediaBackend for FakeBackend {
         lock(&self.state)
             .calls
             .push(BackendCall::SetStreamVolume(percent));
+        Ok(())
+    }
+
+    async fn set_participant_volume(
+        &self,
+        identity: &str,
+        percent: u16,
+    ) -> Result<(), SessionError> {
+        let mut state = lock(&self.state);
+        state.calls.push(BackendCall::SetParticipantVolume {
+            identity: identity.to_owned(),
+            percent,
+        });
+        state.participant_volumes.set(identity, percent);
         Ok(())
     }
 

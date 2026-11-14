@@ -26,6 +26,14 @@ pub struct RtcAudioTrack {
 
 impl RtcAudioTrack {
     media_stream_track!();
+
+    pub fn set_volume(&self, volume: f64) {
+        #[cfg(not(target_arch = "wasm32"))]
+        self.handle.set_volume(volume);
+
+        #[cfg(target_arch = "wasm32")]
+        let _ = volume;
+    }
 }
 
 impl Debug for RtcAudioTrack {

@@ -17,6 +17,7 @@ use crate::chat::{self, CHAT_DELETE_TOPIC, CHAT_TOPIC};
 use crate::clock::unix_ms;
 use crate::files::{mime_for_name, sanitize_file_name};
 use crate::handle::EventSink;
+use crate::participant_volume::ParticipantVolumes;
 use crate::token::TokenClient;
 use crate::video::{FrameSlot, SharePreset};
 
@@ -82,6 +83,7 @@ struct Session {
     deafened: bool,
     sharing: bool,
     watching: Option<String>,
+    participant_volumes: ParticipantVolumes,
 }
 
 pub(crate) async fn run(
@@ -103,6 +105,7 @@ pub(crate) async fn run(
         deafened: false,
         sharing: false,
         watching: None,
+        participant_volumes: ParticipantVolumes::default(),
     };
     loop {
         tokio::select! {
@@ -224,6 +227,16 @@ impl Session {
             }
             Command::SetStreamVolume(percent) => {
                 if let Err(err) = self.backend.set_stream_volume(percent.min(100)).await {
+                    self.emit(Event::CommandFailed(err));
+                }
+            }
+            Command::SetParticipantVolume { identity, percent } => {
+                let clamped = self.participant_volumes.set(&identity, percent);
+                if let Err(err) = self
+                    .backend
+                    .set_participant_volume(&identity, clamped)
+                    .await
+                {
                     self.emit(Event::CommandFailed(err));
                 }
             }
@@ -625,6 +638,20 @@ impl Session {
         }
         if let Err(err) = self.backend.set_output_muted(self.deafened).await {
             tracing::warn!(%err, "could not apply output state");
+        }
+        let volumes: Vec<(String, u16)> = self
+            .participant_volumes
+            .iter()
+            .map(|(identity, percent)| (identity.to_owned(), percent))
+            .collect();
+        for (identity, percent) in volumes {
+            if let Err(err) = self
+                .backend
+                .set_participant_volume(&identity, percent)
+                .await
+            {
+                tracing::warn!(%err, identity, "could not apply participant volume");
+            }
         }
         self.phase = Phase::Connected {
             room: room.clone(),
@@ -2160,6 +2187,94 @@ mod tests {
                 id: "msg-9".to_owned(),
                 sender: "ana".to_owned(),
             }
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn participant_volume_clamps_works_outside_room_and_survives_room_switch_and_reconnect() {
+        let mut h = harness();
+        h.send(Command::SetParticipantVolume {
+            identity: "alice".to_owned(),
+            percent: 250,
+        });
+        h.send(Command::SetParticipantVolume {
+            identity: "bob".to_owned(),
+            percent: 60,
+        });
+        h.join("geral").await;
+        assert_eq!(h.backend.participant_volume_gain("alice"), Some(2.0));
+        assert_eq!(h.backend.participant_volume_gain("bob"), Some(0.6));
+
+        h.send(Command::SetParticipantVolume {
+            identity: "bob".to_owned(),
+            percent: 100,
+        });
+        h.send(Command::SetParticipantVolume {
+            identity: "carol".to_owned(),
+            percent: 0,
+        });
+        h.send(Command::RefreshAudioDevices);
+        assert!(matches!(h.next().await, Event::AudioDevicesUpdated(_)));
+        assert_eq!(h.backend.participant_volume_gain("bob"), None);
+        assert_eq!(h.backend.participant_volume_gain("carol"), Some(0.0));
+
+        // Simulate disconnect + automatic reconnect: 100% ("bob") stays omitted, others reapply.
+        let calls_before_reconnect = h.backend.calls().len();
+        assert!(h.backend.emit(BackendEvent::Disconnected {
+            reason: "dropped".to_owned(),
+        }));
+        assert_eq!(h.next().await, Event::Reconnecting);
+        assert_eq!(h.next().await, Event::Reconnected);
+        assert_eq!(h.next().await, Event::ParticipantList(Vec::new()));
+        let reconnect_calls = &h.backend.calls()[calls_before_reconnect..];
+        assert_eq!(
+            reconnect_calls,
+            [
+                BackendCall::Connect {
+                    url: "ws://fake.invalid".to_owned(),
+                    token: "token-geral-2".to_owned(),
+                },
+                BackendCall::SetMicrophoneMuted(false),
+                BackendCall::SetOutputMuted(false),
+                BackendCall::SetParticipantVolume {
+                    identity: "alice".to_owned(),
+                    percent: 200,
+                },
+                BackendCall::SetParticipantVolume {
+                    identity: "carol".to_owned(),
+                    percent: 0,
+                },
+            ]
+        );
+
+        // Switch room: active entries survive room switch too.
+        let calls_before_switch = h.backend.calls().len();
+        h.send(Command::Join {
+            room: "jogos".to_owned(),
+        });
+        assert_eq!(h.next().await, Event::Left);
+        assert_eq!(h.next().await, Event::Connecting);
+        assert!(matches!(h.next().await, Event::Joined { room, .. } if room == "jogos"));
+        let switch_calls = &h.backend.calls()[calls_before_switch..];
+        assert_eq!(
+            switch_calls,
+            [
+                BackendCall::Disconnect,
+                BackendCall::Connect {
+                    url: "ws://fake.invalid".to_owned(),
+                    token: "token-jogos-3".to_owned(),
+                },
+                BackendCall::SetMicrophoneMuted(false),
+                BackendCall::SetOutputMuted(false),
+                BackendCall::SetParticipantVolume {
+                    identity: "alice".to_owned(),
+                    percent: 200,
+                },
+                BackendCall::SetParticipantVolume {
+                    identity: "carol".to_owned(),
+                    percent: 0,
+                },
+            ]
         );
     }
 }

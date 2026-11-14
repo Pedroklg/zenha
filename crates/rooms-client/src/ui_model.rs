@@ -33,6 +33,10 @@ pub enum UiCommand {
     SetOutputDevice(Option<String>),
     SetNoiseSuppression(NoiseMode),
     SetStreamVolume(u8),
+    SetParticipantVolume {
+        identity: String,
+        percent: u16,
+    },
     SetNoiseGate(Option<i8>),
     RefreshCaptureTargets,
     StartScreenShare {

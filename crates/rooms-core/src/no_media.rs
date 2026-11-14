@@ -91,6 +91,14 @@ impl MediaBackend for NoMediaBackend {
         Ok(())
     }
 
+    async fn set_participant_volume(
+        &self,
+        _identity: &str,
+        _percent: u16,
+    ) -> Result<(), SessionError> {
+        Ok(())
+    }
+
     async fn set_noise_gate(&self, _threshold_db: Option<i8>) -> Result<(), SessionError> {
         Ok(())
     }

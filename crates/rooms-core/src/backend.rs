@@ -76,6 +76,12 @@ pub trait MediaBackend: Send + Sync + 'static {
     async fn set_noise_suppression(&self, mode: NoiseSuppression) -> Result<(), SessionError>;
     /// Volume, 0 to 100, of the sound of the screen share being watched.
     async fn set_stream_volume(&self, percent: u8) -> Result<(), SessionError>;
+    /// Playback gain percentage (0 to 200, 100 = default) for a remote participant's voice tracks.
+    async fn set_participant_volume(
+        &self,
+        identity: &str,
+        percent: u16,
+    ) -> Result<(), SessionError>;
     /// Noise gate threshold in dBFS, `None` for off; only used by the enhanced mode.
     async fn set_noise_gate(&self, threshold_db: Option<i8>) -> Result<(), SessionError>;
     async fn capture_targets(&self) -> Result<Vec<CaptureTarget>, SessionError>;

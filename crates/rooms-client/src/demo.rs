@@ -200,6 +200,7 @@ impl DemoSession {
             }
             UiCommand::SetNoiseSuppression(_)
             | UiCommand::SetStreamVolume(_)
+            | UiCommand::SetParticipantVolume { .. }
             | UiCommand::SetNoiseGate(_)
             | UiCommand::PlayCue(_) => {}
             UiCommand::SetOutputDevice(id) => {
@@ -854,5 +855,15 @@ mod tests {
                 sender: SELF_IDENTITY.to_owned(),
             }]
         );
+    }
+
+    #[test]
+    fn participant_volume_command_is_accepted_without_effect() {
+        let mut session = DemoSession::with_delays(DemoDelays::instant());
+        session.send(UiCommand::SetParticipantVolume {
+            identity: "demo-ana".to_owned(),
+            percent: 60,
+        });
+        assert!(drain(&mut session).is_empty());
     }
 }

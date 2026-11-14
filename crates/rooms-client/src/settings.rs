@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::collections::hash_map::RandomState;
 use std::hash::{BuildHasher, Hasher};
 use std::path::{Path, PathBuf};
@@ -70,6 +71,8 @@ pub struct Settings {
     pub voice_mode: VoiceMode,
     /// Volume do som das transmissões, de 0 a 100; ausente significa 100.
     pub stream_volume: Option<u8>,
+    /// Volume individual de cada participante remoto, de 0 a 200; ausente significa 100.
+    pub participant_volumes: BTreeMap<String, u16>,
     /// Limiar da porta de ruído em dBFS (-70 a -20); ausente significa desligada.
     pub noise_gate_db: Option<i8>,
     /// Atalho global no formato do `global-hotkey` (ex.: "shift+control+KeyM"); ausente = nenhum.
@@ -93,6 +96,7 @@ impl Default for Settings {
             noise_suppression: NoiseMode::default(),
             voice_mode: VoiceMode::default(),
             stream_volume: None,
+            participant_volumes: BTreeMap::new(),
             noise_gate_db: None,
             mute_hotkey: None,
             deafen_hotkey: None,
@@ -250,6 +254,10 @@ mod tests {
             noise_suppression: NoiseMode::Enhanced,
             voice_mode: VoiceMode::PushToTalk,
             stream_volume: Some(40),
+            participant_volumes: BTreeMap::from([
+                ("alice-id".to_owned(), 70),
+                ("bob-id".to_owned(), 160),
+            ]),
             noise_gate_db: Some(-45),
             mute_hotkey: Some("shift+control+KeyM".to_owned()),
             deafen_hotkey: Some("alt+KeyD".to_owned()),
@@ -261,6 +269,12 @@ mod tests {
         assert_eq!(load(&path), settings);
         assert!(!path.with_extension("json.tmp").exists());
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn missing_participant_volumes_defaults_to_empty_map() {
+        let parsed: Settings = serde_json::from_str(r#"{"display_name":"Ana"}"#).unwrap();
+        assert!(parsed.participant_volumes.is_empty());
     }
 
     #[test]

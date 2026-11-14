@@ -1,4 +1,4 @@
-use std::collections::{HashSet, VecDeque};
+use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -106,6 +106,57 @@ fn server_url_error(url: &str) -> Option<String> {
 }
 
 pub const FULL_VOLUME: u8 = 100;
+pub const DEFAULT_PARTICIPANT_VOLUME: u16 = 100;
+pub const MAX_PARTICIPANT_VOLUME: u16 = 200;
+
+pub fn clamp_participant_volume(percent: u16) -> u16 {
+    percent.min(MAX_PARTICIPANT_VOLUME)
+}
+
+pub fn participant_volume_for(volumes: &BTreeMap<String, u16>, identity: &str) -> u16 {
+    volumes
+        .get(identity)
+        .copied()
+        .map(clamp_participant_volume)
+        .unwrap_or(DEFAULT_PARTICIPANT_VOLUME)
+}
+
+/// Applies `percent` to `volumes`, omitting `100%`, and returns the new value when it changed.
+pub fn update_participant_volume(
+    volumes: &mut BTreeMap<String, u16>,
+    identity: String,
+    percent: u16,
+) -> Option<u16> {
+    if identity.trim().is_empty() {
+        return None;
+    }
+    let clamped = clamp_participant_volume(percent);
+    if clamped == DEFAULT_PARTICIPANT_VOLUME {
+        volumes
+            .remove(&identity)
+            .map(|_| DEFAULT_PARTICIPANT_VOLUME)
+    } else if volumes.get(&identity).copied() == Some(clamped) {
+        None
+    } else {
+        volumes.insert(identity, clamped);
+        Some(clamped)
+    }
+}
+
+pub fn normalize_participant_volumes(raw: &BTreeMap<String, u16>) -> BTreeMap<String, u16> {
+    let mut normalized = BTreeMap::new();
+    for (identity, &percent) in raw {
+        update_participant_volume(&mut normalized, identity.clone(), percent);
+    }
+    normalized
+}
+
+pub fn saved_volume_commands(volumes: &BTreeMap<String, u16>) -> Vec<UiCommand> {
+    normalize_participant_volumes(volumes)
+        .into_iter()
+        .map(|(identity, percent)| UiCommand::SetParticipantVolume { identity, percent })
+        .collect()
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct AudioState {
@@ -117,6 +168,7 @@ pub struct AudioState {
     pub noise: NoiseMode,
     pub voice_mode: VoiceMode,
     pub stream_volume: u8,
+    pub participant_volumes: BTreeMap<String, u16>,
     pub noise_gate: Option<i8>,
     pub mic_level: Option<MicLevelView>,
     loaded: bool,
@@ -139,6 +191,7 @@ impl AudioState {
                 .stream_volume
                 .unwrap_or(FULL_VOLUME)
                 .min(FULL_VOLUME),
+            participant_volumes: normalize_participant_volumes(&settings.participant_volumes),
             noise_gate: settings.noise_gate_db,
             ..Self::default()
         }
@@ -804,6 +857,11 @@ pub enum UserAction {
     SelectVoiceMode(VoiceMode),
     /// Applies the volume while the slider moves; `SaveAudioSettings` stores it once it stops.
     SetStreamVolume(u8),
+    /// Applies a remote participant's volume while adjusting; `SaveAudioSettings` persists it.
+    SetParticipantVolume {
+        identity: String,
+        percent: u16,
+    },
     /// Applies the noise gate threshold at once; `SaveAudioSettings` stores it.
     SetNoiseGate(Option<i8>),
     SaveAudioSettings,
@@ -875,6 +933,12 @@ impl AppState {
         let open_lobby = form.is_valid() && saved_password.is_some();
         let active_password = saved_password.clone().unwrap_or_default();
         let saved_credential = saved_password.map(|pwd| (server, pwd));
+        let audio = AudioState::from_settings(settings);
+        let pending_commands = if open_lobby {
+            saved_volume_commands(&audio.participant_volumes)
+        } else {
+            Vec::new()
+        };
         Self {
             screen: if open_lobby {
                 Screen::Lobby
@@ -888,7 +952,7 @@ impl AppState {
             muted_on_join: settings.muted_on_join,
             invite_copied: false,
             rooms: Vec::new(),
-            audio: AudioState::from_settings(settings),
+            audio,
             hotkeys: HotkeyState::from_settings(settings),
             close_to_tray: settings.close_to_tray,
             picker: SharePicker::default(),
@@ -898,7 +962,7 @@ impl AppState {
             active_password,
             pending_password_save: None,
             pending_credential_ops: Vec::new(),
-            pending_commands: Vec::new(),
+            pending_commands,
             audio_configured: false,
             session_mic_sent: false,
             session_deafened: false,
@@ -1032,6 +1096,7 @@ impl AppState {
             voice_mode: self.audio.voice_mode,
             stream_volume: (self.audio.stream_volume != FULL_VOLUME)
                 .then_some(self.audio.stream_volume),
+            participant_volumes: self.audio.participant_volumes.clone(),
             noise_gate_db: self.audio.noise_gate,
             mute_hotkey: self.hotkeys.mute.clone(),
             deafen_hotkey: self.hotkeys.deafen.clone(),
@@ -1200,6 +1265,19 @@ impl AppState {
                 }
                 self.audio.stream_volume = percent;
                 vec![UiCommand::SetStreamVolume(percent)]
+            }
+            UserAction::SetParticipantVolume { identity, percent } => {
+                let Some(applied) = update_participant_volume(
+                    &mut self.audio.participant_volumes,
+                    identity.clone(),
+                    percent,
+                ) else {
+                    return Vec::new();
+                };
+                vec![UiCommand::SetParticipantVolume {
+                    identity,
+                    percent: applied,
+                }]
             }
             UserAction::SetNoiseGate(threshold) => {
                 if self.audio.noise_gate == threshold {
@@ -1393,7 +1471,9 @@ impl AppState {
         self.onboarding.link_error = None;
         self.last_refresh = None;
         self.screen = Screen::Lobby;
-        vec![UiCommand::RefreshRooms]
+        let mut commands = vec![UiCommand::RefreshRooms];
+        commands.extend(saved_volume_commands(&self.audio.participant_volumes));
+        commands
     }
 
     fn join_room(&mut self, room: String) -> Vec<UiCommand> {
@@ -1417,6 +1497,7 @@ impl AppState {
             if let Some(threshold) = self.audio.noise_gate {
                 commands.push(UiCommand::SetNoiseGate(Some(threshold)));
             }
+            commands.extend(saved_volume_commands(&self.audio.participant_volumes));
             self.audio_configured = true;
         }
         if self.lobby_voice.deafened != self.session_deafened {
@@ -1816,6 +1897,7 @@ mod tests {
             noise_suppression: NoiseMode::default(),
             voice_mode: VoiceMode::default(),
             stream_volume: None,
+            participant_volumes: BTreeMap::new(),
             noise_gate_db: None,
             mute_hotkey: None,
             deafen_hotkey: None,
@@ -3990,5 +4072,125 @@ mod tests {
         });
         assert!(!room(&state).chat.history_loading);
         assert!(room(&state).chat.draft.is_empty());
+    }
+
+    #[test]
+    fn participant_volume_helpers_clamp_normalize_and_emit_commands() {
+        assert_eq!(clamp_participant_volume(0), 0);
+        assert_eq!(clamp_participant_volume(140), 140);
+        assert_eq!(clamp_participant_volume(260), 200);
+
+        let raw = BTreeMap::from([
+            ("alice".to_owned(), 70),
+            ("bob".to_owned(), 100),
+            ("carol".to_owned(), 250),
+            ("   ".to_owned(), 40),
+        ]);
+        let normalized = normalize_participant_volumes(&raw);
+        assert_eq!(
+            normalized,
+            BTreeMap::from([("alice".to_owned(), 70), ("carol".to_owned(), 200)])
+        );
+        assert_eq!(participant_volume_for(&normalized, "alice"), 70);
+        assert_eq!(participant_volume_for(&normalized, "bob"), 100);
+        assert_eq!(participant_volume_for(&normalized, "carol"), 200);
+        assert_eq!(
+            saved_volume_commands(&raw),
+            vec![
+                UiCommand::SetParticipantVolume {
+                    identity: "alice".to_owned(),
+                    percent: 70,
+                },
+                UiCommand::SetParticipantVolume {
+                    identity: "carol".to_owned(),
+                    percent: 200,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn participant_volume_updates_live_without_saving_removes_100_and_sends_on_startup_and_join() {
+        let mut state = AppState::new(&valid_settings(), Some("segredo".to_owned()));
+        assert!(state.take_pending_commands().is_empty());
+
+        // Setting 100 when absent is a no-op.
+        assert!(
+            state
+                .handle_action(UserAction::SetParticipantVolume {
+                    identity: "alice".to_owned(),
+                    percent: 100,
+                })
+                .is_empty()
+        );
+
+        // Adjusting clamps above 200 and sends to core without triggering a settings save.
+        assert_eq!(
+            state.handle_action(UserAction::SetParticipantVolume {
+                identity: "alice".to_owned(),
+                percent: 250,
+            }),
+            vec![UiCommand::SetParticipantVolume {
+                identity: "alice".to_owned(),
+                percent: 200,
+            }]
+        );
+        assert!(state.take_pending_save().is_none());
+        assert_eq!(
+            state.handle_action(UserAction::SetParticipantVolume {
+                identity: "bob".to_owned(),
+                percent: 65,
+            }),
+            vec![UiCommand::SetParticipantVolume {
+                identity: "bob".to_owned(),
+                percent: 65,
+            }]
+        );
+        // Repeating the same value does not spam commands.
+        assert!(
+            state
+                .handle_action(UserAction::SetParticipantVolume {
+                    identity: "bob".to_owned(),
+                    percent: 65,
+                })
+                .is_empty()
+        );
+
+        // Resetting bob to 100 sends 100 to core and removes the entry before saving.
+        assert_eq!(
+            state.handle_action(UserAction::SetParticipantVolume {
+                identity: "bob".to_owned(),
+                percent: 100,
+            }),
+            vec![UiCommand::SetParticipantVolume {
+                identity: "bob".to_owned(),
+                percent: 100,
+            }]
+        );
+        assert!(state.take_pending_save().is_none());
+
+        state.handle_action(UserAction::SaveAudioSettings);
+        let saved = state.take_pending_save().unwrap();
+        assert_eq!(
+            saved.participant_volumes,
+            BTreeMap::from([("alice".to_owned(), 200)])
+        );
+
+        // Next app startup queues SetParticipantVolume immediately and also sends on first join.
+        let mut restarted =
+            AppState::new_with_build_default(&saved, Some("segredo".to_owned()), None);
+        assert_eq!(restarted.screen, Screen::Lobby);
+        assert_eq!(
+            restarted.take_pending_commands(),
+            vec![UiCommand::SetParticipantVolume {
+                identity: "alice".to_owned(),
+                percent: 200,
+            }]
+        );
+        let join_cmds = restarted.handle_action(UserAction::JoinRoom("geral".to_owned()));
+        assert!(join_cmds.contains(&UiCommand::SetParticipantVolume {
+            identity: "alice".to_owned(),
+            percent: 200,
+        }));
     }
 }
