@@ -127,17 +127,28 @@ echo "your-invite-password" | cargo run --quiet -p rooms-token-server -- hash-pa
 
 ### Step 5.2 — Run `setup-server.sh` via `az vm run-command invoke` (No SSH Required)
 
+`run-command` does not forward `KEY=value` arguments to the script, so put the settings at the top
+of a copy of the script and send that file. Keep the shebang on the first line: without it the
+agent runs the script with `sh`, which rejects `set -o pipefail`.
+
 ```bash
+{
+  echo '#!/usr/bin/env bash'
+  echo "export TOKEN_DOMAIN='voice.example.com'"
+  echo "export RTC_DOMAIN='rtc.voice.example.com'"
+  echo "export ZENHA_IMAGE='ghcr.io/<owner>/zenha-token-server:v0.1.0'"
+  echo "export NODE_IP='<publicIpAddress>'"
+  echo 'export ROOMS_INVITE_CODE_HASH='\''$argon2id$v=19$m=19456,t=2,p=1$...'\'
+  tail -n +2 deploy/setup-server.sh
+} > /tmp/zenha-setup.sh
+
 az vm run-command invoke \
   --resource-group rg-zenha-prod \
   --name zenha-vm \
   --command-id RunShellScript \
-  --scripts @deploy/setup-server.sh \
-  --parameters \
-    "TOKEN_DOMAIN=voice.example.com" \
-    "RTC_DOMAIN=rtc.voice.example.com" \
-    "ZENHA_IMAGE=ghcr.io/<owner>/zenha-token-server:v0.1.0" \
-    'ROOMS_INVITE_CODE_HASH=$argon2id$v=19$m=19456,t=2,p=1$...'
+  --scripts @/tmp/zenha-setup.sh \
+  --query 'value[0].message' -o tsv
+rm /tmp/zenha-setup.sh
 ```
 
 > **Note on `rtc.use_external_ip` vs `rtc.node_ip`:** By default, `setup-server.sh` sets `use_external_ip: true` in `/opt/zenha/livekit.yaml` so LiveKit discovers the VM's public IPv4 via STUN across Azure's 1:1 NAT. If you prefer to pin the static public IPv4 directly without STUN, pass `"NODE_IP=<publicIpAddress>"` as an additional parameter; `setup-server.sh` will set `use_external_ip: false` and `node_ip: "<publicIpAddress>"`.
@@ -179,7 +190,7 @@ az role assignment create \
 
 ### Step 6.2 — Add the Federated Credential for GitHub Actions
 
- Because `.github/workflows/deploy.yml` declares `environment: production`, the OIDC subject claim is `repo:<owner>/<repo>:environment:production`:
+Because `.github/workflows/deploy.yml` declares `environment: production`, the OIDC subject claim is `repo:<owner>/<repo>:environment:production`. Newer repositories may send it with immutable IDs instead (`repo:<owner>@<owner_id>/<repo>@<repo_id>:environment:production`). If the first deploy fails with `AADSTS700213`, the error prints the exact subject GitHub sent; register that one:
 
 ```bash
 az ad app federated-credential create \
