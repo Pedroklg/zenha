@@ -143,6 +143,10 @@ services:
     restart: unless-stopped
     env_file:
       - /opt/zenha/.env
+    environment:
+      ROOMS_CHAT_DB: /var/lib/zenha/chat.db
+    volumes:
+      - zenha_data:/var/lib/zenha
     depends_on:
       - livekit
 
@@ -163,6 +167,7 @@ services:
 volumes:
   caddy_data:
   caddy_config:
+  zenha_data:
 EOF
   chmod 0644 "${COMPOSE_FILE}"
 fi

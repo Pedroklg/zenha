@@ -369,3 +369,26 @@ az vm run-command invoke \
 - Azure Managed Disks pricing: <https://azure.microsoft.com/en-us/pricing/details/managed-disks/>
 - Azure IP Addresses pricing ($0.005/hr per Standard Public IPv4): <https://azure.microsoft.com/en-us/pricing/details/ip-addresses/>
 - Azure Bandwidth (Data Transfer) pricing: <https://azure.microsoft.com/en-us/pricing/details/bandwidth/>
+
+---
+
+## 12. Saved Chat Messages
+
+When a user marks a chat message to be saved, `rooms-token-server` persists it in SQLite (`WAL` mode) at the path configured by `ROOMS_CHAT_DB`.
+
+- **Storage location:** In production (`deploy/docker-compose.yml`), `ROOMS_CHAT_DB` is set to `/var/lib/zenha/chat.db`, backed by the Docker named volume `zenha_data` (created under `/opt/zenha` as `zenha_zenha_data` by Docker Compose).
+- **Plaintext and retention:** Saved messages are stored in **plaintext** in `chat.db` with **no automatic expiration**. Unsaved messages never reach the token server. Senders can delete their own saved messages via the API (`DELETE /rooms/{room}/chat/{id}`).
+- **Backup:** Use SQLite's online `.backup` command against the volume (safe while `token-server` is running in WAL mode; `/data` must be mounted read-write so `sqlite3` can coordinate with the WAL/SHM files), or stop `token-server` before copying `/data` directly:
+  ```bash
+  # Online consistent SQLite backup (adjust volume name if Compose project differs; check `docker volume ls`)
+  mkdir -p /opt/zenha/backups
+  docker run --rm -v zenha_zenha_data:/data -v /opt/zenha/backups:/backup alpine \
+    sh -c 'apk add --no-cache sqlite >/dev/null && sqlite3 /data/chat.db ".backup /backup/chat-$(date -u +%Y%m%dT%H%M%SZ).db"'
+  ```
+- **Deleting all saved messages:** Stop `token-server`, remove the database files from the volume, and start it again:
+  ```bash
+  cd /opt/zenha
+  docker compose stop token-server
+  docker run --rm -v zenha_zenha_data:/data alpine rm -f /data/chat.db /data/chat.db-wal /data/chat.db-shm
+  docker compose up -d token-server
+  ```
