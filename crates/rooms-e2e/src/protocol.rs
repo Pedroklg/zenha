@@ -202,6 +202,7 @@ pub fn error_kind(error: &SessionError) -> &'static str {
         SessionError::InviteRejected => "invite_rejected",
         SessionError::Unauthorized => "unauthorized",
         SessionError::RateLimited => "rate_limited",
+        SessionError::Chat(_) => "chat",
         SessionError::Connection(_) => "connection",
         SessionError::InvalidInput(_) => "invalid_input",
         SessionError::NotInRoom => "not_in_room",

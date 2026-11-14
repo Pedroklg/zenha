@@ -341,6 +341,19 @@ impl Session {
         F: Fn(Arc<dyn TokenClient>, String, String) -> Fut,
         Fut: Future<Output = Result<T, SessionError>>,
     {
+        self.run_chat_request_once_renewed(op)
+            .await
+            .map_err(|err| match err {
+                SessionError::TokenServer(reason) => SessionError::Chat(reason),
+                other => other,
+            })
+    }
+
+    async fn run_chat_request_once_renewed<T, F, Fut>(&mut self, op: F) -> Result<T, SessionError>
+    where
+        F: Fn(Arc<dyn TokenClient>, String, String) -> Fut,
+        Fut: Future<Output = Result<T, SessionError>>,
+    {
         let (room, jwt) = match &self.phase {
             Phase::Connected { room, jwt, .. } => (room.clone(), jwt.clone()),
             _ => return Err(SessionError::NotInRoom),
@@ -413,7 +426,10 @@ impl Session {
                 })
                 .await
             {
-                Ok(message) => message,
+                Ok(mut message) => {
+                    message.sender = local_identity.clone();
+                    message
+                }
                 Err(err) => {
                     self.emit(Event::CommandFailed(err));
                     return;
@@ -1895,7 +1911,7 @@ mod tests {
         };
         assert!(echo.saved);
         assert_eq!(echo.text, "nota importante");
-        assert_eq!(echo.sender, "pedro");
+        assert_eq!(echo.sender, "local");
 
         let save_calls = h.tokens.save_calls();
         assert_eq!(save_calls.len(), 1);

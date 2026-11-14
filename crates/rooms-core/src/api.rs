@@ -211,6 +211,8 @@ pub enum SessionError {
     Unauthorized,
     #[error("too many chat messages; try again in a few seconds")]
     RateLimited,
+    #[error("saved chat request failed: {0}")]
+    Chat(String),
     #[error("connection to the media server failed: {0}")]
     Connection(String),
     #[error("invalid input: {0}")]
