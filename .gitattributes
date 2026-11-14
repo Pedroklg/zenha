@@ -4,8 +4,11 @@
 *.md text eol=lf
 *.yml text eol=lf
 *.yaml text eol=lf
-*.ps1 text eol=crlf
+*.cmd text eol=crlf
 *.bat text eol=crlf
-*.png binary
+*.ps1 text eol=crlf
+*.iss text eol=crlf
 *.ico binary
+*.ttf binary
+*.png binary
 Cargo.lock text eol=lf -diff

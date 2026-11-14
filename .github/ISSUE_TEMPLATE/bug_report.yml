@@ -1,0 +1,68 @@
+name: Bug report
+description: Report a crash, audio/video issue, or unexpected behavior in Zenha
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for reporting a bug! Please do not include invite codes, passwords, or `.env` files in your report.
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: A clear and concise description of the bug.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: How can we reproduce the issue?
+      placeholder: |
+        1. Open Zenha and join a room...
+        2. Enable...
+        3. Observe...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What did you expect to happen instead?
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Zenha version
+      description: e.g., v0.1.0 or commit hash
+      placeholder: "0.1.0"
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Windows version
+      description: e.g., Windows 11 24H2 (x64)
+    validations:
+      required: true
+  - type: dropdown
+    id: audio_video
+    attributes:
+      label: Area affected
+      options:
+        - Voice / Audio devices
+        - Noise suppression / Gate
+        - Screen sharing / Game audio
+        - Chat / File transfer
+        - Hotkeys / Push-to-talk / Tray
+        - Token server / Deployment
+        - Installer / Launch
+        - Other
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs (optional)
+      description: Paste any relevant log lines here. Remember to redact server passwords, invite codes, and tokens.
+      render: text

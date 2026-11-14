@@ -22,3 +22,11 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: fmt, clippy, test
         run: cargo ci
+
+  deny:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          rust-version: "1.97.0"
