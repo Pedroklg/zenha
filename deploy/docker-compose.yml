@@ -1,27 +1,35 @@
 services:
   livekit:
-    image: livekit/livekit-server:latest
+    image: livekit/livekit-server:v1.13.11
     command: --config /etc/livekit.yaml
     network_mode: host
     restart: unless-stopped
     volumes:
-      - ./livekit.prod.yaml:/etc/livekit.yaml:ro
+      - /opt/zenha/livekit.yaml:/etc/livekit.yaml:ro
 
   token-server:
-    build:
-      context: ..
-      dockerfile: deploy/Dockerfile
+    image: ${ZENHA_IMAGE:?set ZENHA_IMAGE in /opt/zenha/.env}
     network_mode: host
     restart: unless-stopped
-    env_file: ../.env
+    env_file:
+      - /opt/zenha/.env
+    depends_on:
+      - livekit
 
   caddy:
-    image: caddy:2
+    image: caddy:2.11.9-alpine
     network_mode: host
     restart: unless-stopped
+    env_file:
+      - /opt/zenha/.env
     volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - /opt/zenha/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - livekit
+      - token-server
 
 volumes:
   caddy_data:
+  caddy_config:

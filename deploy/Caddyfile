@@ -1,7 +1,7 @@
-livekit.example.com {
-    reverse_proxy 127.0.0.1:7880
+{$TOKEN_DOMAIN} {
+	reverse_proxy 127.0.0.1:8787
 }
 
-rooms.example.com {
-    reverse_proxy 127.0.0.1:8787
+{$RTC_DOMAIN} {
+	reverse_proxy 127.0.0.1:7880
 }
