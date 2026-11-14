@@ -1,76 +1,92 @@
-# voice-rooms
+# Zenha
 
-App desktop para Windows, em Rust, com salas de voz, chat de texto e transmissão de tela para um grupo pequeno de amigos. O servidor de mídia é um [LiveKit](https://github.com/livekit/livekit) auto-hospedado; todo o código deste repositório é Rust.
+Zenha is a lightweight Windows desktop app for voice rooms, text chat, file sharing, and screen sharing, built in Rust for a small group of friends. Media runs through a self-hosted [LiveKit](https://github.com/livekit/livekit) SFU, and all custom code in this repository is written in Rust.
 
-O plano completo está em [docs/plan.md](docs/plan.md) e o estado atual em [docs/status.md](docs/status.md).
+> Note: Public documentation is in English, while the desktop UI is currently in Brazilian Portuguese.
 
-## Requisitos
+<!-- screenshot -->
 
-- Windows 10 ou 11, x64.
-- [rustup](https://rustup.rs). A versão do Rust vem de `rust-toolchain.toml` e é instalada sozinha.
-- Visual Studio Build Tools com a carga "Desktop development with C++".
-- Binário do `livekit-server` para desenvolvimento local.
+## Features
 
-## Primeiros passos
+- **Voice rooms**: fixed rooms with live occupant lists, active-speaker highlight, mute/deafen controls, input/output device selection, and automatic reconnection.
+- **Noise suppression & gate**: choose between Off, WebRTC Default, Enhanced (RNNoise), and Maximum (DeepFilterNet 3), plus an adjustable noise gate with a live microphone level meter.
+- **Global hotkeys & push-to-talk**: system-wide mute, deafen, and push-to-talk keybinds with audio feedback cues.
+- **Screen & game audio sharing**: share a monitor or window (720p30, 1080p30, or experimental 1080p60) with per-app or system audio loopback and an independent viewer volume slider.
+- **Text chat & file sharing**: reliable room chat with unread badge, inline image thumbnails, and file transfers up to 50 MB.
+- **Invite links & tray support**: join via `zenha://` invite links, store server passwords in Windows Credential Manager, and minimize/close to the system tray without leaving the call.
+
+## Download
+
+1. Download the latest release from [GitHub Releases](https://github.com/Pedroklg/zenha/releases):
+   - **Installer** (`Zenha-<version>-windows-x64-setup.exe`): installs per-user in `%LOCALAPPDATA%\Programs\Zenha` (no administrator privileges required), adds a Start Menu shortcut, and registers the `zenha://` URL protocol.
+   - **Portable** (`Zenha-<version>-windows-x64.zip`): extract and run `zenha.exe`.
+2. Because release binaries are not code-signed yet, Windows SmartScreen will display **"Windows protected your PC"** on first launch. Click **"More info"** and then **"Run anyway"**.
+
+User settings are stored in `%APPDATA%\zenha` and are kept when uninstalling. Server passwords are stored in the Windows Credential Manager.
+
+## Self-Hosting a Server
+
+To deploy your own `livekit-server` and `rooms-token-server` instance (Docker Compose, Caddy TLS, and firewall setup), see the [deployment guide](docs/deploy.md).
+
+## Building from Source
+
+### Requirements
+
+- Windows 10 or 11 (x64)
+- [rustup](https://rustup.rs) (the toolchain version in [rust-toolchain.toml](rust-toolchain.toml) is installed automatically)
+- Visual Studio Build Tools with the **"Desktop development with C++"** workload
+- A `livekit-server` binary for local media testing
+
+### Quick Start
 
 ```powershell
 Copy-Item .env.example .env
 cargo ci
 livekit-server --dev
 cargo server
-cargo client            # servidor de tokens real, sem mídia
-cargo client -- --demo  # tudo simulado, sem servidor
+cargo client            # connects to local token server (no media without livekit-server)
+cargo client -- --demo  # simulated rooms and participants, no server required
 ```
 
-## Comandos
+### Commands
 
-| Comando | O que faz |
+| Command | Description |
 | --- | --- |
-| `cargo ci` | fmt, clippy com avisos como erro, e testes |
-| `cargo lint` | só o clippy |
-| `cargo server` | sobe o `rooms-token-server` (`cargo run -p rooms-token-server -- hash-password` gera `ROOMS_INVITE_CODE_HASH`) |
-| `cargo client` | abre o `rooms-client` |
-| `cargo fmt --all` | formata o código |
+| `cargo ci` | Runs formatting check, clippy (`-D warnings`), and workspace tests |
+| `cargo lint` | Runs clippy across all workspace targets |
+| `cargo server` | Starts `rooms-token-server` (`cargo run -p rooms-token-server -- hash-password` generates `ROOMS_INVITE_CODE_HASH`) |
+| `cargo client` | Launches the `zenha` desktop client |
+| `cargo fmt --all` | Formats all workspace code |
 
-## Instalação e versões
+To package a release build locally into `dist\`, run `scripts\package.cmd` (compiles the Inno Setup installer automatically if Inno Setup 6 is installed).
 
-### Como instalar
+## Architecture
 
-1. Baixe a versão mais recente na página **Releases** do GitHub:
-   - **Instalador** (`Zenha-<versão>-windows-x64-setup.exe`): instala por usuário em `%LOCALAPPDATA%\Programs\Zenha` (sem precisar de administrador), cria atalho no Menu Iniciar e registra o protocolo `zenha://`.
-   - **Portátil** (`Zenha-<versão>-windows-x64.zip`): extraia e execute `zenha.exe`.
-2. Como o executável ainda não possui assinatura digital, o Windows SmartScreen exibirá **"O Windows protegeu o computador"** na primeira execução. Clique em **"Mais informações"** e depois em **"Executar assim mesmo"**.
+Zenha separates its `egui` desktop UI (`rooms-client`) from the LiveKit media engine (`rooms-core`) using non-blocking `Command` and `Event` channels: the UI thread never blocks or performs I/O, while `rooms-core` manages WebRTC/LiveKit sessions, audio processing, and screen capture on a Tokio runtime and dedicated capture threads. A stateless HTTP service (`rooms-token-server`) validates invite codes and issues short-lived, room-scoped LiveKit JWTs.
 
-As configurações ficam salvas em `%APPDATA%\zenha` e não são removidas ao desinstalar.
+See [docs/architecture.md](docs/architecture.md) for component diagrams, media flows, and thread boundaries, and [docs/adr/](docs/adr/) for architecture decision records.
 
-### Como gerar uma versão
+### Repository Layout
 
-Atualize `version` em `[workspace.package]` no [Cargo.toml](Cargo.toml), faça o commit e envie uma tag `vX.Y.Z` para disparar o workflow de release no GitHub Actions:
-
-```powershell
-git tag vX.Y.Z
-git push origin vX.Y.Z
-```
-
-Para gerar o pacote localmente em `dist\`, execute `scripts\package.cmd` (o instalador é compilado automaticamente se o Inno Setup 6 estiver instalado).
-
-## Testes ponta a ponta
-
-No Windows, `scripts\e2e.cmd` (duplo clique ou `scripts\e2e.cmd --filter playout`) sobe o `livekit-server` e o servidor de tokens, roda bots por script e mede, com loopback do WASAPI, se o áudio remoto chega ao dispositivo de saída. O relatório fica em `dev-logs\e2e\report.md` (e `report.json`) e a saída do console em `dev-logs\e2e\console.log`. **Um tom de teste audível, em volume baixo, toca durante a execução.** Detalhes e limites em [docs/status.md](docs/status.md).
-
-## Estrutura
-
-| Caminho | Conteúdo |
+| Path | Contents |
 | --- | --- |
-| `crates/rooms-protocol` | Tipos compartilhados entre cliente e servidor |
-| `crates/rooms-core` | Sessão, áudio, captura e vídeo; única crate que conhece o SDK do LiveKit |
-| `crates/rooms-client` | Interface desktop em egui |
-| `crates/rooms-token-server` | Servidor HTTP que emite tokens |
-| `crates/rooms-e2e` | Harness de testes ponta a ponta: bots, sonda de áudio e relatório |
-| `xtask` | Automação do repositório (`cargo ci`) |
-| `deploy` | Configuração do servidor em produção |
-| `docs` | Plano, arquitetura e decisões (ADRs) |
+| `crates/rooms-protocol` | Shared serde types and validation limits |
+| `crates/rooms-core` | Session, audio, noise suppression, screen capture, and video; the only crate using the LiveKit SDK |
+| `crates/rooms-client` | Desktop UI (`zenha`) built with `eframe`/`egui` |
+| `crates/rooms-token-server` | HTTP server that validates invite codes and issues LiveKit tokens |
+| `crates/rooms-e2e` | End-to-end test harness with scripted bots and WASAPI loopback probe |
+| `xtask` | Workspace automation (`cargo ci`, icon generation) |
+| `deploy` | Production server configuration (Docker Compose, Caddy, LiveKit) |
+| `installer` | Inno Setup script for the Windows installer |
+| `docs` | Architecture documentation and ADRs |
 
-## Convenções
+`CLAUDE.md` files in the repository root and crate directories serve as concise technical guides for AI coding agents working in the codebase.
 
-Veja [CONTRIBUTING.md](CONTRIBUTING.md) para padrões de código, commits e fluxo de trabalho.
+## Contributing & Security
+
+- Read [CONTRIBUTING.md](CONTRIBUTING.md) for coding conventions, crate boundaries, commit format, and manual Windows testing guidelines.
+- Read [SECURITY.md](SECURITY.md) for instructions on reporting security vulnerabilities.
+
+## License
+
+Dual-licensed under either [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE) at your option.

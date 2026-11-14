@@ -1,20 +1,20 @@
-# NNNN. Título
+# NNNN. Title
 
-- Status: proposta | aceita | substituída por NNNN
-- Data: AAAA-MM-DD
+- Status: proposed | accepted | superseded by NNNN
+- Date: YYYY-MM-DD
 
-## Contexto
+## Context
 
-O problema e as restrições.
+The problem and constraints.
 
-## Decisão
+## Decision
 
-O que foi decidido.
+What was decided.
 
-## Alternativas descartadas
+## Alternatives Considered
 
-Cada alternativa e o motivo.
+Each alternative and why it was rejected.
 
-## Consequências
+## Consequences
 
-O que fica mais fácil, o que fica mais difícil e o que precisa ser revisto depois.
+What becomes easier, what becomes harder, and what needs to be revisited later.

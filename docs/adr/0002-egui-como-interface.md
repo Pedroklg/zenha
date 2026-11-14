@@ -1,25 +1,25 @@
-# 0002. Interface em egui com wgpu
+# 0002. egui with wgpu for the UI
 
-- Status: aceita
-- Data: 2026-11-09
+- Status: accepted
+- Date: 2026-11-09
 
-## Contexto
+## Context
 
-A mídia roda em Rust nativo e os frames de vídeo decodificados precisam aparecer na janela. Só Windows é alvo.
+Media runs in native Rust and decoded video frames must be displayed in the window. Windows is the only target.
 
-## Decisão
+## Decision
 
-Usar `eframe`/`egui` com `wgpu`, desenhando o vídeo como textura.
+Use `eframe`/`egui` with `wgpu`, rendering video frames as a texture.
 
-## Alternativas descartadas
+## Alternatives Considered
 
-- **Tauri com React e mídia em Rust.** Mostrar vídeo nativo exige uma janela filha sincronizada sob a webview, ou empurrar frames para a webview, caminho sem medições públicas a 1080p60.
-- **Tauri ou Electron com o SDK JavaScript.** Menor esforço, mas a mídia sai do Rust.
-- **iced.** Arquitetura mais limpa, mas o widget de vídeo teria que ser escrito do zero.
-- **GPUI.** Documentação escassa e Windows fora da lista de suporte do README.
+- **Tauri with React and Rust media.** Rendering native video requires either a synchronized child window under the webview or pushing frames into the webview, an approach without public 1080p60 benchmarks.
+- **Tauri or Electron with the JavaScript SDK.** Lower effort, but moves media outside Rust.
+- **iced.** Cleaner architecture, but the video widget would have to be written from scratch.
+- **GPUI.** Sparse documentation and Windows outside the README's supported platforms list.
 
-## Consequências
+## Consequences
 
-- Existe um cliente de referência oficial com a mesma combinação (`rust-dev-client`).
-- O visual é mais simples que o de uma interface web.
-- `egui` é pré-1.0 e muda a API a cada release; a versão fica fixada.
+- An official reference client exists with the same stack (`rust-dev-client`).
+- Visual styling is simpler than a web-based UI.
+- `egui` is pre-1.0 and changes its API between releases; the version stays pinned.

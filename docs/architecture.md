@@ -1,50 +1,50 @@
-# Arquitetura
+# Architecture
 
 ```mermaid
 flowchart LR
-  subgraph PC["PC de cada amigo (Windows)"]
-    client["rooms-client<br/>interface egui"]
-    core["rooms-core<br/>sessão, áudio, captura"]
+  subgraph PC["Each friend's PC (Windows)"]
+    client["rooms-client<br/>egui UI"]
+    core["rooms-core<br/>session, audio, capture"]
     client -- Command --> core
     core -- Event --> client
   end
-  subgraph Servidor
-    token["rooms-token-server<br/>convite, JWT, salas"]
+  subgraph Server
+    token["rooms-token-server<br/>invite, JWT, rooms"]
     lk["livekit-server<br/>SFU"]
-    token -- API de servidor --> lk
+    token -- Server API --> lk
   end
   core -- "HTTPS: token" --> token
-  core <-- "WebRTC: áudio, vídeo, chat" --> lk
+  core <-- "WebRTC: audio, video, chat" --> lk
 ```
 
-## Componentes
+## Components
 
-| Componente | Responsabilidade | Não faz |
+| Component | Responsibility | Does not handle |
 | --- | --- | --- |
-| `rooms-client` | Janela, telas, lista de salas, chat, desenho do vídeo | Rede, SDK do LiveKit |
-| `rooms-core` | Sessão LiveKit, microfone, captura, áudio do jogo, atalhos | Interface |
-| `rooms-protocol` | Tipos JSON entre cliente e servidor de tokens | I/O |
-| `rooms-token-server` | Valida convite, emite JWT, lista salas | Mídia |
-| `livekit-server` | Recebe cada track uma vez e redistribui | Lógica do app |
+| `rooms-client` | Window, screens, room list, chat, video rendering | Networking, LiveKit SDK |
+| `rooms-core` | LiveKit session, microphone, screen capture, game audio, hotkeys | UI |
+| `rooms-protocol` | JSON types shared between client and token server | I/O |
+| `rooms-token-server` | Validates invite code, issues JWT, lists rooms | Media |
+| `livekit-server` | Receives each track once and forwards it | App logic |
 
-## Fluxo de áudio
+## Audio Flow
 
-1. O `PlatformAudio` do SDK captura o microfone, aplica cancelamento de eco e supressão de ruído e codifica em Opus.
-2. O LiveKit encaminha a track para os outros participantes, sem decodificar.
-3. Em cada receptor, o SDK decodifica, mistura e toca.
+1. The SDK's `PlatformAudio` (or WASAPI capture + RNNoise/DeepFilterNet in Enhanced/Maximum modes) captures the microphone, applies processing, and encodes to Opus.
+2. LiveKit forwards the track to the other participants without transcoding.
+3. On each receiver, the SDK decodes, mixes, and plays it back.
 
-## Fluxo de vídeo
+## Video Flow
 
-1. Um `FrameSource` captura a tela ou a janela.
-2. A `rooms-core` converte para I420 e empurra o frame na track; o SDK codifica.
-3. O LiveKit encaminha só para quem assinou aquela transmissão.
-4. No receptor, a `rooms-core` guarda o frame mais recente e a interface o desenha em uma textura `wgpu`.
+1. A `FrameSource` captures the screen or window.
+2. `rooms-core` converts the frame to I420 and pushes it to the track; the SDK encodes it.
+3. LiveKit forwards it only to participants who subscribed to that stream.
+4. On the receiver, `rooms-core` keeps the latest frame and the UI draws it onto a `wgpu` texture.
 
-## Threads no cliente
+## Client Threads
 
-| Thread | Faz | Regra |
+| Thread | Responsibility | Rule |
 | --- | --- | --- |
-| Interface | Desenha e lê eventos a cada frame | Nunca bloqueia nem faz I/O |
-| Runtime Tokio | Sessão, rede, chat | Fala com a interface só por canais |
-| Captura | Entrega frames | Descarta frame atrasado |
-| Áudio do SDK | Microfone e reprodução | Gerenciada pelo `libwebrtc` |
+| UI | Draws frames and polls events on every frame | Never blocks or performs I/O |
+| Tokio runtime | Session, networking, chat, file transfers | Communicates with the UI only via channels |
+| Capture | Delivers video frames | Drops late frames |
+| SDK audio | Microphone and playout | Managed by `libwebrtc` |

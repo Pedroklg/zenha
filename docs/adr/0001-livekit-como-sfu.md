@@ -1,25 +1,25 @@
-# 0001. LiveKit como SFU, com cliente no SDK Rust
+# 0001. LiveKit as SFU, with Client on the Rust SDK
 
-- Status: aceita
-- Data: 2026-11-09
+- Status: accepted
+- Date: 2026-11-09
 
-## Contexto
+## Context
 
-O app atende 8 a 10 pessoas com voz e transmissão de tela. Em malha P2P, quem transmite codifica e envia o vídeo uma vez por espectador, o que não cabe em upload doméstico. O objetivo é escrever todo o código próprio em Rust.
+The app serves 8 to 10 people with voice and screen sharing. In a P2P mesh, the broadcaster encodes and uploads video once per viewer, which does not fit typical home upload bandwidth. The goal is to write all custom code in Rust.
 
-## Decisão
+## Decision
 
-Usar o `livekit-server` como binário pronto e o SDK Rust (`livekit`, `libwebrtc`) no cliente, isolado na crate `rooms-core`.
+Use `livekit-server` as a prebuilt binary and the Rust SDK (`livekit`, `libwebrtc`) in the client, isolated inside the `rooms-core` crate.
 
-## Alternativas descartadas
+## Alternatives Considered
 
-- **SFU próprio com `str0m`.** O `str0m` cobre só o transporte; codecs, jitter buffer, cancelamento de eco e captura ficariam por conta do projeto.
-- **SFU pronto escrito em Rust.** Em novembro de 2026 nenhum é maduro e tem cliente Rust nativo (`webrtc-rs/sfu` pré-produção, `rheomesh` só com cliente TypeScript, `atm0s-media-server` parado).
-- **MoQ ou iroh-live.** Prévias técnicas; o iroh-live não foi rodado em Windows pelos mantenedores.
-- **SDK JavaScript em webview.** Mais rápido, mas tira a mídia do Rust.
+- **Custom SFU with `str0m`.** `str0m` only covers transport; codecs, jitter buffer, echo cancellation, and capture would all have to be built by the project.
+- **Prebuilt SFU written in Rust.** As of November 2026 none is mature with a native Rust client (`webrtc-rs/sfu` is pre-production, `rheomesh` only has a TypeScript client, `atm0s-media-server` is stalled).
+- **MoQ or iroh-live.** Technical previews; `iroh-live` had not been run on Windows by its maintainers.
+- **JavaScript SDK inside a webview.** Faster to build, but moves media outside Rust.
 
-## Consequências
+## Consequences
 
-- O servidor é escrito em Go, mas é só operado, nunca modificado.
-- O cliente fala o protocolo do LiveKit; trocar de SFU exige refazer a camada de rede de `rooms-core`.
-- O SDK é 0.x e quebra a API com frequência: versões exatas e atualização deliberada.
+- The server is written in Go, but it is only operated, never modified.
+- The client speaks the LiveKit protocol; switching SFUs requires rewriting the networking layer of `rooms-core`.
+- The SDK is 0.x and breaks its API frequently: versions are pinned exactly and updated deliberately.
