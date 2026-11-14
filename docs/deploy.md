@@ -37,7 +37,7 @@ This guide covers provisioning and operating the Zenha voice/video server (`live
    ssh-keygen -t ed25519 -C "zenha-azure" -f ~/.ssh/zenha_azure
    ```
 5. **Published Token Server Image on GHCR:**
-   - Run the `server-image` workflow (`.github/workflows/server-image.yml`) by pushing a tag (`v0.1.0`) or triggering it manually via **Actions -> server-image -> Run workflow**.
+   - Run the `server-image` workflow (`.github/workflows/server-image.yml`) through the `release` workflow, by pushing a tag (`v0.1.0`) or by triggering it manually via **Actions -> server-image -> Run workflow**.
    - In GitHub, open the package **`zenha-token-server`** -> **Package settings** -> **Change visibility** -> **Public** so the VM can pull `ghcr.io/<owner>/zenha-token-server:<tag>` without storing a registry token on the server.
 
 ---
@@ -287,9 +287,9 @@ az consumption budget create \
 
 ## 9. Updating the Server
 
-### Automatic Release Deployment (Tag Push)
+### Automatic Release Deployment
 
-Pushing a version tag (`git tag v0.2.0 && git push origin v0.2.0`) triggers:
+Bump `[workspace.package].version` in `Cargo.toml`, merge to `main`, then run `gh workflow run release.yml --ref main -f version=0.2.0` (or **Actions -> release -> Run workflow**). The `release` workflow checks that the version matches `Cargo.toml`, that tag `v0.2.0` does not exist yet and that `ci` passed on that commit, builds the installer and zip, creates the `v0.2.0` tag and GitHub Release, and then starts:
 1. `.github/workflows/server-image.yml` — builds `deploy/Dockerfile` and pushes `ghcr.io/<owner>/zenha-token-server:v0.2.0` and `:latest`.
 2. `.github/workflows/deploy.yml` — runs automatically after `server-image` succeeds (`workflow_run`), logs in to Azure via OIDC, updates `ZENHA_IMAGE` in `/opt/zenha/.env`, runs `docker compose pull && docker compose up -d --remove-orphans`, and verifies `/health`.
 
