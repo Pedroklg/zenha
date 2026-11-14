@@ -29,10 +29,10 @@ function Get-PowerState {
 
 function Invoke-Remote([string]$script) {
     $file = Join-Path ([IO.Path]::GetTempPath()) "zenha-remote-$PID.sh"
-    [IO.File]::WriteAllText($file, "#!/bin/bash`nset -euo pipefail`n$script`n")
+    [IO.File]::WriteAllText($file, ("#!/bin/bash`nset -euo pipefail`n$script`n" -replace "`r", ''))
     try {
-        Invoke-Az vm run-command invoke -g $ResourceGroup -n $VmName --command-id RunShellScript `
-            --scripts "@$file" --query 'value[0].message' -o tsv
+        (Invoke-Az vm run-command invoke -g $ResourceGroup -n $VmName --command-id RunShellScript `
+            --scripts "@$file" --query 'value[0].message' -o tsv) -join "`n"
     } finally {
         Remove-Item $file -Force -ErrorAction SilentlyContinue
     }
