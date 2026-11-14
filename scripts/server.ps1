@@ -4,9 +4,10 @@ param(
     [Parameter(Mandatory = $true)][ValidateSet('start', 'stop', 'status', 'backup')][string]$Action,
     [string]$ResourceGroup = $(if ($env:ZENHA_AZURE_RG) { $env:ZENHA_AZURE_RG } else { 'zenha-rg' }),
     [string]$VmName = $(if ($env:ZENHA_AZURE_VM) { $env:ZENHA_AZURE_VM } else { 'zenha-vm' }),
-    [string]$OutDir = (Join-Path (Split-Path -Parent $PSScriptRoot) 'backups')
+    [string]$OutDir
 )
 $ErrorActionPreference = 'Stop'
+if (-not $OutDir) { $OutDir = Join-Path (Split-Path -Parent $PSScriptRoot) 'backups' }
 
 $az = (Get-Command az -ErrorAction SilentlyContinue).Source
 if (-not $az) { $az = 'C:\Program Files\Microsoft SDKs\Azure\CLI2\wbin\az.cmd' }
