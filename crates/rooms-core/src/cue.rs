@@ -1,11 +1,17 @@
-//! Geração dos sons curtos de confirmação de mute e ensurdecimento.
+//! Geração dos sons curtos de confirmação (mute, ensurdecimento e entrada/saída).
 
 use std::f64::consts::TAU;
 
-const CUE_AMPLITUDE: f32 = 0.2;
-const NOTE_SECONDS: f64 = 0.070;
-const GAP_SECONDS: f64 = 0.020;
-const RAMP_SECONDS: f64 = 0.005;
+const SELF_AMPLITUDE: f32 = 0.14;
+const PEER_SCALE: f32 = 0.6;
+const SELF_NOTE_SECONDS: f64 = 0.120;
+const PEER_NOTE_SECONDS: f64 = 0.100;
+const GAP_SECONDS: f64 = 0.015;
+const ATTACK_SECONDS: f64 = 0.005;
+const RELEASE_SECONDS: f64 = 0.008;
+const DECAY_RATE: f64 = 3.5;
+// Peak of sin(x) + 0.3*sin(2x) + 0.1*sin(3x) is ~1.124; keep synthesized peak bounded by target amplitude.
+const HARMONIC_NORM: f64 = 1.125;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Cue {
@@ -13,15 +19,61 @@ pub enum Cue {
     Unmuted,
     Deafened,
     Undeafened,
+    SelfJoined,
+    SelfLeft,
+    PeerJoined,
+    PeerLeft,
+}
+
+struct CueSpec {
+    notes_hz: &'static [f64],
+    note_seconds: f64,
+    amplitude: f32,
 }
 
 impl Cue {
-    fn frequencies(self) -> (f64, f64) {
+    fn spec(self) -> CueSpec {
         match self {
-            Self::Unmuted => (660.0, 880.0),
-            Self::Muted => (880.0, 660.0),
-            Self::Undeafened => (440.0, 660.0),
-            Self::Deafened => (660.0, 440.0),
+            Self::Unmuted => CueSpec {
+                notes_hz: &[660.0, 880.0],
+                note_seconds: SELF_NOTE_SECONDS,
+                amplitude: SELF_AMPLITUDE,
+            },
+            Self::Muted => CueSpec {
+                notes_hz: &[880.0, 660.0],
+                note_seconds: SELF_NOTE_SECONDS,
+                amplitude: SELF_AMPLITUDE,
+            },
+            Self::Undeafened => CueSpec {
+                notes_hz: &[440.0, 660.0],
+                note_seconds: SELF_NOTE_SECONDS,
+                amplitude: SELF_AMPLITUDE,
+            },
+            Self::Deafened => CueSpec {
+                notes_hz: &[660.0, 440.0],
+                note_seconds: SELF_NOTE_SECONDS,
+                amplitude: SELF_AMPLITUDE,
+            },
+            Self::SelfJoined => CueSpec {
+                notes_hz: &[523.25, 659.25, 783.99],
+                note_seconds: SELF_NOTE_SECONDS,
+                amplitude: SELF_AMPLITUDE,
+            },
+            Self::SelfLeft => CueSpec {
+                notes_hz: &[783.99, 659.25, 523.25],
+                note_seconds: SELF_NOTE_SECONDS,
+                amplitude: SELF_AMPLITUDE,
+            },
+            Self::PeerJoined => CueSpec {
+                notes_hz: &[329.63, 392.0],
+                note_seconds: PEER_NOTE_SECONDS,
+                amplitude: SELF_AMPLITUDE * PEER_SCALE,
+            },
+            Self::PeerLeft => CueSpec {
+                notes_hz: &[392.0, 329.63],
+                note_seconds: PEER_NOTE_SECONDS,
+                amplitude: SELF_AMPLITUDE * PEER_SCALE,
+            },
         }
     }
 }
@@ -31,30 +83,69 @@ pub fn cue_samples(cue: Cue, sample_rate: u32) -> Vec<f32> {
     if sample_rate == 0 {
         return Vec::new();
     }
+    let spec = cue.spec();
     let rate = f64::from(sample_rate);
-    let note_len = (NOTE_SECONDS * rate).round() as usize;
+    let note_len = (spec.note_seconds * rate).round() as usize;
     let gap_len = (GAP_SECONDS * rate).round() as usize;
-    let ramp_len = (RAMP_SECONDS * rate).round() as usize;
-    let (first_hz, second_hz) = cue.frequencies();
+    let attack_len = (ATTACK_SECONDS * rate).round() as usize;
+    let release_len = (RELEASE_SECONDS * rate).round() as usize;
 
-    let mut out = Vec::with_capacity(note_len + gap_len + note_len);
-    append_note(&mut out, first_hz, rate, note_len, ramp_len);
-    out.resize(out.len() + gap_len, 0.0);
-    append_note(&mut out, second_hz, rate, note_len, ramp_len);
+    let note_count = spec.notes_hz.len();
+    let total_len = note_count * note_len + note_count.saturating_sub(1) * gap_len;
+    let mut out = Vec::with_capacity(total_len);
+    for (idx, &hz) in spec.notes_hz.iter().enumerate() {
+        if idx > 0 {
+            out.resize(out.len() + gap_len, 0.0);
+        }
+        append_note(
+            &mut out,
+            hz,
+            rate,
+            note_len,
+            attack_len,
+            release_len,
+            spec.amplitude,
+        );
+    }
     out
 }
 
-fn append_note(out: &mut Vec<f32>, hz: f64, rate: f64, len: usize, ramp_len: usize) {
+fn append_note(
+    out: &mut Vec<f32>,
+    hz: f64,
+    rate: f64,
+    len: usize,
+    attack_len: usize,
+    release_len: usize,
+    amplitude: f32,
+) {
+    if len == 0 {
+        return;
+    }
     let step = TAU * hz / rate;
+    let decay_span = len.saturating_sub(attack_len).max(1) as f64;
     for i in 0..len {
-        let edge = i.min(len - 1 - i);
-        let envelope = if ramp_len > 0 && edge < ramp_len {
-            edge as f32 / ramp_len as f32
+        let attack = if attack_len > 0 && i < attack_len {
+            i as f64 / attack_len as f64
         } else {
             1.0
         };
-        let wave = (step * i as f64).sin() as f32;
-        out.push(CUE_AMPLITUDE * envelope * wave);
+        let remaining = len - 1 - i;
+        let release = if release_len > 0 && remaining < release_len {
+            remaining as f64 / release_len as f64
+        } else {
+            1.0
+        };
+        let progress = i.saturating_sub(attack_len) as f64 / decay_span;
+        let fundamental_decay = (-DECAY_RATE * progress).exp();
+        let harmonic_decay = (-2.0 * DECAY_RATE * progress).exp();
+
+        let phase = step * i as f64;
+        let tone = phase.sin()
+            + 0.3 * harmonic_decay * (2.0 * phase).sin()
+            + 0.1 * harmonic_decay * (3.0 * phase).sin();
+        let envelope = (attack * release * fundamental_decay) as f32;
+        out.push(amplitude * envelope * (tone / HARMONIC_NORM) as f32);
     }
 }
 
@@ -63,50 +154,98 @@ mod tests {
     use super::*;
 
     const SAMPLE_RATE: u32 = 48_000;
-    const NOTE_LEN: usize = 3360;
-    const GAP_LEN: usize = 960;
-    const RAMP_LEN: usize = 240;
-    const ALL_CUES: [Cue; 4] = [Cue::Muted, Cue::Unmuted, Cue::Deafened, Cue::Undeafened];
+    const ALL_CUES: [Cue; 8] = [
+        Cue::Muted,
+        Cue::Unmuted,
+        Cue::Deafened,
+        Cue::Undeafened,
+        Cue::SelfJoined,
+        Cue::SelfLeft,
+        Cue::PeerJoined,
+        Cue::PeerLeft,
+    ];
 
-    #[test]
-    fn sample_count_matches_two_notes_and_gap_at_48khz() {
-        for cue in ALL_CUES {
-            let samples = cue_samples(cue, SAMPLE_RATE);
-            assert_eq!(samples.len(), NOTE_LEN + GAP_LEN + NOTE_LEN);
-        }
+    fn peak(samples: &[f32]) -> f32 {
+        samples.iter().map(|s| s.abs()).fold(0.0f32, f32::max)
     }
 
     #[test]
-    fn peak_amplitude_is_near_target_for_all_cues() {
+    fn duration_is_within_expected_range_for_all_cues() {
         for cue in ALL_CUES {
             let samples = cue_samples(cue, SAMPLE_RATE);
-            let peak = samples.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
-            assert!((0.19..=0.2).contains(&peak), "{cue:?} peak {peak}");
-        }
-    }
+            let spec = cue.spec();
+            let note_len = (spec.note_seconds * f64::from(SAMPLE_RATE)).round() as usize;
+            let gap_len = (GAP_SECONDS * f64::from(SAMPLE_RATE)).round() as usize;
+            let expected = spec.notes_hz.len() * note_len + (spec.notes_hz.len() - 1) * gap_len;
+            assert_eq!(samples.len(), expected, "{cue:?}");
 
-    #[test]
-    fn note_edges_and_gap_are_click_free() {
-        for cue in ALL_CUES {
-            let samples = cue_samples(cue, SAMPLE_RATE);
-            let first = samples[0].abs();
-            let before_gap = samples[NOTE_LEN - 1].abs();
-            let after_gap = samples[NOTE_LEN + GAP_LEN].abs();
-            let last = samples[samples.len() - 1].abs();
-            assert!(first < 0.01, "{cue:?} first {first}");
-            assert!(before_gap < 0.01, "{cue:?} before_gap {before_gap}");
-            assert!(after_gap < 0.01, "{cue:?} after_gap {after_gap}");
-            assert!(last < 0.01, "{cue:?} last {last}");
+            let duration_ms = samples.len() as f64 / f64::from(SAMPLE_RATE) * 1000.0;
             assert!(
-                samples[NOTE_LEN..NOTE_LEN + GAP_LEN]
-                    .iter()
-                    .all(|&s| s == 0.0)
+                (180.0..=500.0).contains(&duration_ms),
+                "{cue:?} duration {duration_ms}ms out of range"
             );
+        }
+        assert!(
+            cue_samples(Cue::PeerJoined, SAMPLE_RATE).len()
+                < cue_samples(Cue::SelfJoined, SAMPLE_RATE).len()
+        );
+        assert!(
+            cue_samples(Cue::PeerLeft, SAMPLE_RATE).len()
+                < cue_samples(Cue::SelfLeft, SAMPLE_RATE).len()
+        );
+    }
+
+    #[test]
+    fn peak_amplitude_is_softer_and_peers_are_quieter_than_self() {
+        let mut self_min = f32::MAX;
+        let mut peer_max = 0.0f32;
+        for cue in ALL_CUES {
+            let samples = cue_samples(cue, SAMPLE_RATE);
+            let p = peak(&samples);
+            match cue {
+                Cue::PeerJoined | Cue::PeerLeft => {
+                    assert!((0.06..=0.095).contains(&p), "{cue:?} peak {p}");
+                    peer_max = peer_max.max(p);
+                }
+                _ => {
+                    assert!((0.12..=0.155).contains(&p), "{cue:?} peak {p}");
+                    self_min = self_min.min(p);
+                }
+            }
+        }
+        assert!(
+            peer_max < self_min * 0.7,
+            "peer_max {peer_max} vs self_min {self_min}"
+        );
+    }
+
+    #[test]
+    fn note_edges_and_gaps_are_click_free() {
+        let gap_len = (GAP_SECONDS * f64::from(SAMPLE_RATE)).round() as usize;
+        for cue in ALL_CUES {
+            let samples = cue_samples(cue, SAMPLE_RATE);
+            let spec = cue.spec();
+            let note_len = (spec.note_seconds * f64::from(SAMPLE_RATE)).round() as usize;
+            assert!(samples[0].abs() < 0.001, "{cue:?} first {}", samples[0]);
+            assert!(
+                samples[samples.len() - 1].abs() < 0.001,
+                "{cue:?} last {}",
+                samples[samples.len() - 1]
+            );
+            for note_idx in 0..spec.notes_hz.len() - 1 {
+                let gap_start = (note_idx + 1) * note_len + note_idx * gap_len;
+                let gap_end = gap_start + gap_len;
+                assert!(samples[gap_start - 1].abs() < 0.001);
+                assert!(samples[gap_end].abs() < 0.001);
+                assert!(samples[gap_start..gap_end].iter().all(|&s| s == 0.0));
+            }
         }
     }
 
     fn estimate_hz(note: &[f32], sample_rate: u32) -> f64 {
-        let middle = &note[RAMP_LEN..note.len() - RAMP_LEN];
+        let trim =
+            ((ATTACK_SECONDS.max(RELEASE_SECONDS)) * f64::from(sample_rate)).round() as usize;
+        let middle = &note[trim..note.len() - trim];
         let crossings = middle
             .windows(2)
             .filter(|w| (w[0] < 0.0) != (w[1] < 0.0))
@@ -117,26 +256,32 @@ mod tests {
 
     #[test]
     fn note_frequencies_match_table_within_three_percent() {
-        let expected = [
-            (Cue::Unmuted, 660.0, 880.0),
-            (Cue::Muted, 880.0, 660.0),
-            (Cue::Undeafened, 440.0, 660.0),
-            (Cue::Deafened, 660.0, 440.0),
-        ];
-        for (cue, first_expected, second_expected) in expected {
+        let gap_len = (GAP_SECONDS * f64::from(SAMPLE_RATE)).round() as usize;
+        for cue in ALL_CUES {
+            let spec = cue.spec();
+            let note_len = (spec.note_seconds * f64::from(SAMPLE_RATE)).round() as usize;
             let samples = cue_samples(cue, SAMPLE_RATE);
-            let first_note = &samples[..NOTE_LEN];
-            let second_note = &samples[NOTE_LEN + GAP_LEN..];
-            let first_hz = estimate_hz(first_note, SAMPLE_RATE);
-            let second_hz = estimate_hz(second_note, SAMPLE_RATE);
-            assert!(
-                (first_hz - first_expected).abs() / first_expected <= 0.03,
-                "{cue:?} first {first_hz} vs {first_expected}"
-            );
-            assert!(
-                (second_hz - second_expected).abs() / second_expected <= 0.03,
-                "{cue:?} second {second_hz} vs {second_expected}"
-            );
+            for (idx, &expected_hz) in spec.notes_hz.iter().enumerate() {
+                let start = idx * (note_len + gap_len);
+                let measured = estimate_hz(&samples[start..start + note_len], SAMPLE_RATE);
+                assert!(
+                    (measured - expected_hz).abs() / expected_hz <= 0.03,
+                    "{cue:?} note {idx}: {measured} vs {expected_hz}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn all_cues_produce_distinct_waveforms() {
+        let rendered: Vec<(Cue, Vec<f32>)> = ALL_CUES
+            .iter()
+            .map(|&cue| (cue, cue_samples(cue, SAMPLE_RATE)))
+            .collect();
+        for (i, (cue_a, a)) in rendered.iter().enumerate() {
+            for (cue_b, b) in &rendered[i + 1..] {
+                assert_ne!(a, b, "{cue_a:?} and {cue_b:?} produced identical samples");
+            }
         }
     }
 

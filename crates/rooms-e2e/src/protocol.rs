@@ -91,6 +91,10 @@ fn parse_cue(name: &str) -> Option<Cue> {
         "unmuted" => Some(Cue::Unmuted),
         "deafened" => Some(Cue::Deafened),
         "undeafened" => Some(Cue::Undeafened),
+        "self_joined" => Some(Cue::SelfJoined),
+        "self_left" => Some(Cue::SelfLeft),
+        "peer_joined" => Some(Cue::PeerJoined),
+        "peer_left" => Some(Cue::PeerLeft),
         _ => None,
     }
 }
@@ -582,6 +586,10 @@ mod tests {
             ("unmuted", Cue::Unmuted),
             ("deafened", Cue::Deafened),
             ("undeafened", Cue::Undeafened),
+            ("self_joined", Cue::SelfJoined),
+            ("self_left", Cue::SelfLeft),
+            ("peer_joined", Cue::PeerJoined),
+            ("peer_left", Cue::PeerLeft),
         ] {
             assert_eq!(
                 BotCommand::PlayCue { cue: name.into() }.to_core(),
