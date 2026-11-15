@@ -76,7 +76,7 @@ pub struct DemoSession {
     file_counter: u64,
     input: Option<String>,
     output: Option<String>,
-    sharing: bool,
+    share_preview: Option<TestFeed>,
     ana_sharing: bool,
     watch: Option<TestFeed>,
 }
@@ -134,14 +134,14 @@ impl DemoSession {
             file_counter: 0,
             input: None,
             output: None,
-            sharing: false,
+            share_preview: None,
             ana_sharing: false,
             watch: None,
         }
     }
 
     fn reset_share(&mut self) {
-        self.sharing = false;
+        self.share_preview = None;
         self.ana_sharing = false;
         self.watch = None;
     }
@@ -208,15 +208,45 @@ impl DemoSession {
                 self.publish_audio_devices();
             }
             UiCommand::RefreshCaptureTargets => {
+                self.scheduled
+                    .retain(|s| !matches!(s.event, UiEvent::CaptureThumbnail { .. }));
+                let targets = demo_targets();
                 self.schedule(
                     Duration::ZERO,
-                    UiEvent::CaptureTargetsUpdated(demo_targets()),
+                    UiEvent::CaptureTargetsUpdated(targets.clone()),
                 );
+                for (index, target) in targets.into_iter().enumerate() {
+                    let width = rooms_core::CAPTURE_THUMBNAIL_MAX_SIDE;
+                    let height = (width * 9 / 16).max(2);
+                    let bgra =
+                        rooms_core::TestPatternSource::render(width, height, index as u64 * 12);
+                    let frame = rooms_core::BgraFrame {
+                        width,
+                        height,
+                        stride: width as usize * 4,
+                        data: &bgra,
+                    };
+                    if let Ok(vf) = rooms_core::bgra_to_video_frame(&frame, width) {
+                        let delay = if self.delays.reply.is_zero() {
+                            Duration::ZERO
+                        } else {
+                            Duration::from_millis((index as u64 + 1) * 90)
+                        };
+                        self.schedule(
+                            delay,
+                            UiEvent::CaptureThumbnail {
+                                id: target.id,
+                                width: vf.width as usize,
+                                height: vf.height as usize,
+                                rgba: vf.rgba,
+                            },
+                        );
+                    }
+                }
             }
             UiCommand::StartScreenShare { target_id, .. } => self.start_share(&target_id),
             UiCommand::StopScreenShare => {
-                if self.sharing {
-                    self.sharing = false;
+                if self.share_preview.take().is_some() {
                     self.schedule(Duration::ZERO, UiEvent::ScreenShareStopped);
                 }
             }
@@ -239,12 +269,16 @@ impl DemoSession {
     }
 
     fn start_share(&mut self, target_id: &str) {
-        if self.room.is_none() || self.sharing {
+        if self.room.is_none() || self.share_preview.is_some() {
             return;
         }
         if demo_targets().iter().any(|t| t.id == target_id) {
-            self.sharing = true;
-            self.schedule(Duration::ZERO, UiEvent::ScreenShareStarted);
+            let Some(feed) = TestFeed::start_with(480, 270, 10) else {
+                return;
+            };
+            let preview = feed.handle();
+            self.share_preview = Some(feed);
+            self.schedule(Duration::ZERO, UiEvent::ScreenShareStarted { preview });
         } else {
             self.schedule(
                 Duration::ZERO,
@@ -745,9 +779,16 @@ mod tests {
         session.send(UiCommand::RefreshCaptureTargets);
         let events = drain(&mut session);
         assert!(matches!(
-            events.as_slice(),
-            [UiEvent::CaptureTargetsUpdated(t)] if t.len() == 4
+            events.first(),
+            Some(UiEvent::CaptureTargetsUpdated(t)) if t.len() == 4
         ));
+        assert_eq!(
+            events
+                .iter()
+                .filter(|e| matches!(e, UiEvent::CaptureThumbnail { .. }))
+                .count(),
+            4
+        );
     }
 
     #[test]
@@ -764,7 +805,16 @@ mod tests {
             [UiEvent::ShareFailed { .. }]
         ));
         session.send(start("demo:screen:0"));
-        assert_eq!(drain(&mut session), vec![UiEvent::ScreenShareStarted]);
+        let events = drain(&mut session);
+        let [UiEvent::ScreenShareStarted { preview }] = events.as_slice() else {
+            panic!("unexpected events: {events:?}");
+        };
+        let mut seen = 0;
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while preview.take_newer(&mut seen).is_none() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(seen > 0);
         session.send(start("demo:screen:1"));
         assert!(drain(&mut session).is_empty());
         session.send(UiCommand::StopScreenShare);

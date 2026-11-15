@@ -257,10 +257,19 @@ fn selected_label(devices: &[AudioDeviceView], selected: Option<&str>, loaded: b
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ThumbnailView {
+    pub width: usize,
+    pub height: usize,
+    pub rgba: Vec<u8>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct SharePicker {
     pub open: bool,
     pub targets: Vec<CaptureTargetView>,
+    pub thumbnails: BTreeMap<String, ThumbnailView>,
+    pub targets_serial: u64,
     pub selected: Option<String>,
     pub preset: SharePresetView,
     pub loaded: bool,
@@ -285,8 +294,16 @@ impl SharePicker {
             .is_some_and(|id| self.targets.iter().any(|t| t.id == *id))
     }
 
+    fn reset_loading(&mut self) {
+        self.loaded = false;
+        self.thumbnails.clear();
+        self.targets_serial = self.targets_serial.wrapping_add(1);
+    }
+
     fn set_targets(&mut self, targets: Vec<CaptureTargetView>) {
         self.targets = targets;
+        self.thumbnails.clear();
+        self.targets_serial = self.targets_serial.wrapping_add(1);
         self.loaded = true;
         if !self.can_start() {
             let first = self
@@ -297,6 +314,24 @@ impl SharePicker {
             self.selected = first;
         }
     }
+
+    fn set_thumbnail(&mut self, id: String, width: usize, height: usize, rgba: Vec<u8>) {
+        if width == 0
+            || height == 0
+            || width.saturating_mul(height).saturating_mul(4) != rgba.len()
+            || !self.targets.iter().any(|t| t.id == id)
+        {
+            return;
+        }
+        self.thumbnails.insert(
+            id,
+            ThumbnailView {
+                width,
+                height,
+                rgba,
+            },
+        );
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -305,6 +340,12 @@ pub enum LocalShare {
     Idle,
     Starting,
     Active,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreviewState {
+    pub feed: FeedHandle,
+    pub serial: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -318,6 +359,7 @@ pub struct WatchState {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ShareState {
     pub local: LocalShare,
+    pub preview: Option<PreviewState>,
     pub error: Option<String>,
     pub remote: Vec<String>,
     pub watching: Option<WatchState>,
@@ -344,12 +386,23 @@ impl ShareState {
 
     fn apply(&mut self, event: UiEvent) {
         match event {
-            UiEvent::ScreenShareStarted => self.local = LocalShare::Active,
-            UiEvent::ScreenShareStopped => self.local = LocalShare::Idle,
+            UiEvent::ScreenShareStarted { preview } => {
+                self.serial += 1;
+                self.local = LocalShare::Active;
+                self.preview = Some(PreviewState {
+                    feed: preview,
+                    serial: self.serial,
+                });
+            }
+            UiEvent::ScreenShareStopped => {
+                self.local = LocalShare::Idle;
+                self.preview = None;
+            }
             UiEvent::ShareFailed { message } => {
                 self.error = Some(message);
                 if self.local == LocalShare::Starting {
                     self.local = LocalShare::Idle;
+                    self.preview = None;
                 }
             }
             UiEvent::RemoteScreenShareStarted { identity } => {
@@ -1308,7 +1361,10 @@ impl AppState {
                 self.picker.open = false;
                 Vec::new()
             }
-            UserAction::RefreshCaptureTargets => vec![UiCommand::RefreshCaptureTargets],
+            UserAction::RefreshCaptureTargets => {
+                self.picker.reset_loading();
+                vec![UiCommand::RefreshCaptureTargets]
+            }
             UserAction::SelectCaptureTarget(id) => {
                 if self.picker.targets.iter().any(|t| t.id == id) {
                     self.picker.selected = Some(id);
@@ -1552,6 +1608,7 @@ impl AppState {
         }
         room.share.error = None;
         self.picker.open = true;
+        self.picker.reset_loading();
         vec![UiCommand::RefreshCaptureTargets]
     }
 
@@ -1577,6 +1634,13 @@ impl AppState {
     pub fn is_watching(&self) -> bool {
         match &self.screen {
             Screen::InRoom(room) => room.share.watching.is_some(),
+            _ => false,
+        }
+    }
+
+    pub fn is_sharing_local(&self) -> bool {
+        match &self.screen {
+            Screen::InRoom(room) => room.share.local == LocalShare::Active,
             _ => false,
         }
     }
@@ -1724,6 +1788,12 @@ impl AppState {
                 participants,
             } => self.on_joined(room, local_identity, participants),
             UiEvent::CaptureTargetsUpdated(targets) => self.picker.set_targets(targets),
+            UiEvent::CaptureThumbnail {
+                id,
+                width,
+                height,
+                rgba,
+            } => self.picker.set_thumbnail(id, width, height, rgba),
             UiEvent::Failed { message } => {
                 self.picker.open = false;
                 self.audio.mic_level = None;
@@ -1861,7 +1931,7 @@ fn apply_room_event(state: &mut RoomState, event: UiEvent) {
         UiEvent::ChatDeleted { id, sender } => state.chat.delete_message(&id, &sender),
         UiEvent::ChatFailed { message } => state.chat.handle_failed(message),
         UiEvent::FileTransfer(view) => state.chat.apply_transfer(view),
-        share @ (UiEvent::ScreenShareStarted
+        share @ (UiEvent::ScreenShareStarted { .. }
         | UiEvent::ScreenShareStopped
         | UiEvent::ShareFailed { .. }
         | UiEvent::RemoteScreenShareStarted { .. }
@@ -1875,6 +1945,7 @@ fn apply_room_event(state: &mut RoomState, event: UiEvent) {
         | UiEvent::RoomsFailed { .. }
         | UiEvent::RoomsUpdated(_)
         | UiEvent::CaptureTargetsUpdated(_)
+        | UiEvent::CaptureThumbnail { .. }
         | UiEvent::MicLevel { .. }
         | UiEvent::AudioDevicesUpdated { .. } => {}
     }
@@ -2909,14 +2980,16 @@ mod tests {
         assert!(state.handle_action(UserAction::StartShare).is_empty());
         assert!(state.handle_action(UserAction::OpenSharePicker).is_empty());
 
-        state.apply_event(UiEvent::ScreenShareStarted);
+        state.apply_event(UiEvent::ScreenShareStarted { preview: feed() });
         assert_eq!(room(&state).share.local, LocalShare::Active);
+        assert!(room(&state).share.preview.is_some());
         assert_eq!(
             state.handle_action(UserAction::StopShare),
             vec![UiCommand::StopScreenShare]
         );
         state.apply_event(UiEvent::ScreenShareStopped);
         assert_eq!(room(&state).share.local, LocalShare::Idle);
+        assert_eq!(room(&state).share.preview, None);
         assert!(state.handle_action(UserAction::StopShare).is_empty());
     }
 
@@ -3015,7 +3088,7 @@ mod tests {
         let mut state = state_with_code();
         in_room(&mut state);
         remote_share(&mut state, "ana");
-        state.apply_event(UiEvent::ScreenShareStarted);
+        state.apply_event(UiEvent::ScreenShareStarted { preview: feed() });
         state.apply_event(UiEvent::Joined {
             room: "jogos".to_owned(),
             local_identity: "pedro".to_owned(),
@@ -3036,6 +3109,55 @@ mod tests {
         assert!((w - 533.333).abs() < 0.01 && (h - 300.0).abs() < 0.01);
         assert_eq!(aspect_fit((0.0, 100.0), (1920, 1080)), (0.0, 0.0));
         assert_eq!(aspect_fit((100.0, 100.0), (0, 0)), (0.0, 0.0));
+    }
+
+    #[test]
+    fn picker_stores_thumbnails_for_current_targets_and_resets_on_refresh() {
+        let mut state = state_with_code();
+        in_room(&mut state);
+        state.handle_action(UserAction::OpenSharePicker);
+        let initial_serial = state.picker.targets_serial;
+        state.apply_event(targets_event());
+        assert_ne!(state.picker.targets_serial, initial_serial);
+        let serial_after_list = state.picker.targets_serial;
+
+        state.apply_event(UiEvent::CaptureThumbnail {
+            id: "w1".to_owned(),
+            width: 2,
+            height: 1,
+            rgba: vec![9; 8],
+        });
+        assert_eq!(
+            state.picker.thumbnails.get("w1"),
+            Some(&ThumbnailView {
+                width: 2,
+                height: 1,
+                rgba: vec![9; 8],
+            })
+        );
+
+        // Unknown target or invalid payload is ignored.
+        state.apply_event(UiEvent::CaptureThumbnail {
+            id: "unknown".to_owned(),
+            width: 1,
+            height: 1,
+            rgba: vec![1; 4],
+        });
+        state.apply_event(UiEvent::CaptureThumbnail {
+            id: "s1".to_owned(),
+            width: 2,
+            height: 2,
+            rgba: vec![1; 4],
+        });
+        assert_eq!(state.picker.thumbnails.len(), 1);
+
+        // Refreshing resets loaded thumbnails cleanly and bumps serial.
+        state.handle_action(UserAction::RefreshCaptureTargets);
+        assert!(state.picker.thumbnails.is_empty());
+        assert!(state.picker.targets_serial > serial_after_list);
+
+        state.apply_event(targets_event());
+        assert!(state.picker.thumbnails.is_empty());
     }
 
     #[test]

@@ -342,7 +342,7 @@ impl BotEvent {
     pub fn from_core(event: &Event) -> Option<Self> {
         let people = |list: &[Participant]| list.iter().map(ParticipantInfo::from).collect();
         Some(match event {
-            Event::MicLevel { .. } => return None,
+            Event::MicLevel { .. } | Event::CaptureThumbnail { .. } => return None,
             Event::Connecting => Self::Connecting,
             Event::Joined {
                 room,
@@ -432,7 +432,7 @@ impl BotEvent {
             Event::CaptureTargetsUpdated(targets) => Self::CaptureTargetsUpdated {
                 targets: targets.iter().map(TargetInfo::from).collect(),
             },
-            Event::ScreenShareStarted => Self::ScreenShareStarted,
+            Event::ScreenShareStarted { .. } => Self::ScreenShareStarted,
             Event::ScreenShareStopped => Self::ScreenShareStopped,
             Event::RemoteScreenShareStarted { identity } => Self::RemoteScreenShareStarted {
                 identity: identity.clone(),

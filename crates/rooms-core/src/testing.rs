@@ -1,6 +1,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::time::Duration;
 
 use async_trait::async_trait;
 use rooms_protocol::{
@@ -62,6 +63,13 @@ pub enum BackendCall {
     PlayCue(Cue),
 }
 
+#[derive(Debug, Clone)]
+pub enum FakeThumbnail {
+    Ready(VideoFrame),
+    Delay { delay: Duration, frame: VideoFrame },
+    Fail(SessionError),
+}
+
 #[derive(Debug)]
 struct BackendState {
     calls: Vec<BackendCall>,
@@ -78,8 +86,9 @@ struct BackendState {
     device_failure: Option<SessionError>,
     file_failure: Option<SessionError>,
     targets: Vec<CaptureTarget>,
+    thumbnails: HashMap<String, FakeThumbnail>,
     share_failure: Option<SessionError>,
-    sharing: Option<(String, SharePreset)>,
+    sharing: Option<(String, SharePreset, FrameSlot)>,
     watching: Option<(String, FrameSlot)>,
     participant_volumes: ParticipantVolumes,
 }
@@ -113,6 +122,7 @@ impl FakeBackend {
                 device_failure: None,
                 file_failure: None,
                 targets: Vec::new(),
+                thumbnails: HashMap::new(),
                 share_failure: None,
                 sharing: None,
                 watching: None,
@@ -157,12 +167,33 @@ impl FakeBackend {
         lock(&self.state).targets = targets;
     }
 
+    pub fn set_thumbnail(&self, id: &str, behavior: FakeThumbnail) {
+        lock(&self.state).thumbnails.insert(id.to_owned(), behavior);
+    }
+
+    pub fn clear_thumbnails(&self) {
+        lock(&self.state).thumbnails.clear();
+    }
+
     pub fn fail_next_share(&self, error: SessionError) {
         lock(&self.state).share_failure = Some(error);
     }
 
     pub fn sharing(&self) -> Option<(String, SharePreset)> {
-        lock(&self.state).sharing.clone()
+        lock(&self.state)
+            .sharing
+            .as_ref()
+            .map(|(id, preset, _)| (id.clone(), *preset))
+    }
+
+    pub fn push_share_preview_frame(&self, frame: VideoFrame) -> bool {
+        match &lock(&self.state).sharing {
+            Some((_, _, slot)) => {
+                slot.push(frame);
+                true
+            }
+            None => false,
+        }
     }
 
     pub fn watching(&self) -> Option<String> {
@@ -354,10 +385,29 @@ impl MediaBackend for FakeBackend {
         Ok(state.targets.clone())
     }
 
+    async fn capture_thumbnail(
+        &self,
+        target: &CaptureTarget,
+        _max_side: u32,
+        _timeout: Duration,
+    ) -> Result<VideoFrame, SessionError> {
+        let behavior = lock(&self.state).thumbnails.get(&target.id).cloned();
+        match behavior {
+            Some(FakeThumbnail::Ready(frame)) => Ok(frame),
+            Some(FakeThumbnail::Delay { delay, frame }) => {
+                tokio::time::sleep(delay).await;
+                Ok(frame)
+            }
+            Some(FakeThumbnail::Fail(err)) => Err(err),
+            None => Err(SessionError::TargetNotFound(target.id.clone())),
+        }
+    }
+
     async fn start_screen_share(
         &self,
         target_id: &str,
         preset: SharePreset,
+        preview: FrameSlot,
     ) -> Result<(), SessionError> {
         let mut state = lock(&self.state);
         state.calls.push(BackendCall::StartScreenShare {
@@ -370,7 +420,7 @@ impl MediaBackend for FakeBackend {
         if state.sharing.is_some() {
             return Err(SessionError::ShareActive);
         }
-        state.sharing = Some((target_id.to_owned(), preset));
+        state.sharing = Some((target_id.to_owned(), preset, preview));
         Ok(())
     }
 

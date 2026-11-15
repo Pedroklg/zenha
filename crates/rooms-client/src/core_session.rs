@@ -196,11 +196,15 @@ pub struct TestFeed {
 
 impl TestFeed {
     pub fn start() -> Option<Self> {
+        Self::start_with(1280, 720, 30)
+    }
+
+    pub fn start_with(width: u32, height: u32, fps: u32) -> Option<Self> {
         let slot = FrameSlot::new();
-        let mut source = TestPatternSource::new(1280, 720);
+        let mut source = TestPatternSource::new(width, height);
         let target = source.list_targets().ok()?.into_iter().next()?;
         let sink: Box<dyn FrameSink> = Box::new(SlotSink(slot.clone()));
-        source.start(&target, 30, sink).ok()?;
+        source.start(&target, fps, sink).ok()?;
         Some(Self {
             handle: feed_handle(slot),
             source,
@@ -423,6 +427,17 @@ impl Translator {
             Event::CaptureTargetsUpdated(targets) => vec![UiEvent::CaptureTargetsUpdated(
                 targets.into_iter().map(target_view).collect(),
             )],
+            Event::CaptureThumbnail {
+                id,
+                width,
+                height,
+                rgba,
+            } => vec![UiEvent::CaptureThumbnail {
+                id,
+                width: width as usize,
+                height: height as usize,
+                rgba,
+            }],
             Event::MicLevel {
                 level_db,
                 gate_open,
@@ -430,7 +445,9 @@ impl Translator {
                 level_db,
                 gate_open,
             }],
-            Event::ScreenShareStarted => vec![UiEvent::ScreenShareStarted],
+            Event::ScreenShareStarted { preview } => vec![UiEvent::ScreenShareStarted {
+                preview: feed_handle(preview),
+            }],
             Event::ScreenShareStopped => vec![UiEvent::ScreenShareStopped],
             Event::RemoteScreenShareStarted { identity } => {
                 vec![UiEvent::RemoteScreenShareStarted { identity }]
@@ -795,6 +812,37 @@ mod tests {
     fn watching_started_carries_a_feed_that_yields_each_frame_once() {
         let mut translator = Translator::default();
         let slot = FrameSlot::new();
+        let events = translator.translate(Event::CaptureThumbnail {
+            id: "window:7".to_owned(),
+            width: 2,
+            height: 1,
+            rgba: vec![9; 8],
+        });
+        assert_eq!(
+            events,
+            vec![UiEvent::CaptureThumbnail {
+                id: "window:7".to_owned(),
+                width: 2,
+                height: 1,
+                rgba: vec![9; 8],
+            }]
+        );
+        let preview_slot = FrameSlot::new();
+        preview_slot.push(VideoFrame {
+            width: 2,
+            height: 2,
+            rgba: vec![5; 16],
+        });
+        let events = translator.translate(Event::ScreenShareStarted {
+            preview: preview_slot,
+        });
+        let [UiEvent::ScreenShareStarted { preview }] = &events[..] else {
+            panic!("expected ScreenShareStarted");
+        };
+        let mut preview_seen = 0;
+        let preview_frame = preview.take_newer(&mut preview_seen).unwrap();
+        assert_eq!((preview_frame.width, preview_frame.height), (2, 2));
+        assert_eq!(preview_frame.bytes(), &[5; 16]);
         let events = translator.translate(Event::WatchingStarted {
             identity: "ana".to_owned(),
             frames: slot.clone(),

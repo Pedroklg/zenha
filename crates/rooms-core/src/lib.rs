@@ -55,7 +55,8 @@ pub use backend_options::{
 };
 pub use backoff::{ReconnectPolicy, backoff_delay};
 pub use capture::{
-    BgraFrame, CaptureEnd, FrameSink, FrameSource, Pacer, SlotSink, TestPatternSource, bgra_to_rgba,
+    BgraFrame, CaptureEnd, FrameSink, FrameSource, Pacer, SlotSink, TestPatternSource,
+    bgra_to_rgba, bgra_to_rgba_scaled, bgra_to_video_frame,
 };
 pub use chat::{CHAT_DELETE_TOPIC, CHAT_TOPIC};
 pub use cue::{Cue, cue_samples};
@@ -67,5 +68,7 @@ pub use no_media::NoMediaBackend;
 pub use noise::{DENOISE_FRAME, Denoiser, GateReading, NoiseGate, RnnoiseDenoiser};
 pub use token::{HttpTokenClient, TokenClient};
 pub use video::{
-    CaptureKind, CaptureTarget, FrameSlot, SharePreset, VideoFrame, Waker, fit_within,
+    CAPTURE_THUMBNAIL_MAX_SIDE, CAPTURE_THUMBNAIL_TIMEOUT, CaptureKind, CaptureTarget, FrameSlot,
+    PreviewGate, SHARE_PREVIEW_INTERVAL, SHARE_PREVIEW_MAX_SIDE, SharePreset, VideoFrame, Waker,
+    fit_within,
 };

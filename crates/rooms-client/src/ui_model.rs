@@ -214,11 +214,19 @@ pub enum UiEvent {
         selected_output: Option<String>,
     },
     CaptureTargetsUpdated(Vec<CaptureTargetView>),
+    CaptureThumbnail {
+        id: String,
+        width: usize,
+        height: usize,
+        rgba: Vec<u8>,
+    },
     MicLevel {
         level_db: i8,
         gate_open: bool,
     },
-    ScreenShareStarted,
+    ScreenShareStarted {
+        preview: FeedHandle,
+    },
     ScreenShareStopped,
     ShareFailed {
         message: String,

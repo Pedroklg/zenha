@@ -47,6 +47,8 @@ pub struct App {
     is_demo: bool,
     banner: Option<&'static str>,
     renderer: views::share::VideoRenderer,
+    preview_renderer: views::share::VideoRenderer,
+    picker_thumbnails: views::share::ThumbnailCache,
     images: ChatImages,
     save_results: Receiver<Result<PathBuf, ()>>,
     save_sender: Sender<Result<PathBuf, ()>>,
@@ -104,6 +106,8 @@ impl App {
             is_demo: demo_flag,
             banner,
             renderer: views::share::VideoRenderer::default(),
+            preview_renderer: views::share::VideoRenderer::default(),
+            picker_thumbnails: views::share::ThumbnailCache::default(),
             images: ChatImages::default(),
             save_results,
             save_sender,
@@ -400,6 +404,7 @@ impl eframe::App for App {
             ..
         } = &mut self.state;
         let renderer = &mut self.renderer;
+        let preview_renderer = &mut self.preview_renderer;
         let images = &mut self.images;
         let mut actions = match screen {
             Screen::Onboarding => views::onboarding::show(ui, form, onboarding, show_password),
@@ -419,6 +424,7 @@ impl eframe::App for App {
                 rooms,
                 server_host(&form.server_url),
                 renderer,
+                preview_renderer,
                 images,
                 audio.stream_volume,
                 &audio.participant_volumes,
@@ -438,7 +444,11 @@ impl eframe::App for App {
                 invite_copied: *invite_copied,
             },
         ));
-        actions.extend(views::share::picker(ui.ctx(), picker));
+        actions.extend(views::share::picker(
+            ui.ctx(),
+            picker,
+            &mut self.picker_thumbnails,
+        ));
         let actions = self.resolve_effects(ui.ctx(), actions);
         self.dispatch(ui.ctx(), actions);
         self.prune_images();
@@ -460,7 +470,7 @@ impl eframe::App for App {
             ui.ctx()
                 .send_viewport_cmd(egui::ViewportCommand::Fullscreen(fullscreen));
         }
-        let interval = if self.state.is_watching() {
+        let interval = if self.state.is_watching() || self.state.is_sharing_local() {
             VIDEO_REPAINT_INTERVAL
         } else {
             REPAINT_INTERVAL

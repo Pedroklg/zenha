@@ -26,8 +26,13 @@ use tokio::time::timeout;
 use crate::api::SessionError;
 use crate::backend::BackendEvent;
 use crate::backend_support::{CaptureHealth, ShareMeter, parse_target_id, target_id, target_name};
-use crate::capture::{BgraFrame, CaptureEnd, FrameSink, FrameSource, Pacer};
-use crate::video::{CaptureKind, CaptureTarget, FrameSlot, SharePreset, fit_within};
+use crate::capture::{
+    BgraFrame, CaptureEnd, FrameSink, FrameSource, Pacer, bgra_to_rgba_scaled, bgra_to_video_frame,
+};
+use crate::video::{
+    CaptureKind, CaptureTarget, FrameSlot, PreviewGate, SHARE_PREVIEW_INTERVAL,
+    SHARE_PREVIEW_MAX_SIDE, SharePreset, VideoFrame, fit_within,
+};
 
 const SHARE_TRACK_NAME: &str = "screen";
 const FIRST_FRAME_TIMEOUT: Duration = Duration::from_secs(5);
@@ -126,6 +131,89 @@ impl FrameSource for DesktopCaptureSource {
             }
         }
     }
+
+    fn capture_thumbnail(
+        &mut self,
+        target: &CaptureTarget,
+        max_side: u32,
+        timeout: Duration,
+    ) -> Result<VideoFrame, SessionError> {
+        let (kind, source_id) = parse_target_id(&target.id)
+            .ok_or_else(|| SessionError::TargetNotFound(target.id.clone()))?;
+        let mut options = DesktopCapturerOptions::new(source_type(kind));
+        options.set_include_cursor(false);
+        let Some(mut capturer) = DesktopCapturer::new(options) else {
+            return Err(SessionError::Video(
+                "could not create the desktop capturer for a thumbnail".to_owned(),
+            ));
+        };
+        let Some(source) = capturer
+            .get_source_list()
+            .into_iter()
+            .find(|source| source.id() == source_id)
+        else {
+            return Err(SessionError::TargetNotFound(target.id.clone()));
+        };
+
+        let result: Arc<Mutex<Option<Result<VideoFrame, CaptureError>>>> =
+            Arc::new(Mutex::new(None));
+        let slot = result.clone();
+        capturer.start_capture(Some(source), move |capture_result| {
+            let converted = match capture_result {
+                Ok(frame) => {
+                    let Some(bgra) = desktop_frame_as_bgra(&frame) else {
+                        *slot.lock().unwrap_or_else(PoisonError::into_inner) =
+                            Some(Err(CaptureError::Temporary));
+                        return;
+                    };
+                    // A panic must not unwind into the C++ capturer that invoked this callback.
+                    match catch_unwind(AssertUnwindSafe(|| bgra_to_video_frame(&bgra, max_side))) {
+                        Ok(Ok(video_frame)) => Ok(video_frame),
+                        Ok(Err(_)) => Err(CaptureError::Temporary),
+                        Err(_) => Err(CaptureError::Permanent),
+                    }
+                }
+                Err(err) => Err(err),
+            };
+            *slot.lock().unwrap_or_else(PoisonError::into_inner) = Some(converted);
+        });
+
+        let deadline = Instant::now() + timeout;
+        loop {
+            *result.lock().unwrap_or_else(PoisonError::into_inner) = None;
+            capturer.capture_frame();
+            match result.lock().unwrap_or_else(PoisonError::into_inner).take() {
+                Some(Ok(frame)) => return Ok(frame),
+                Some(Err(CaptureError::Permanent)) => {
+                    return Err(SessionError::Video(
+                        "thumbnail capture failed permanently".to_owned(),
+                    ));
+                }
+                Some(Err(CaptureError::Temporary)) | None => {
+                    let remaining = deadline.saturating_duration_since(Instant::now());
+                    if remaining.is_zero() {
+                        return Err(SessionError::Video(
+                            "thumbnail capture timed out".to_owned(),
+                        ));
+                    }
+                    std::thread::sleep(remaining.min(Duration::from_millis(20)));
+                }
+            }
+        }
+    }
+}
+
+fn desktop_frame_as_bgra(frame: &DesktopFrame) -> Option<BgraFrame<'_>> {
+    let width = u32::try_from(frame.width()).ok()?;
+    let height = u32::try_from(frame.height()).ok()?;
+    let stride = usize::try_from(frame.stride()).ok()?;
+    let bgra = BgraFrame {
+        width,
+        height,
+        stride,
+        data: frame.data(),
+    };
+    bgra.is_consistent().then_some(bgra)
 }
 
 #[derive(Default)]
@@ -142,21 +230,10 @@ fn lock_sink(sink: &SharedSink) -> std::sync::MutexGuard<'_, Box<dyn FrameSink>>
 }
 
 fn deliver(sink: &SharedSink, state: &CallbackState, frame: &DesktopFrame) {
-    let (Ok(width), Ok(height)) = (u32::try_from(frame.width()), u32::try_from(frame.height()))
-    else {
+    let Some(bgra) = desktop_frame_as_bgra(frame) else {
         state.temporary_error.store(true, Ordering::SeqCst);
         return;
     };
-    let bgra = BgraFrame {
-        width,
-        height,
-        stride: frame.stride() as usize,
-        data: frame.data(),
-    };
-    if !bgra.is_consistent() {
-        state.temporary_error.store(true, Ordering::SeqCst);
-        return;
-    }
     // A panic must not unwind into the C++ capturer that invoked this callback.
     let outcome = catch_unwind(AssertUnwindSafe(|| lock_sink(sink).frame(bgra)));
     if outcome.is_err() {
@@ -258,6 +335,24 @@ pub(crate) struct PublishSink {
     events: UnboundedSender<BackendEvent>,
     meter: ShareMeter,
     published: (u32, u32),
+    preview: FrameSlot,
+    preview_gate: PreviewGate,
+}
+
+impl PublishSink {
+    fn push_preview(&mut self, frame: &BgraFrame<'_>, now: Instant) {
+        if !self.preview_gate.take(now) {
+            return;
+        }
+        let (pw, ph) = fit_within(
+            frame.width,
+            frame.height,
+            SHARE_PREVIEW_MAX_SIDE,
+            SHARE_PREVIEW_MAX_SIDE,
+        );
+        self.preview
+            .push_with(pw, ph, |dst| bgra_to_rgba_scaled(frame, pw, ph, dst));
+    }
 }
 
 impl FrameSink for PublishSink {
@@ -293,6 +388,7 @@ impl FrameSink for PublishSink {
             self.published = out;
         }
         let now = Instant::now();
+        self.push_preview(&frame, now);
         self.meter
             .record_frame(now.saturating_duration_since(started));
         if let Some(report) = self.meter.report(now) {
@@ -328,6 +424,7 @@ pub(crate) async fn publish_share(
     mut capture: Box<dyn FrameSource>,
     target: &CaptureTarget,
     preset: SharePreset,
+    preview: FrameSlot,
 ) -> Result<LocalShare, SessionError> {
     let video_source = Arc::new(OnceLock::new());
     let (size_tx, size_rx) = oneshot::channel();
@@ -338,6 +435,8 @@ pub(crate) async fn publish_share(
         events,
         meter: ShareMeter::new(Instant::now()),
         published: (0, 0),
+        preview,
+        preview_gate: PreviewGate::new(SHARE_PREVIEW_INTERVAL),
     };
     capture.start(target, preset.fps(), Box::new(sink))?;
 

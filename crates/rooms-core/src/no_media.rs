@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 use std::sync::{Mutex, PoisonError};
+use std::time::Duration;
 
 use async_trait::async_trait;
 use tokio::sync::mpsc::{self, UnboundedSender};
@@ -7,7 +8,7 @@ use tokio::sync::mpsc::{self, UnboundedSender};
 use crate::api::{AudioDevices, FileTransfer, NoiseSuppression, Participant, SessionError};
 use crate::backend::{BackendEvent, ConnectedRoom, MediaBackend};
 use crate::cue::Cue;
-use crate::video::{CaptureTarget, FrameSlot, SharePreset};
+use crate::video::{CaptureTarget, FrameSlot, SharePreset, VideoFrame};
 
 /// Backend sem mídia: conecta sempre e mostra só o participante local.
 ///
@@ -107,10 +108,20 @@ impl MediaBackend for NoMediaBackend {
         Ok(Vec::new())
     }
 
+    async fn capture_thumbnail(
+        &self,
+        _target: &CaptureTarget,
+        _max_side: u32,
+        _timeout: Duration,
+    ) -> Result<VideoFrame, SessionError> {
+        Err(SessionError::ShareUnavailable)
+    }
+
     async fn start_screen_share(
         &self,
         _target_id: &str,
         _preset: SharePreset,
+        _preview: FrameSlot,
     ) -> Result<(), SessionError> {
         Err(SessionError::ShareUnavailable)
     }
@@ -155,7 +166,9 @@ mod tests {
         let backend = NoMediaBackend::new("p");
         assert!(backend.capture_targets().await.unwrap().is_empty());
         assert_eq!(
-            backend.start_screen_share("x", SharePreset::P720F30).await,
+            backend
+                .start_screen_share("x", SharePreset::P720F30, FrameSlot::new())
+                .await,
             Err(SessionError::ShareUnavailable)
         );
         assert_eq!(
