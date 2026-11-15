@@ -10,6 +10,7 @@ use eframe::egui::{
 const INTER_REGULAR: &[u8] = include_bytes!("../assets/fonts/Inter-Regular.ttf");
 const INTER_SEMIBOLD: &[u8] = include_bytes!("../assets/fonts/Inter-SemiBold.ttf");
 const SPACE_GROTESK_BOLD: &[u8] = include_bytes!("../assets/fonts/SpaceGrotesk-Bold.ttf");
+pub const APP_ICON_PNG: &[u8] = include_bytes!("../assets/zenha.png");
 
 const SEMIBOLD_FAMILY: &str = "semibold";
 const DISPLAY_FAMILY: &str = "display";
@@ -23,11 +24,11 @@ pub const BORDER: Color32 = Color32::from_rgb(0x2A, 0x2F, 0x3A);
 pub const TEXT: Color32 = Color32::from_rgb(0xE8, 0xEA, 0xF0);
 pub const TEXT_SECONDARY: Color32 = Color32::from_rgb(0xC9, 0xCE, 0xD8);
 pub const TEXT_WEAK: Color32 = Color32::from_rgb(0x9A, 0xA3, 0xB2);
-pub const ACCENT: Color32 = Color32::from_rgb(0xF5, 0xA5, 0x24);
-pub const ON_ACCENT: Color32 = Color32::from_rgb(0x1A, 0x13, 0x00);
-pub const ACCENT_TEXT: Color32 = Color32::from_rgb(0xFF, 0xD2, 0x7A);
-pub const ACTIVE_ROOM_BG: Color32 = Color32::from_rgb(0x2A, 0x24, 0x15);
-pub const SPEAKING: Color32 = Color32::from_rgb(0x3D, 0xD6, 0x8C);
+pub const ACCENT: Color32 = Color32::from_rgb(0x3D, 0xD6, 0x8C);
+pub const ON_ACCENT: Color32 = Color32::from_rgb(0x06, 0x21, 0x0F);
+pub const ACCENT_TEXT: Color32 = Color32::from_rgb(0x8E, 0xF0, 0xBF);
+pub const ACTIVE_ROOM_BG: Color32 = Color32::from_rgb(0x14, 0x29, 0x1F);
+pub const SPEAKING: Color32 = Color32::from_rgb(0x5C, 0xC8, 0xFF);
 pub const ERROR: Color32 = Color32::from_rgb(0xFF, 0x9B, 0x9B);
 pub const ERROR_BG: Color32 = Color32::from_rgb(0x2A, 0x17, 0x17);
 pub const ERROR_BORDER: Color32 = Color32::from_rgb(0x5A, 0x2A, 0x2A);

@@ -12,9 +12,6 @@ use tray_icon::{Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, 
 
 #[cfg(any(windows, test))]
 const ICON_SIZE: u32 = 32;
-#[cfg(any(windows, test))]
-const AMBER: [u8; 3] = [0xF5, 0xA5, 0x24];
-
 #[cfg(windows)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TrayAction {
@@ -34,7 +31,14 @@ pub struct Tray {
 #[cfg(windows)]
 impl Tray {
     pub fn new(ctx: &egui::Context) -> Option<Self> {
-        let icon = match Icon::from_rgba(icon_rgba(ICON_SIZE), ICON_SIZE, ICON_SIZE) {
+        let rgba = match icon_rgba(ICON_SIZE) {
+            Ok(rgba) => rgba,
+            Err(err) => {
+                tracing::warn!(%err, "could not decode tray icon image");
+                return None;
+            }
+        };
+        let icon = match Icon::from_rgba(rgba, ICON_SIZE, ICON_SIZE) {
             Ok(icon) => icon,
             Err(err) => {
                 tracing::warn!(%err, "could not create tray icon image");
@@ -133,25 +137,12 @@ impl Tray {
 }
 
 #[cfg(any(windows, test))]
-fn icon_rgba(size: u32) -> Vec<u8> {
-    let center = size as f32 / 2.0;
-    let radius = (center - 1.0).max(0.0);
-    let mut rgba = Vec::with_capacity((size * size * 4) as usize);
-    for y in 0..size {
-        for x in 0..size {
-            let dx = x as f32 + 0.5 - center;
-            let dy = y as f32 + 0.5 - center;
-            let dist = dx.hypot(dy);
-            let alpha = (radius + 0.5 - dist).clamp(0.0, 1.0);
-            let a = (alpha * 255.0).round() as u8;
-            if a == 0 {
-                rgba.extend_from_slice(&[0, 0, 0, 0]);
-            } else {
-                rgba.extend_from_slice(&[AMBER[0], AMBER[1], AMBER[2], a]);
-            }
-        }
-    }
-    rgba
+fn icon_rgba(size: u32) -> Result<Vec<u8>, image::ImageError> {
+    let icon = image::load_from_memory(crate::theme::APP_ICON_PNG)?;
+    Ok(icon
+        .resize_exact(size, size, image::imageops::FilterType::Lanczos3)
+        .into_rgba8()
+        .into_raw())
 }
 
 #[cfg(test)]
@@ -159,17 +150,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn icon_rgba_draws_amber_circle_on_transparent_background() {
-        let rgba = icon_rgba(ICON_SIZE);
+    fn icon_rgba_decodes_app_icon_with_transparent_corners() {
+        let rgba = icon_rgba(ICON_SIZE).expect("decode icon");
         assert_eq!(rgba.len(), (ICON_SIZE * ICON_SIZE * 4) as usize);
-
-        let mid = ((ICON_SIZE / 2) * ICON_SIZE + (ICON_SIZE / 2)) as usize * 4;
-        assert_eq!(&rgba[mid..mid + 4], &[0xF5, 0xA5, 0x24, 0xFF]);
-
-        assert_eq!(&rgba[0..4], &[0, 0, 0, 0]);
-        let last = rgba.len() - 4;
-        assert_eq!(&rgba[last..last + 4], &[0, 0, 0, 0]);
-
-        assert!(rgba.chunks_exact(4).any(|px| px[3] > 0 && px[3] < 255));
+        assert_eq!(rgba[3], 0);
+        assert!(rgba.chunks_exact(4).any(|px| px[3] == 255));
     }
 }

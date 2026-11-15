@@ -71,9 +71,7 @@ fn main() -> anyhow::Result<()> {
     };
 
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_inner_size([960.0, 600.0])
-            .with_min_inner_size([640.0, 400.0]),
+        viewport: window_viewport(),
         ..Default::default()
     };
 
@@ -94,4 +92,17 @@ fn main() -> anyhow::Result<()> {
         }),
     )
     .map_err(|err| anyhow::anyhow!("could not start the window: {err}"))
+}
+
+fn window_viewport() -> egui::ViewportBuilder {
+    let viewport = egui::ViewportBuilder::default()
+        .with_inner_size([960.0, 600.0])
+        .with_min_inner_size([640.0, 400.0]);
+    match eframe::icon_data::from_png_bytes(theme::APP_ICON_PNG) {
+        Ok(icon) => viewport.with_icon(icon),
+        Err(err) => {
+            tracing::warn!(%err, "could not decode window icon");
+            viewport
+        }
+    }
 }
