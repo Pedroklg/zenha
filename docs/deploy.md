@@ -293,7 +293,7 @@ az consumption budget create \
 
 ### Automatic Release Deployment
 
-Bump `[workspace.package].version` in `Cargo.toml`, merge to `main`, then run `gh workflow run release.yml --ref main -f version=0.2.0` (or **Actions -> release -> Run workflow**). The `release` workflow checks that the version matches `Cargo.toml`, that tag `v0.2.0` does not exist yet and that `ci` passed on that commit, builds the installer and zip, creates the `v0.2.0` tag and GitHub Release, and then starts:
+Releases are built and published from a Windows PC (there is no build or test workflow in GitHub Actions). Bump `[workspace.package].version` in `Cargo.toml` and `AppVersion` in `installer/zenha.iss`, merge to `main`, then run `scripts\release.cmd 0.2.0`. The script checks that the version matches `Cargo.toml` and that tag `v0.2.0` does not exist yet, runs `cargo ci` (fmt, clippy, tests and `cargo deny`), builds the installer and zip with `scripts\package.cmd` (needs Inno Setup 6), pushes `main` and creates the `v0.2.0` tag and GitHub Release with `gh`. The new tag starts:
 1. `.github/workflows/server-image.yml` — builds `deploy/Dockerfile` and pushes `ghcr.io/<owner>/zenha-token-server:v0.2.0` and `:latest`.
 2. `.github/workflows/deploy.yml` — runs automatically after `server-image` succeeds (`workflow_run`), logs in to Azure via OIDC, updates `ZENHA_IMAGE` in `/opt/zenha/.env`, runs `docker compose pull && docker compose up -d --remove-orphans`, and verifies `/health`.
 

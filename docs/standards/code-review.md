@@ -49,7 +49,7 @@ O `cargo ci` roda as checagens de fronteira (`CORE-01`, `PROTO-01`, `GER-03`, `G
 | `GER-03`, `CORE-03` | Rustc `unsafe_code = "deny"`, Clippy `undocumented_unsafe_blocks`, `xtask review-checks` | Se `unsafe` é realmente necessário e se o `// SAFETY:` prova a invariante |
 | `GER-04` | `xtask review-checks`: `tracing::*!` com inicial maiúscula | Idioma dos identificadores, docs `//!`/`///` em PT-BR e strings da UI em PT-BR |
 | `GER-06`, `SRV-01` | `xtask review-checks`: `#[derive(... Debug ...)]` em struct com `api_secret`, `livekit_api_secret`, `invite_code_hash`, `admin_code_hash`, `password_hash` ou `private_key` | Segredo interpolado em logs ou respostas HTTP, e `Debug` em tipos novos com credenciais |
-| `GER-07` | `cargo deny check bans` (CI), `xtask review-checks`: versão inline fora da raiz e versão `=` nas deps críticas | Se dependência nova é necessária e usa `default-features = false` |
+| `GER-07` | `cargo deny check bans` (`cargo ci`), `xtask review-checks`: versão inline fora da raiz e versão `=` nas deps críticas | Se dependência nova é necessária e usa `default-features = false` |
 | `GER-09`, `GER-10`, `GER-11`, `GER-12` | Clippy `large_futures`, `mutex_atomic`, `rc_buffer`, `rc_mutex` e demais lints do workspace | Truncamento em `as`, regras/limites removidos em refactor, constantes nomeadas e extração de lógica |
 | `CORE-01`, `UI-01` | `cargo deny` (`wrappers`), `xtask review-checks`: imports/paths de `livekit`/`libwebrtc` fora de `rooms-core` e na API `pub` | Vazamento indireto de semântica do SDK na API pública ou acoplamento interno na UI |
 | `CORE-12` | `xtask review-checks`: alerta quando `enum Command`/`Event` muda sem tocar os 8 pontos de ligação | Tratamento completo e coerente nos 8 pontos |

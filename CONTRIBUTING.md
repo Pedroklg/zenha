@@ -18,7 +18,7 @@ cargo fmt --all
 cargo ci
 ```
 
-`cargo ci` runs `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo test --workspace`.
+`cargo ci` runs the architecture boundary checks, `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace` and `cargo deny check` (install it with `cargo install cargo-deny`). There is no build or test workflow in GitHub Actions, so run it before every push.
 
 ## Code & Architecture Rules (`CLAUDE.md`)
 
