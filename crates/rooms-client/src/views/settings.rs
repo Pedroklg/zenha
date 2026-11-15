@@ -18,6 +18,7 @@ pub struct SettingsView<'a> {
     pub audio: &'a AudioState,
     pub hotkeys: &'a HotkeyState,
     pub close_to_tray: bool,
+    pub room_sounds: bool,
     pub muted_on_join: bool,
     pub invite_copied: bool,
 }
@@ -145,6 +146,13 @@ fn content(ui: &mut egui::Ui, view: &SettingsView<'_>, actions: &mut Vec<UserAct
         .changed()
     {
         actions.push(UserAction::SetMutedOnJoin(muted_on_join));
+    }
+    let mut room_sounds = view.room_sounds;
+    if ui
+        .checkbox(&mut room_sounds, "Sons de entrada e saída")
+        .changed()
+    {
+        actions.push(UserAction::SetRoomSounds(room_sounds));
     }
 
     ui.separator();

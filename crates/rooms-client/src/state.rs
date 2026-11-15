@@ -871,6 +871,7 @@ pub enum UserAction {
     SetHotkey(HotkeyAction, Option<String>),
     HotkeyPressed(HotkeyAction),
     SetCloseToTray(bool),
+    SetRoomSounds(bool),
     SetMutedOnJoin(bool),
     OpenSharePicker,
     CloseSharePicker,
@@ -899,6 +900,7 @@ pub struct AppState {
     pub audio: AudioState,
     pub hotkeys: HotkeyState,
     pub close_to_tray: bool,
+    pub room_sounds: bool,
     pub picker: SharePicker,
     client_id: String,
     last_room: String,
@@ -955,6 +957,7 @@ impl AppState {
             audio,
             hotkeys: HotkeyState::from_settings(settings),
             close_to_tray: settings.close_to_tray,
+            room_sounds: settings.room_sounds,
             picker: SharePicker::default(),
             client_id: settings.client_id.clone(),
             last_room: settings.last_room.clone(),
@@ -1102,9 +1105,29 @@ impl AppState {
             deafen_hotkey: self.hotkeys.deafen.clone(),
             ptt_hotkey: self.hotkeys.ptt.clone(),
             close_to_tray: self.close_to_tray,
+            room_sounds: self.room_sounds,
             dismissed_update_version: self.dismissed_update_version.clone(),
             ..self.form.to_settings()
         }
+    }
+
+    fn is_deafened(&self) -> bool {
+        match &self.screen {
+            Screen::InRoom(room) => room.deafened,
+            Screen::Onboarding | Screen::Lobby | Screen::Connecting { .. } => {
+                self.lobby_voice.deafened
+            }
+        }
+    }
+
+    fn room_cue(&self, cue: Cue) -> Option<UiCommand> {
+        (self.room_sounds && !self.is_deafened()).then_some(UiCommand::PlayCue(cue))
+    }
+
+    fn self_left_cue(&self) -> Option<UiCommand> {
+        matches!(self.screen, Screen::InRoom(_))
+            .then(|| self.room_cue(Cue::SelfLeft))
+            .flatten()
     }
 
     pub fn push_to_talk(&mut self, pressed: bool, now: Instant) -> Vec<UiCommand> {
@@ -1292,6 +1315,11 @@ impl AppState {
             }
             UserAction::SetCloseToTray(enabled) => {
                 self.close_to_tray = enabled;
+                self.pending_save = Some(self.settings_snapshot());
+                Vec::new()
+            }
+            UserAction::SetRoomSounds(enabled) => {
+                self.room_sounds = enabled;
                 self.pending_save = Some(self.settings_snapshot());
                 Vec::new()
             }
@@ -1518,6 +1546,7 @@ impl AppState {
 
     fn change_server(&mut self) -> Vec<UiCommand> {
         let was_in_room = matches!(self.screen, Screen::InRoom(_) | Screen::Connecting { .. });
+        let leave_cue = self.self_left_cue();
         if let Screen::InRoom(room) = &self.screen {
             self.lobby_voice = room.voice_state();
             self.session_mic_sent = room.mic_sent;
@@ -1537,7 +1566,7 @@ impl AppState {
         self.invite_copied = false;
         self.screen = Screen::Onboarding;
         if was_in_room {
-            vec![UiCommand::Leave]
+            leave_cue.into_iter().chain([UiCommand::Leave]).collect()
         } else {
             Vec::new()
         }
@@ -1669,27 +1698,31 @@ impl AppState {
     fn leave(&mut self) -> Vec<UiCommand> {
         self.picker.open = false;
         self.audio.mic_level = None;
+        let leave_cue = self.self_left_cue();
         if let Screen::InRoom(room) = &self.screen {
             self.lobby_voice = room.voice_state();
             self.session_mic_sent = room.mic_sent;
             self.session_deafened = room.deafened;
             self.screen = Screen::Lobby;
-            vec![UiCommand::Leave]
+            leave_cue.into_iter().chain([UiCommand::Leave]).collect()
         } else {
             Vec::new()
         }
     }
 
     fn switch_room(&mut self, room: String) -> Vec<UiCommand> {
-        let Screen::InRoom(state) = &mut self.screen else {
-            return Vec::new();
-        };
-        if state.room == room {
+        if !matches!(&self.screen, Screen::InRoom(state) if state.room != room) {
             return Vec::new();
         }
-        state.reset_for_room(room.clone());
-        state.status = ConnectionStatus::Connecting;
-        vec![UiCommand::Join { room }]
+        let leave_cue = self.self_left_cue();
+        if let Screen::InRoom(state) = &mut self.screen {
+            state.reset_for_room(room.clone());
+            state.status = ConnectionStatus::Connecting;
+        }
+        leave_cue
+            .into_iter()
+            .chain([UiCommand::Join { room }])
+            .collect()
     }
 
     pub fn apply_event(&mut self, event: UiEvent) {
@@ -1725,6 +1758,7 @@ impl AppState {
             } => self.on_joined(room, local_identity, participants),
             UiEvent::CaptureTargetsUpdated(targets) => self.picker.set_targets(targets),
             UiEvent::Failed { message } => {
+                let leave_cue = self.self_left_cue();
                 self.picker.open = false;
                 self.audio.mic_level = None;
                 match &self.screen {
@@ -1738,6 +1772,7 @@ impl AppState {
                         self.session_deafened = room.deafened;
                         self.lobby_error = Some(message);
                         self.screen = Screen::Lobby;
+                        self.pending_commands.extend(leave_cue);
                     }
                     Screen::Onboarding | Screen::Lobby => {}
                 }
@@ -1754,6 +1789,7 @@ impl AppState {
                 }
             }
             UiEvent::Left => {
+                let leave_cue = self.self_left_cue();
                 self.picker.open = false;
                 self.audio.mic_level = None;
                 match &self.screen {
@@ -1762,6 +1798,7 @@ impl AppState {
                         self.session_mic_sent = room.mic_sent;
                         self.session_deafened = room.deafened;
                         self.screen = Screen::Lobby;
+                        self.pending_commands.extend(leave_cue);
                     }
                     Screen::Connecting { .. } => {
                         self.screen = Screen::Lobby;
@@ -1770,8 +1807,13 @@ impl AppState {
                 }
             }
             other => {
-                if let Screen::InRoom(state) = &mut self.screen {
-                    apply_room_event(state, other);
+                let cue = if let Screen::InRoom(state) = &mut self.screen {
+                    apply_room_event(state, other)
+                } else {
+                    None
+                };
+                if let Some(cmd) = cue.and_then(|cue| self.room_cue(cue)) {
+                    self.pending_commands.push(cmd);
                 }
             }
         }
@@ -1785,6 +1827,7 @@ impl AppState {
             return;
         }
         if matches!(self.screen, Screen::InRoom(_) | Screen::Connecting { .. }) {
+            self.pending_commands.extend(self.self_left_cue());
             self.pending_commands.push(UiCommand::Leave);
         }
         self.rooms.clear();
@@ -1825,8 +1868,11 @@ impl AppState {
                 self.lobby_error = None;
                 self.screen = Screen::InRoom(Box::new(state));
                 self.last_refresh = None;
+                self.pending_commands.extend(self.room_cue(Cue::SelfJoined));
             }
             Screen::InRoom(state) => {
+                let is_new_room =
+                    state.room != room || state.status == ConnectionStatus::Connecting;
                 if state.room != room {
                     state.reset_for_room(room);
                 }
@@ -1834,40 +1880,88 @@ impl AppState {
                 state.participants = participants;
                 state.status = ConnectionStatus::Connected;
                 state.share = ShareState::default();
+                if is_new_room {
+                    self.pending_commands.extend(self.room_cue(Cue::SelfJoined));
+                }
             }
             Screen::Onboarding | Screen::Lobby => {}
         }
     }
 }
 
-fn apply_room_event(state: &mut RoomState, event: UiEvent) {
+fn apply_room_event(state: &mut RoomState, event: UiEvent) -> Option<Cue> {
     match event {
-        UiEvent::Connecting => state.status = ConnectionStatus::Connecting,
-        UiEvent::Reconnecting => state.status = ConnectionStatus::Reconnecting,
-        UiEvent::Reconnected => state.status = ConnectionStatus::Connected,
-        UiEvent::ParticipantJoined(p) | UiEvent::ParticipantUpdated(p) => {
+        UiEvent::Connecting => {
+            state.status = ConnectionStatus::Connecting;
+            None
+        }
+        UiEvent::Reconnecting => {
+            state.status = ConnectionStatus::Reconnecting;
+            None
+        }
+        UiEvent::Reconnected => {
+            state.status = ConnectionStatus::Connected;
+            None
+        }
+        UiEvent::ParticipantJoined(p) => {
+            let is_new_peer = state.status == ConnectionStatus::Connected
+                && p.identity != state.local_identity
+                && state
+                    .participants
+                    .iter()
+                    .all(|existing| existing.identity != p.identity);
             state.upsert_participant(p);
+            is_new_peer.then_some(Cue::PeerJoined)
+        }
+        UiEvent::ParticipantUpdated(p) => {
+            state.upsert_participant(p);
+            None
         }
         UiEvent::ParticipantLeft { identity } => {
+            let was_peer = state.status == ConnectionStatus::Connected
+                && identity != state.local_identity
+                && state
+                    .participants
+                    .iter()
+                    .any(|existing| existing.identity == identity);
             state.participants.retain(|p| p.identity != identity);
             state.share.apply(UiEvent::ParticipantLeft { identity });
+            was_peer.then_some(Cue::PeerLeft)
         }
-        UiEvent::ChatReceived(message) => state.chat.push_message(message, &state.local_identity),
+        UiEvent::ChatReceived(message) => {
+            state.chat.push_message(message, &state.local_identity);
+            None
+        }
         UiEvent::ChatHistory {
             messages,
             has_more,
             before: _,
-        } => state.chat.apply_history(messages, has_more),
-        UiEvent::ChatDeleted { id, sender } => state.chat.delete_message(&id, &sender),
-        UiEvent::ChatFailed { message } => state.chat.handle_failed(message),
-        UiEvent::FileTransfer(view) => state.chat.apply_transfer(view),
+        } => {
+            state.chat.apply_history(messages, has_more);
+            None
+        }
+        UiEvent::ChatDeleted { id, sender } => {
+            state.chat.delete_message(&id, &sender);
+            None
+        }
+        UiEvent::ChatFailed { message } => {
+            state.chat.handle_failed(message);
+            None
+        }
+        UiEvent::FileTransfer(view) => {
+            state.chat.apply_transfer(view);
+            None
+        }
         share @ (UiEvent::ScreenShareStarted
         | UiEvent::ScreenShareStopped
         | UiEvent::ShareFailed { .. }
         | UiEvent::RemoteScreenShareStarted { .. }
         | UiEvent::RemoteScreenShareStopped { .. }
         | UiEvent::WatchingStarted { .. }
-        | UiEvent::WatchingStopped) => state.share.apply(share),
+        | UiEvent::WatchingStopped) => {
+            state.share.apply(share);
+            None
+        }
         UiEvent::Joined { .. }
         | UiEvent::Left
         | UiEvent::Failed { .. }
@@ -1876,7 +1970,7 @@ fn apply_room_event(state: &mut RoomState, event: UiEvent) {
         | UiEvent::RoomsUpdated(_)
         | UiEvent::CaptureTargetsUpdated(_)
         | UiEvent::MicLevel { .. }
-        | UiEvent::AudioDevicesUpdated { .. } => {}
+        | UiEvent::AudioDevicesUpdated { .. } => None,
     }
 }
 
@@ -1903,6 +1997,7 @@ mod tests {
             deafen_hotkey: None,
             ptt_hotkey: None,
             close_to_tray: true,
+            room_sounds: true,
             dismissed_update_version: None,
         }
     }
@@ -2304,15 +2399,21 @@ mod tests {
     fn leave_and_left_event_return_to_lobby() {
         let mut state = state_with_code();
         in_room(&mut state);
+        state.take_pending_commands();
         assert_eq!(
             state.handle_action(UserAction::Leave),
-            vec![UiCommand::Leave]
+            vec![UiCommand::PlayCue(Cue::SelfLeft), UiCommand::Leave]
         );
         assert_eq!(state.screen, Screen::Lobby);
 
         in_room(&mut state);
+        state.take_pending_commands();
         state.apply_event(UiEvent::Left);
         assert_eq!(state.screen, Screen::Lobby);
+        assert_eq!(
+            state.take_pending_commands(),
+            vec![UiCommand::PlayCue(Cue::SelfLeft)]
+        );
     }
 
     #[test]
@@ -2406,9 +2507,12 @@ mod tests {
         let commands = state.handle_action(UserAction::SwitchRoom("jogos".to_owned()));
         assert_eq!(
             commands,
-            vec![UiCommand::Join {
-                room: "jogos".to_owned()
-            }]
+            vec![
+                UiCommand::PlayCue(Cue::SelfLeft),
+                UiCommand::Join {
+                    room: "jogos".to_owned()
+                }
+            ]
         );
         let current = room(&state);
         assert_eq!(current.room, "jogos");
@@ -3693,7 +3797,7 @@ mod tests {
         in_room(&mut state);
         assert_eq!(
             state.handle_action(UserAction::ChangeServer),
-            vec![UiCommand::Leave]
+            vec![UiCommand::PlayCue(Cue::SelfLeft), UiCommand::Leave]
         );
         assert_eq!(state.screen, Screen::Onboarding);
         assert!(!state.invite_copied);
@@ -4192,5 +4296,178 @@ mod tests {
             identity: "alice".to_owned(),
             percent: 200,
         }));
+    }
+
+    #[test]
+    fn room_sounds_play_for_join_switch_leave_and_peer_changes_not_on_reconnect() {
+        let mut state = state_with_code();
+        state.handle_action(UserAction::SubmitOnboarding);
+        state.handle_action(UserAction::JoinRoom("geral".to_owned()));
+        assert!(state.take_pending_commands().is_empty());
+
+        // Entering the room with peers already present only plays SelfJoined (no PeerJoined).
+        state.apply_event(UiEvent::Joined {
+            room: "geral".to_owned(),
+            local_identity: "pedro".to_owned(),
+            participants: vec![person("pedro"), person("ana")],
+        });
+        assert_eq!(
+            state.take_pending_commands(),
+            vec![UiCommand::PlayCue(Cue::SelfJoined)]
+        );
+
+        // Another participant joining/leaving while connected emits PeerJoined / PeerLeft.
+        state.apply_event(UiEvent::ParticipantJoined(person("bruno")));
+        assert_eq!(
+            state.take_pending_commands(),
+            vec![UiCommand::PlayCue(Cue::PeerJoined)]
+        );
+        // Joining event for local user or duplicate update must not emit PeerJoined.
+        state.apply_event(UiEvent::ParticipantJoined(person("pedro")));
+        state.apply_event(UiEvent::ParticipantUpdated(person("bruno")));
+        assert!(state.take_pending_commands().is_empty());
+
+        state.apply_event(UiEvent::ParticipantLeft {
+            identity: "bruno".to_owned(),
+        });
+        assert_eq!(
+            state.take_pending_commands(),
+            vec![UiCommand::PlayCue(Cue::PeerLeft)]
+        );
+
+        // Reconnect and subsequent ParticipantList/Joined must not emit any join/leave cue.
+        state.apply_event(UiEvent::Reconnecting);
+        state.apply_event(UiEvent::ParticipantJoined(person("carla")));
+        state.apply_event(UiEvent::ParticipantLeft {
+            identity: "ana".to_owned(),
+        });
+        assert!(state.take_pending_commands().is_empty());
+        state.apply_event(UiEvent::Reconnected);
+        state.apply_event(UiEvent::Joined {
+            room: "geral".to_owned(),
+            local_identity: "pedro".to_owned(),
+            participants: vec![person("pedro"), person("carla")],
+        });
+        assert!(state.take_pending_commands().is_empty());
+
+        // Room switch emits SelfLeft immediately, then SelfJoined once the new room connects.
+        let switch_cmds = state.handle_action(UserAction::SwitchRoom("jogos".to_owned()));
+        assert_eq!(
+            switch_cmds,
+            vec![
+                UiCommand::PlayCue(Cue::SelfLeft),
+                UiCommand::Join {
+                    room: "jogos".to_owned(),
+                },
+            ]
+        );
+        state.apply_event(UiEvent::Joined {
+            room: "jogos".to_owned(),
+            local_identity: "pedro".to_owned(),
+            participants: vec![person("pedro"), person("ana")],
+        });
+        assert_eq!(
+            state.take_pending_commands(),
+            vec![UiCommand::PlayCue(Cue::SelfJoined)]
+        );
+
+        // CancelConnect from Lobby->Connecting must not emit SelfLeft.
+        assert_eq!(
+            state.handle_action(UserAction::Leave),
+            vec![UiCommand::PlayCue(Cue::SelfLeft), UiCommand::Leave]
+        );
+        state.handle_action(UserAction::JoinRoom("musica".to_owned()));
+        assert_eq!(
+            state.handle_action(UserAction::CancelConnect),
+            vec![UiCommand::Leave]
+        );
+    }
+
+    #[test]
+    fn room_sounds_are_suppressed_when_deafened_or_disabled_but_mute_cues_remain() {
+        // Suppressed when deafened.
+        let mut state = state_with_code();
+        state.handle_action(UserAction::SubmitOnboarding);
+        state.handle_action(UserAction::ToggleDeafen);
+        state.handle_action(UserAction::JoinRoom("geral".to_owned()));
+        state.apply_event(UiEvent::Joined {
+            room: "geral".to_owned(),
+            local_identity: "pedro".to_owned(),
+            participants: vec![person("pedro"), person("ana")],
+        });
+        state.apply_event(UiEvent::ParticipantJoined(person("bruno")));
+        state.apply_event(UiEvent::ParticipantLeft {
+            identity: "ana".to_owned(),
+        });
+        assert!(state.take_pending_commands().is_empty());
+        assert_eq!(
+            state.handle_action(UserAction::SwitchRoom("jogos".to_owned())),
+            vec![UiCommand::Join {
+                room: "jogos".to_owned(),
+            }]
+        );
+        assert_eq!(
+            state.handle_action(UserAction::Leave),
+            vec![UiCommand::Leave]
+        );
+        // Un-deafening still plays Undeafened cue.
+        assert_eq!(
+            state.handle_action(UserAction::ToggleDeafen),
+            vec![
+                UiCommand::SetDeafened(false),
+                UiCommand::SetMuted(false),
+                UiCommand::PlayCue(Cue::Undeafened),
+            ]
+        );
+
+        // Suppressed when room_sounds setting is disabled, and setting persists.
+        assert!(
+            state
+                .handle_action(UserAction::SetRoomSounds(false))
+                .is_empty()
+        );
+        assert!(!state.room_sounds);
+        let saved = state.take_pending_save().unwrap();
+        assert!(!saved.room_sounds);
+
+        let mut reloaded = AppState::new(&saved, Some("segredo".to_owned()));
+        assert!(!reloaded.room_sounds);
+        reloaded.handle_action(UserAction::JoinRoom("geral".to_owned()));
+        reloaded.apply_event(UiEvent::Joined {
+            room: "geral".to_owned(),
+            local_identity: "pedro".to_owned(),
+            participants: vec![person("pedro")],
+        });
+        reloaded.apply_event(UiEvent::ParticipantJoined(person("ana")));
+        reloaded.apply_event(UiEvent::ParticipantLeft {
+            identity: "ana".to_owned(),
+        });
+        assert!(reloaded.take_pending_commands().is_empty());
+
+        // Mute / unmute and deafen cues still work when room_sounds is false.
+        assert_eq!(
+            reloaded.handle_action(UserAction::ToggleMute),
+            vec![UiCommand::SetMuted(true), UiCommand::PlayCue(Cue::Muted)]
+        );
+        assert_eq!(
+            reloaded.handle_action(UserAction::ToggleDeafen),
+            vec![
+                UiCommand::SetDeafened(true),
+                UiCommand::SetMuted(true),
+                UiCommand::PlayCue(Cue::Deafened),
+            ]
+        );
+        assert_eq!(
+            reloaded.handle_action(UserAction::ToggleDeafen),
+            vec![
+                UiCommand::SetDeafened(false),
+                UiCommand::SetMuted(true),
+                UiCommand::PlayCue(Cue::Undeafened),
+            ]
+        );
+        assert_eq!(
+            reloaded.handle_action(UserAction::Leave),
+            vec![UiCommand::Leave]
+        );
     }
 }

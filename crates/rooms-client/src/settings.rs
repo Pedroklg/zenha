@@ -80,6 +80,7 @@ pub struct Settings {
     pub deafen_hotkey: Option<String>,
     pub ptt_hotkey: Option<String>,
     pub close_to_tray: bool,
+    pub room_sounds: bool,
     pub dismissed_update_version: Option<String>,
 }
 
@@ -102,6 +103,7 @@ impl Default for Settings {
             deafen_hotkey: None,
             ptt_hotkey: None,
             close_to_tray: true,
+            room_sounds: true,
             dismissed_update_version: None,
         }
     }
@@ -263,6 +265,7 @@ mod tests {
             deafen_hotkey: Some("alt+KeyD".to_owned()),
             ptt_hotkey: Some("F9".to_owned()),
             close_to_tray: false,
+            room_sounds: false,
             dismissed_update_version: Some("0.2.0".to_owned()),
         };
         save(&path, &settings).unwrap();
@@ -343,6 +346,23 @@ mod tests {
         assert_eq!(loaded.voice_mode, VoiceMode::VoiceActivity);
         assert_eq!(loaded.ptt_hotkey, None);
         assert!(loaded.close_to_tray);
+        assert!(loaded.room_sounds);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn room_sounds_defaults_to_true_and_round_trips_false() {
+        let dir = temp_dir("room_sounds");
+        let path = dir.join(FILE_NAME);
+        std::fs::write(&path, r#"{"display_name":"Ana"}"#).unwrap();
+        assert!(load(&path).room_sounds);
+
+        let settings = Settings {
+            room_sounds: false,
+            ..Settings::default()
+        };
+        save(&path, &settings).unwrap();
+        assert!(!load(&path).room_sounds);
         std::fs::remove_dir_all(dir).unwrap();
     }
 
