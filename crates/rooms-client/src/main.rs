@@ -3,6 +3,7 @@
 mod app;
 mod chat_images;
 mod cli;
+mod clipboard_image;
 mod core_session;
 mod credentials;
 mod demo;
@@ -69,6 +70,15 @@ fn main() -> anyhow::Result<()> {
             .flatten();
         (raw_settings_path, password)
     };
+
+    if let Err(err) = std::thread::Builder::new()
+        .name("cleanup-pasted-images".into())
+        .spawn(|| {
+            clipboard_image::cleanup_old_pastes(&clipboard_image::paste_temp_dir());
+        })
+    {
+        tracing::debug!(%err, "could not start pasted image cleanup thread");
+    }
 
     let options = eframe::NativeOptions {
         viewport: window_viewport(),

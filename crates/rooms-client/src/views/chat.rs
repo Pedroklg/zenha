@@ -390,6 +390,28 @@ fn file_entry(
         });
 }
 
+const TEMPORARY_BUTTON_SIZE: f32 = 24.0;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct TemporaryToggleState {
+    active: bool,
+    tooltip: &'static str,
+}
+
+fn temporary_toggle_state(save: bool) -> TemporaryToggleState {
+    if save {
+        TemporaryToggleState {
+            active: false,
+            tooltip: "Mensagem será salva",
+        }
+    } else {
+        TemporaryToggleState {
+            active: true,
+            tooltip: "Mensagem temporária (clique para salvar)",
+        }
+    }
+}
+
 fn input(ui: &mut egui::Ui, chat: &mut ChatState, actions: &mut Vec<UserAction>) -> bool {
     let mut submitted = false;
     ui.horizontal(|ui| {
@@ -401,7 +423,18 @@ fn input(ui: &mut egui::Ui, chat: &mut ChatState, actions: &mut Vec<UserAction>)
         }
         submitted = ui
             .with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.checkbox(&mut chat.save, "Salvar");
+                let toggle = temporary_toggle_state(chat.save);
+                if icons::accent_icon_button(
+                    ui,
+                    TEMPORARY_BUTTON_SIZE,
+                    icons::temporary_clock,
+                    toggle.active,
+                    toggle.tooltip,
+                )
+                .clicked()
+                {
+                    chat.save = !chat.save;
+                }
                 ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                     let response = ui.add(
                         egui::TextEdit::singleline(&mut chat.draft)
@@ -429,6 +462,19 @@ fn input(ui: &mut egui::Ui, chat: &mut ChatState, actions: &mut Vec<UserAction>)
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn temporary_toggle_reflects_save_flag_and_tooltip() {
+        let mut save = false;
+        let active = temporary_toggle_state(save);
+        assert!(active.active);
+        assert_eq!(active.tooltip, "Mensagem temporária (clique para salvar)");
+
+        save = !save;
+        let saved = temporary_toggle_state(save);
+        assert!(!saved.active);
+        assert_eq!(saved.tooltip, "Mensagem será salva");
+    }
 
     #[test]
     fn author_color_uses_self_color_for_local_user_and_palette_for_others() {

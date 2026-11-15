@@ -1608,6 +1608,20 @@ impl AppState {
         }
     }
 
+    pub fn can_paste_chat_image(&self) -> bool {
+        if self.audio.open || self.picker.open {
+            return false;
+        }
+        match &self.screen {
+            Screen::InRoom(room) => {
+                room.chat.open
+                    && room.chat.viewer.is_none()
+                    && !room.share.watching.as_ref().is_some_and(|w| w.fullscreen)
+            }
+            Screen::Onboarding | Screen::Lobby | Screen::Connecting { .. } => false,
+        }
+    }
+
     fn apply_invite(&mut self, invite: crate::invite::Invite) {
         self.form.server_url = invite.server.clone();
         self.form.invite_code = invite.password.clone();
@@ -2783,6 +2797,48 @@ mod tests {
         state.apply_event(UiEvent::FileTransfer(transfer("t2", true, progress)));
         assert_eq!(room(&state).chat.unread, 1);
         assert_eq!(room(&state).chat.messages.len(), 3);
+    }
+
+    #[test]
+    fn can_paste_chat_image_requires_open_chat_without_modals() {
+        let mut state = state_with_code();
+        assert!(!state.can_paste_chat_image());
+
+        state.handle_action(UserAction::SubmitOnboarding);
+        assert!(!state.can_paste_chat_image());
+
+        in_room(&mut state);
+        assert!(matches!(state.screen, Screen::InRoom(_)));
+        if let Screen::InRoom(room) = &mut state.screen {
+            assert!(!room.chat.save);
+            room.chat.open = false;
+        }
+        assert!(!state.can_paste_chat_image());
+
+        if let Screen::InRoom(room) = &mut state.screen {
+            room.chat.open = true;
+        }
+        assert!(state.can_paste_chat_image());
+
+        state.audio.open = true;
+        assert!(!state.can_paste_chat_image());
+
+        state.audio.open = false;
+        state.picker.open = true;
+        assert!(!state.can_paste_chat_image());
+
+        state.picker.open = false;
+        if let Screen::InRoom(room) = &mut state.screen {
+            room.chat.viewer = Some(ImageViewer {
+                id: "img-1".to_owned(),
+                name: "print.png".to_owned(),
+                size: 128,
+                path: PathBuf::from("print.png"),
+                outgoing: true,
+                error: None,
+            });
+        }
+        assert!(!state.can_paste_chat_image());
     }
 
     #[test]
