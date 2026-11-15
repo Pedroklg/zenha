@@ -3,15 +3,16 @@ use std::collections::BTreeMap;
 use eframe::egui::{
     self, Align, Color32, CornerRadius, Layout, Margin, RichText, Sense, Stroke, Vec2,
 };
-use rooms_protocol::RoomSummary;
+use rooms_protocol::{MAX_ROOM_TITLE_LEN, RoomSummary};
 
 use super::chat;
 use super::share::VideoRenderer;
 use crate::chat_images::ChatImages;
 use crate::icons;
 use crate::state::{
-    ConnectionStatus, DEFAULT_PARTICIPANT_VOLUME, LobbyVoiceState, LocalShare,
+    AdminDialog, ConnectionStatus, DEFAULT_PARTICIPANT_VOLUME, LobbyVoiceState, LocalShare,
     MAX_PARTICIPANT_VOLUME, RoomState, ShareState, UserAction, WatchState, participant_volume_for,
+    room_display_title,
 };
 use crate::theme;
 use crate::ui_model::{FeedHandle, ParticipantView};
@@ -40,6 +41,7 @@ pub fn show(
     participant_volumes: &BTreeMap<String, u16>,
     ptt_hint: Option<&str>,
     available_update: Option<&AvailableUpdate>,
+    is_admin: bool,
 ) -> Vec<UserAction> {
     let mut actions = Vec::new();
     if state.share.preview.is_none() {
@@ -79,10 +81,12 @@ pub fn show(
             current_room: Some(&state.room),
             local_identity: &state.local_identity,
             participants: &state.participants,
+            share: Some(&state.share),
             participant_volumes,
             rooms,
             server_host,
             available_update,
+            is_admin,
         },
         &mut actions,
     );
@@ -93,6 +97,7 @@ pub fn show(
             &mut state.chat,
             &state.participants,
             &state.local_identity,
+            is_admin,
             images,
         ));
     }
@@ -101,6 +106,7 @@ pub fn show(
         watching_center(
             ui,
             state,
+            rooms,
             &watch,
             ShareRenderers {
                 watch: renderer,
@@ -108,14 +114,17 @@ pub fn show(
             },
             stream_volume,
             participant_volumes,
+            is_admin,
             &mut actions,
         );
     } else {
         main_center(
             ui,
             state,
+            rooms,
             preview_renderer,
             participant_volumes,
+            is_admin,
             &mut actions,
         );
     }
@@ -123,6 +132,10 @@ pub fn show(
     actions
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "egui view takes room state, admin context and actions directly"
+)]
 pub fn show_lobby(
     ui: &mut egui::Ui,
     display_name: &str,
@@ -130,7 +143,9 @@ pub fn show_lobby(
     rooms: &[RoomSummary],
     server_host: &str,
     error: Option<&str>,
+    notice: Option<&str>,
     available_update: Option<&AvailableUpdate>,
+    is_admin: bool,
 ) -> Vec<UserAction> {
     let mut actions = Vec::new();
     let user = SidebarUser {
@@ -148,10 +163,12 @@ pub fn show_lobby(
             current_room: None,
             local_identity: "",
             participants: &[],
+            share: None,
             participant_volumes: &empty_volumes,
             rooms,
             server_host,
             available_update,
+            is_admin,
         },
         &mut actions,
     );
@@ -173,6 +190,17 @@ pub fn show_lobby(
                         ui.label(RichText::new(message).size(13.0).color(theme::ERROR));
                     });
                 ui.add_space(16.0);
+            }
+            if let Some(message) = notice {
+                dismissible_banner(
+                    ui,
+                    message,
+                    theme::ERROR,
+                    theme::ERROR_BG,
+                    theme::ERROR_BORDER,
+                    || UserAction::DismissLobbyNotice,
+                    &mut actions,
+                );
             }
             ui.allocate_ui_with_layout(
                 ui.available_size(),
@@ -203,10 +231,12 @@ struct SidebarArgs<'a> {
     current_room: Option<&'a str>,
     local_identity: &'a str,
     participants: &'a [ParticipantView],
+    share: Option<&'a ShareState>,
     participant_volumes: &'a BTreeMap<String, u16>,
     rooms: &'a [RoomSummary],
     server_host: &'a str,
     available_update: Option<&'a AvailableUpdate>,
+    is_admin: bool,
 }
 
 fn sidebar(ui: &mut egui::Ui, args: SidebarArgs<'_>, actions: &mut Vec<UserAction>) {
@@ -281,8 +311,10 @@ fn sidebar(ui: &mut egui::Ui, args: SidebarArgs<'_>, actions: &mut Vec<UserActio
                             current_room: args.current_room,
                             local_identity: args.local_identity,
                             participants: args.participants,
+                            share: args.share,
                             participant_volumes: args.participant_volumes,
                             rooms: args.rooms,
+                            is_admin: args.is_admin,
                         },
                         actions,
                     );
@@ -403,28 +435,48 @@ struct RoomsListView<'a> {
     current_room: Option<&'a str>,
     local_identity: &'a str,
     participants: &'a [ParticipantView],
+    share: Option<&'a ShareState>,
     participant_volumes: &'a BTreeMap<String, u16>,
     rooms: &'a [RoomSummary],
+    is_admin: bool,
 }
 
 fn rooms_list(ui: &mut egui::Ui, view: RoomsListView<'_>, actions: &mut Vec<UserAction>) {
-    ui.label(
-        RichText::new("SALAS")
-            .font(theme::semibold(11.0))
-            .color(theme::TEXT_WEAK),
-    );
+    ui.horizontal(|ui| {
+        ui.label(
+            RichText::new("SALAS")
+                .font(theme::semibold(11.0))
+                .color(theme::TEXT_WEAK),
+        );
+        if view.is_admin {
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                let add = egui::Button::new(RichText::new("+").font(theme::semibold(13.0)))
+                    .small()
+                    .min_size(Vec2::new(22.0, 20.0));
+                if ui.add(add).on_hover_text("Criar sala").clicked() {
+                    actions.push(UserAction::OpenCreateRoom);
+                }
+            });
+        }
+    });
     ui.add_space(6.0);
 
     if view.rooms.is_empty() {
         ui.weak("Carregando salas...");
     }
 
+    let room_count = view.rooms.len();
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            for summary in view.rooms {
+            for (room_idx, summary) in view.rooms.iter().enumerate() {
                 let is_current = view.current_room == Some(summary.name.as_str());
-                let row_resp = room_row(ui, &summary.name, summary.participants.len(), is_current);
+                let row_resp = room_row(
+                    ui,
+                    summary.display_title(),
+                    summary.participants.len(),
+                    is_current,
+                );
                 if row_resp.clicked() && !is_current {
                     let action = if view.current_room.is_some() {
                         UserAction::SwitchRoom(summary.name.clone())
@@ -432,6 +484,39 @@ fn rooms_list(ui: &mut egui::Ui, view: RoomsListView<'_>, actions: &mut Vec<User
                         UserAction::JoinRoom(summary.name.clone())
                     };
                     actions.push(action);
+                }
+                if view.is_admin {
+                    row_resp.context_menu(|ui| {
+                        if ui.button("Renomear").clicked() {
+                            actions.push(UserAction::OpenRenameRoom(summary.name.clone()));
+                            ui.close();
+                        }
+                        if ui
+                            .add_enabled(room_idx > 0, egui::Button::new("Mover para cima"))
+                            .clicked()
+                        {
+                            actions.push(UserAction::MoveRoomUp(summary.name.clone()));
+                            ui.close();
+                        }
+                        if ui
+                            .add_enabled(
+                                room_idx + 1 < room_count,
+                                egui::Button::new("Mover para baixo"),
+                            )
+                            .clicked()
+                        {
+                            actions.push(UserAction::MoveRoomDown(summary.name.clone()));
+                            ui.close();
+                        }
+                        ui.separator();
+                        if ui
+                            .button(RichText::new("Apagar").color(theme::ERROR))
+                            .clicked()
+                        {
+                            actions.push(UserAction::OpenDeleteRoom(summary.name.clone()));
+                            ui.close();
+                        }
+                    });
                 }
                 if !summary.participants.is_empty() {
                     ui.add_space(2.0);
@@ -464,7 +549,19 @@ fn rooms_list(ui: &mut egui::Ui, view: RoomsListView<'_>, actions: &mut Vec<User
                             },
                         );
                         ui.push_id(row_id, |ui| {
-                            occupant_row(ui, name, speaking, volume_target, actions);
+                            occupant_row(
+                                ui,
+                                name,
+                                speaking,
+                                volume_target,
+                                OccupantAdminCtx {
+                                    is_admin: view.is_admin,
+                                    share: view.share,
+                                    current_room: &summary.name,
+                                    rooms: view.rooms,
+                                },
+                                actions,
+                            );
                         });
                     }
                     ui.add_space(6.0);
@@ -479,7 +576,7 @@ fn room_row(ui: &mut egui::Ui, name: &str, count: usize, is_current: bool) -> eg
     let desired = Vec2::new(ui.available_width(), 44.0);
     let (rect, response) = ui.allocate_exact_size(desired, Sense::click());
     if ui.is_rect_visible(rect) {
-        let painter = ui.painter();
+        let painter = ui.painter().clone();
         let bg = if is_current {
             theme::ACTIVE_ROOM_BG
         } else if response.hovered() {
@@ -500,15 +597,21 @@ fn room_row(ui: &mut egui::Ui, name: &str, count: usize, is_current: bool) -> eg
         } else {
             theme::TEXT_WEAK
         };
-        let left_pos = egui::pos2(rect.left() + 12.0, rect.center().y);
-        let right_pos = egui::pos2(rect.right() - 12.0, rect.center().y);
-        painter.text(
-            left_pos,
-            egui::Align2::LEFT_CENTER,
-            name,
-            name_font,
-            name_color,
+        let left_rect = egui::Rect::from_min_max(
+            egui::pos2(rect.left() + 12.0, rect.top()),
+            egui::pos2((rect.right() - 36.0).max(rect.left() + 32.0), rect.bottom()),
         );
+        ui.scope_builder(egui::UiBuilder::new().max_rect(left_rect), |ui| {
+            ui.set_clip_rect(left_rect);
+            ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                ui.add(
+                    egui::Label::new(RichText::new(name).font(name_font).color(name_color))
+                        .truncate()
+                        .selectable(false),
+                );
+            });
+        });
+        let right_pos = egui::pos2(rect.right() - 12.0, rect.center().y);
         painter.text(
             right_pos,
             egui::Align2::RIGHT_CENTER,
@@ -520,11 +623,19 @@ fn room_row(ui: &mut egui::Ui, name: &str, count: usize, is_current: bool) -> eg
     response
 }
 
+struct OccupantAdminCtx<'a> {
+    is_admin: bool,
+    share: Option<&'a ShareState>,
+    current_room: &'a str,
+    rooms: &'a [RoomSummary],
+}
+
 fn occupant_row(
     ui: &mut egui::Ui,
     name: &str,
     speaking: bool,
     volume_target: Option<(&ParticipantView, u16)>,
+    admin: OccupantAdminCtx<'_>,
     actions: &mut Vec<UserAction>,
 ) {
     let interactive = volume_target.is_some();
@@ -579,11 +690,20 @@ fn occupant_row(
         .response;
 
     if let Some((participant, volume)) = volume_target {
+        let is_sharing = admin
+            .share
+            .is_some_and(|share| share.is_sharing_remote(&participant.identity));
         participant_volume_menu(
             &row_response,
-            VolumeMenuScope::Sidebar,
-            &participant.identity,
-            volume,
+            ParticipantMenuCtx {
+                scope: VolumeMenuScope::Sidebar,
+                identity: &participant.identity,
+                current_volume: volume,
+                is_admin: admin.is_admin,
+                is_sharing,
+                current_room: admin.current_room,
+                rooms: admin.rooms,
+            },
             actions,
         );
     }
@@ -592,10 +712,13 @@ fn occupant_row(
 fn main_center(
     ui: &mut egui::Ui,
     state: &RoomState,
+    rooms: &[RoomSummary],
     preview_renderer: &mut VideoRenderer,
     participant_volumes: &BTreeMap<String, u16>,
+    is_admin: bool,
     actions: &mut Vec<UserAction>,
 ) {
+    let title = room_display_title(rooms, &state.room);
     egui::Panel::top("room_header")
         .exact_size(HEADER_HEIGHT)
         .show_separator_line(false)
@@ -614,7 +737,7 @@ fn main_center(
                 ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
                     ui.add(
                         egui::Label::new(
-                            RichText::new(&state.room)
+                            RichText::new(title)
                                 .font(theme::display(20.0))
                                 .color(theme::TEXT),
                         )
@@ -714,8 +837,9 @@ fn main_center(
         )
         .show(ui, |ui| {
             share_error_banner(ui, state.share.error.as_deref(), actions);
+            collapsed_chat_notice_banner(ui, state, actions);
             local_share_preview(ui, &state.share, preview_renderer, false, actions);
-            participants_grid(ui, state, participant_volumes, actions);
+            participants_grid(ui, state, rooms, participant_volumes, is_admin, actions);
         });
 }
 
@@ -724,13 +848,19 @@ struct ShareRenderers<'a> {
     preview: &'a mut VideoRenderer,
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "egui view takes room state, admin context and actions directly"
+)]
 fn watching_center(
     ui: &mut egui::Ui,
     state: &RoomState,
+    rooms: &[RoomSummary],
     watch: &WatchState,
     renderers: ShareRenderers<'_>,
     stream_volume: u8,
     participant_volumes: &BTreeMap<String, u16>,
+    is_admin: bool,
     actions: &mut Vec<UserAction>,
 ) {
     let presenter_name = state
@@ -792,10 +922,11 @@ fn watching_center(
         )
         .show(ui, |ui| {
             share_error_banner(ui, state.share.error.as_deref(), actions);
+            collapsed_chat_notice_banner(ui, state, actions);
             stream_volume_box(ui, stream_volume, actions);
             ui.add_space(8.0);
             local_share_preview(ui, &state.share, renderers.preview, true, actions);
-            compact_participants_strip(ui, state, participant_volumes, actions);
+            compact_participants_strip(ui, state, rooms, participant_volumes, is_admin, actions);
             ui.add_space(10.0);
 
             egui::Frame::new()
@@ -858,7 +989,9 @@ fn stream_volume_box(ui: &mut egui::Ui, stream_volume: u8, actions: &mut Vec<Use
 fn compact_participants_strip(
     ui: &mut egui::Ui,
     state: &RoomState,
+    rooms: &[RoomSummary],
     participant_volumes: &BTreeMap<String, u16>,
+    is_admin: bool,
     actions: &mut Vec<UserAction>,
 ) {
     ui.horizontal_wrapped(|ui| {
@@ -911,9 +1044,15 @@ fn compact_participants_strip(
             if !is_self {
                 participant_volume_menu(
                     &chip_response,
-                    VolumeMenuScope::Strip,
-                    &participant.identity,
-                    volume,
+                    ParticipantMenuCtx {
+                        scope: VolumeMenuScope::Strip,
+                        identity: &participant.identity,
+                        current_volume: volume,
+                        is_admin,
+                        is_sharing: state.share.is_sharing_remote(&participant.identity),
+                        current_room: &state.room,
+                        rooms,
+                    },
                     actions,
                 );
             }
@@ -922,19 +1061,59 @@ fn compact_participants_strip(
 }
 
 fn share_error_banner(ui: &mut egui::Ui, error: Option<&str>, actions: &mut Vec<UserAction>) {
-    let Some(error) = error else {
+    if let Some(error) = error {
+        dismissible_banner(
+            ui,
+            error,
+            theme::ERROR,
+            theme::ERROR_BG,
+            theme::ERROR_BORDER,
+            || UserAction::DismissShareError,
+            actions,
+        );
+    }
+}
+
+fn collapsed_chat_notice_banner(
+    ui: &mut egui::Ui,
+    state: &RoomState,
+    actions: &mut Vec<UserAction>,
+) {
+    if state.chat.open {
         return;
-    };
+    }
+    if let Some(message) = state.chat.notice.as_deref() {
+        dismissible_banner(
+            ui,
+            message,
+            theme::TEXT,
+            theme::PANEL_DARK,
+            theme::BORDER,
+            || UserAction::DismissChatNotice,
+            actions,
+        );
+    }
+}
+
+fn dismissible_banner(
+    ui: &mut egui::Ui,
+    message: &str,
+    text_color: Color32,
+    fill: Color32,
+    border: Color32,
+    dismiss_action: impl FnOnce() -> UserAction,
+    actions: &mut Vec<UserAction>,
+) {
     egui::Frame::new()
-        .fill(theme::ERROR_BG)
-        .stroke(Stroke::new(1.0, theme::ERROR_BORDER))
+        .fill(fill)
+        .stroke(Stroke::new(1.0, border))
         .corner_radius(CornerRadius::same(8))
         .inner_margin(Margin::symmetric(12, 8))
         .show(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.colored_label(theme::ERROR, error);
+                ui.colored_label(text_color, message);
                 if ui.small_button("Fechar").clicked() {
-                    actions.push(UserAction::DismissShareError);
+                    actions.push(dismiss_action());
                 }
             });
         });
@@ -1034,7 +1213,9 @@ fn preview_box(
 fn participants_grid(
     ui: &mut egui::Ui,
     state: &RoomState,
+    rooms: &[RoomSummary],
     participant_volumes: &BTreeMap<String, u16>,
+    is_admin: bool,
     actions: &mut Vec<UserAction>,
 ) {
     egui::ScrollArea::vertical()
@@ -1056,7 +1237,16 @@ fn participants_grid(
                         let volume =
                             participant_volume_for(participant_volumes, &participant.identity);
                         ui.allocate_ui(Vec2::new(card_width, 84.0), |ui| {
-                            participant_card(ui, state, participant, volume, card_width, actions);
+                            participant_card(
+                                ui,
+                                state,
+                                rooms,
+                                participant,
+                                volume,
+                                card_width,
+                                is_admin,
+                                actions,
+                            );
                         });
                     }
                 });
@@ -1065,12 +1255,18 @@ fn participants_grid(
         });
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "egui view takes room state, admin context and actions directly"
+)]
 fn participant_card(
     ui: &mut egui::Ui,
     state: &RoomState,
+    rooms: &[RoomSummary],
     participant: &ParticipantView,
     volume: u16,
     width: f32,
+    is_admin: bool,
     actions: &mut Vec<UserAction>,
 ) {
     let is_self = !state.local_identity.is_empty() && participant.identity == state.local_identity;
@@ -1171,9 +1367,15 @@ fn participant_card(
     if !is_self {
         participant_volume_menu(
             &card_response,
-            VolumeMenuScope::Grid,
-            &participant.identity,
-            volume,
+            ParticipantMenuCtx {
+                scope: VolumeMenuScope::Grid,
+                identity: &participant.identity,
+                current_volume: volume,
+                is_admin,
+                is_sharing: is_sharing_remote,
+                current_room: &state.room,
+                rooms,
+            },
             actions,
         );
     }
@@ -1198,15 +1400,23 @@ fn participant_volume_badge(volume: u16, is_self: bool) -> Option<String> {
     }
 }
 
+struct ParticipantMenuCtx<'a> {
+    scope: VolumeMenuScope,
+    identity: &'a str,
+    current_volume: u16,
+    is_admin: bool,
+    is_sharing: bool,
+    current_room: &'a str,
+    rooms: &'a [RoomSummary],
+}
+
 fn participant_volume_menu(
     card_response: &egui::Response,
-    scope: VolumeMenuScope,
-    identity: &str,
-    current_volume: u16,
+    menu: ParticipantMenuCtx<'_>,
     actions: &mut Vec<UserAction>,
 ) {
     let ctx = &card_response.ctx;
-    let popup_id = participant_volume_popup_id(scope, identity);
+    let popup_id = participant_volume_popup_id(menu.scope, menu.identity);
     let dirty_id = popup_id.with("dirty");
     let mut needs_save = ctx.data_mut(|d| d.get_temp::<bool>(dirty_id).unwrap_or(false));
 
@@ -1229,15 +1439,15 @@ fn participant_volume_menu(
                     .color(theme::TEXT),
             );
             ui.spacing_mut().slider_width = 160.0;
-            let mut value = current_volume;
+            let mut value = menu.current_volume;
             let slider = ui.add(
                 egui::Slider::new(&mut value, 0..=MAX_PARTICIPANT_VOLUME)
                     .step_by(5.0)
                     .suffix("%"),
             );
-            if value != current_volume {
+            if value != menu.current_volume {
                 actions.push(UserAction::SetParticipantVolume {
-                    identity: identity.to_owned(),
+                    identity: menu.identity.to_owned(),
                     percent: value,
                 });
                 needs_save = true;
@@ -1247,17 +1457,60 @@ fn participant_volume_menu(
                 needs_save = false;
             }
             if ui.button("Restaurar 100%").clicked() {
-                if current_volume != DEFAULT_PARTICIPANT_VOLUME
+                if menu.current_volume != DEFAULT_PARTICIPANT_VOLUME
                     || value != DEFAULT_PARTICIPANT_VOLUME
                 {
                     actions.push(UserAction::SetParticipantVolume {
-                        identity: identity.to_owned(),
+                        identity: menu.identity.to_owned(),
                         percent: DEFAULT_PARTICIPANT_VOLUME,
                     });
                 }
                 actions.push(UserAction::SaveAudioSettings);
                 needs_save = false;
                 ui.close();
+            }
+
+            if menu.is_admin {
+                ui.separator();
+                if ui.button("Mutar microfone").clicked() {
+                    actions.push(UserAction::AdminMuteParticipant {
+                        identity: menu.identity.to_owned(),
+                    });
+                    ui.close();
+                }
+                if menu.is_sharing && ui.button("Parar transmissão").clicked() {
+                    actions.push(UserAction::AdminStopShareParticipant {
+                        identity: menu.identity.to_owned(),
+                    });
+                    ui.close();
+                }
+                let other_rooms: Vec<&RoomSummary> = menu
+                    .rooms
+                    .iter()
+                    .filter(|r| r.name != menu.current_room)
+                    .collect();
+                if !other_rooms.is_empty() {
+                    ui.menu_button("Mover para…", |ui| {
+                        for target in other_rooms {
+                            if ui.button(target.display_title()).clicked() {
+                                actions.push(UserAction::AdminMoveParticipant {
+                                    identity: menu.identity.to_owned(),
+                                    to_room: target.name.clone(),
+                                });
+                                ui.close();
+                            }
+                        }
+                    });
+                }
+                if ui
+                    .button(RichText::new("Remover da sala").color(theme::ERROR))
+                    .clicked()
+                {
+                    actions.push(UserAction::OpenKickParticipant {
+                        identity: menu.identity.to_owned(),
+                    });
+                    ui.close();
+                }
             }
         });
 
@@ -1272,6 +1525,143 @@ fn participant_volume_menu(
             d.insert_temp(dirty_id, true);
         } else {
             d.remove::<bool>(dirty_id);
+        }
+    });
+}
+
+pub fn admin_dialog(ctx: &egui::Context, dialog: &mut Option<AdminDialog>) -> Vec<UserAction> {
+    let Some(current) = dialog.as_mut() else {
+        return Vec::new();
+    };
+    let mut actions = Vec::new();
+    let frame = egui::Frame::window(&ctx.global_style())
+        .fill(theme::PANEL)
+        .stroke(Stroke::new(1.0, theme::BORDER))
+        .corner_radius(CornerRadius::same(10))
+        .inner_margin(Margin::same(18));
+
+    let modal = egui::Modal::new(egui::Id::unique("admin_dialog"))
+        .backdrop_color(egui::Color32::from_black_alpha(180))
+        .frame(frame)
+        .show(ctx, |ui| {
+            ui.set_min_width(320.0);
+            ui.set_max_width(400.0);
+            match current {
+                AdminDialog::CreateRoom { title, error } => {
+                    room_title_dialog_ui(
+                        ui,
+                        "Nova sala",
+                        "Criar",
+                        title,
+                        error.as_deref(),
+                        &mut actions,
+                    );
+                }
+                AdminDialog::RenameRoom { title, error, .. } => {
+                    room_title_dialog_ui(
+                        ui,
+                        "Renomear sala",
+                        "Salvar",
+                        title,
+                        error.as_deref(),
+                        &mut actions,
+                    );
+                }
+                AdminDialog::DeleteRoom { title, .. } => {
+                    confirm_danger_dialog_ui(
+                        ui,
+                        "Apagar sala",
+                        &format!(
+                            "Apagar a sala \"{title}\"? Todos os participantes serão removidos dela."
+                        ),
+                        "Apagar",
+                        &mut actions,
+                    );
+                }
+                AdminDialog::KickParticipant { name, .. } => {
+                    confirm_danger_dialog_ui(
+                        ui,
+                        "Remover participante",
+                        &format!("Remover \"{name}\" da sala atual?"),
+                        "Remover",
+                        &mut actions,
+                    );
+                }
+            }
+        });
+
+    if modal.should_close() {
+        actions.push(UserAction::CancelAdminDialog);
+    }
+    actions
+}
+
+fn room_title_dialog_ui(
+    ui: &mut egui::Ui,
+    heading: &str,
+    confirm_label: &str,
+    title: &mut String,
+    error: Option<&str>,
+    actions: &mut Vec<UserAction>,
+) {
+    ui.label(
+        RichText::new(heading)
+            .font(theme::display(18.0))
+            .color(theme::TEXT),
+    );
+    ui.add_space(10.0);
+    let input = ui.add(
+        egui::TextEdit::singleline(title)
+            .char_limit(MAX_ROOM_TITLE_LEN)
+            .desired_width(f32::INFINITY)
+            .hint_text("Nome da sala"),
+    );
+    if ui.ctx().memory(|m| m.focused().is_none()) {
+        input.request_focus();
+    }
+    if let Some(err) = error {
+        ui.add_space(6.0);
+        ui.colored_label(theme::ERROR, err);
+    }
+    ui.add_space(14.0);
+    ui.horizontal(|ui| {
+        let enter = input.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+        if ui.add(theme::accent_button(confirm_label)).clicked() || enter {
+            actions.push(UserAction::ConfirmAdminDialog);
+        }
+        if ui.button("Cancelar").clicked() {
+            actions.push(UserAction::CancelAdminDialog);
+        }
+    });
+}
+
+fn confirm_danger_dialog_ui(
+    ui: &mut egui::Ui,
+    heading: &str,
+    body: &str,
+    confirm_label: &str,
+    actions: &mut Vec<UserAction>,
+) {
+    ui.label(
+        RichText::new(heading)
+            .font(theme::display(18.0))
+            .color(theme::TEXT),
+    );
+    ui.add_space(8.0);
+    ui.label(RichText::new(body).color(theme::TEXT_SECONDARY));
+    ui.add_space(14.0);
+    ui.horizontal(|ui| {
+        if ui
+            .add(
+                egui::Button::new(RichText::new(confirm_label).color(Color32::WHITE))
+                    .fill(theme::ERROR),
+            )
+            .clicked()
+        {
+            actions.push(UserAction::ConfirmAdminDialog);
+        }
+        if ui.button("Cancelar").clicked() {
+            actions.push(UserAction::CancelAdminDialog);
         }
     });
 }

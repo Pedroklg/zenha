@@ -842,8 +842,15 @@ impl Session {
                 | AdminAction::UpdateRoom { .. }
                 | AdminAction::DeleteRoom { .. }
         );
+        let new_invite = match &action {
+            AdminAction::RotateInvite { new_code } => Some(new_code.clone()),
+            _ => None,
+        };
         match execute_admin_action(self.tokens.as_ref(), &jwt, action).await {
             Ok(event) => {
+                if let Some(code) = new_invite {
+                    self.config.invite_code = code;
+                }
                 if let Some(event) = event {
                     self.emit(event);
                 }
@@ -2979,6 +2986,24 @@ mod tests {
             Event::CommandFailed(SessionError::AdminUnauthorized)
         );
         assert_eq!(h.tokens.admin_calls().len(), calls_before);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn rotated_invite_is_used_for_the_next_token_request() {
+        let mut h = harness();
+        h.send(Command::AdminLogin {
+            password: "admin".to_owned(),
+        });
+        assert_eq!(h.next().await, Event::AdminChanged { active: true });
+        h.send(Command::Admin(AdminAction::RotateInvite {
+            new_code: "novo-convite-valido".to_owned(),
+        }));
+        assert_eq!(h.next().await, Event::AdminInviteRotated);
+        h.join("geral").await;
+        assert_eq!(
+            h.tokens.requests().last().map(|r| r.invite_code.as_str()),
+            Some("novo-convite-valido")
+        );
     }
 
     #[tokio::test(start_paused = true)]

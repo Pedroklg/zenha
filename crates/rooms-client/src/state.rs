@@ -1,11 +1,13 @@
 use std::collections::{BTreeMap, HashSet, VecDeque};
+use std::fmt;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use rooms_core::Cue;
+use rooms_core::{AdminAction, Cue, RemovalReason};
 use rooms_protocol::{
-    MAX_CHAT_MESSAGE_LEN, MAX_DISPLAY_NAME_LEN, RoomSummary, ValidationError, validate_chat_text,
-    validate_display_name,
+    AdminRoom, InviteCodeError, MAX_CHAT_MESSAGE_LEN, MAX_DISPLAY_NAME_LEN, RoomSummary,
+    ValidationError, validate_chat_text, validate_display_name, validate_invite_code,
+    validate_room_title,
 };
 
 use crate::cli::{StartupLink, compile_time_default_server, resolve_initial_server};
@@ -591,7 +593,9 @@ impl ChatState {
 
     fn delete_message(&mut self, id: &str, sender: &str) {
         self.messages.retain(|entry| match entry {
-            ChatEntry::Text(message) => !(message.id == id && message.sender_id == sender),
+            ChatEntry::Text(message) => {
+                !(message.id == id && (sender.is_empty() || message.sender_id == sender))
+            }
             ChatEntry::File(_) => true,
         });
     }
@@ -888,19 +892,24 @@ impl RoomState {
         }]
     }
 
-    fn delete_chat(&self, id: String) -> Vec<UiCommand> {
+    fn delete_chat(&self, id: String, is_admin: bool) -> Vec<UiCommand> {
         if self.local_identity.is_empty() {
             return Vec::new();
         }
-        let owns_saved = self.chat.messages.iter().any(|entry| {
-            matches!(
-                entry,
-                ChatEntry::Text(message)
-                    if message.id == id && message.saved && message.sender_id == self.local_identity
-            )
+        let target = self.chat.messages.iter().find_map(|entry| match entry {
+            ChatEntry::Text(message) if message.id == id && message.saved => Some(message),
+            _ => None,
         });
-        if owns_saved {
+        let Some(message) = target else {
+            return Vec::new();
+        };
+        if message.sender_id == self.local_identity {
             vec![UiCommand::DeleteChat { id }]
+        } else if is_admin {
+            vec![UiCommand::Admin(AdminAction::DeleteChat {
+                room: self.room.clone(),
+                id,
+            })]
         } else {
             Vec::new()
         }
@@ -1004,6 +1013,107 @@ pub enum UserAction {
     StopWatching,
     ToggleFullscreen,
     DismissUpdate,
+    DismissLobbyNotice,
+    AdminLogin,
+    AdminLogout,
+    RotateInvite,
+    DismissAdminNotice,
+    OpenCreateRoom,
+    OpenRenameRoom(String),
+    OpenDeleteRoom(String),
+    MoveRoomUp(String),
+    MoveRoomDown(String),
+    ConfirmAdminDialog,
+    CancelAdminDialog,
+    AdminMuteParticipant {
+        identity: String,
+    },
+    AdminStopShareParticipant {
+        identity: String,
+    },
+    AdminMoveParticipant {
+        identity: String,
+        to_room: String,
+    },
+    OpenKickParticipant {
+        identity: String,
+    },
+}
+
+pub fn room_display_title<'a>(rooms: &'a [RoomSummary], room_id: &'a str) -> &'a str {
+    rooms
+        .iter()
+        .find(|r| r.name == room_id)
+        .map_or(room_id, RoomSummary::display_title)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AdminDialog {
+    CreateRoom {
+        title: String,
+        error: Option<String>,
+    },
+    RenameRoom {
+        id: String,
+        title: String,
+        error: Option<String>,
+    },
+    DeleteRoom {
+        id: String,
+        title: String,
+    },
+    KickParticipant {
+        room: String,
+        identity: String,
+        name: String,
+    },
+}
+
+#[derive(Clone, PartialEq, Eq, Default)]
+pub struct AdminState {
+    pub active: bool,
+    pub logging_in: bool,
+    pub password_input: String,
+    pub new_invite_input: String,
+    pub error: Option<String>,
+    pub notice: Option<String>,
+    pub dialog: Option<AdminDialog>,
+}
+
+impl AdminState {
+    pub fn reset(&mut self) {
+        self.active = false;
+        self.logging_in = false;
+        self.password_input.clear();
+        self.new_invite_input.clear();
+        self.error = None;
+        self.notice = None;
+        self.dialog = None;
+    }
+
+    fn set_error(&mut self, message: String) {
+        self.error = Some(message);
+        self.notice = None;
+    }
+
+    fn set_notice(&mut self, message: String) {
+        self.notice = Some(message);
+        self.error = None;
+    }
+}
+
+impl fmt::Debug for AdminState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("AdminState")
+            .field("active", &self.active)
+            .field("logging_in", &self.logging_in)
+            .field("password_input", &"<redacted>")
+            .field("new_invite_input", &"<redacted>")
+            .field("error", &self.error)
+            .field("notice", &self.notice)
+            .field("dialog", &self.dialog)
+            .finish()
+    }
 }
 
 #[derive(Debug)]
@@ -1013,6 +1123,7 @@ pub struct AppState {
     pub onboarding: OnboardingState,
     pub lobby_voice: LobbyVoiceState,
     pub lobby_error: Option<String>,
+    pub lobby_notice: Option<String>,
     pub muted_on_join: bool,
     pub invite_copied: bool,
     pub rooms: Vec<RoomSummary>,
@@ -1021,6 +1132,7 @@ pub struct AppState {
     pub close_to_tray: bool,
     pub room_sounds: bool,
     pub picker: SharePicker,
+    pub admin: AdminState,
     client_id: String,
     last_room: String,
     saved_credential: Option<(String, String)>,
@@ -1035,6 +1147,7 @@ pub struct AppState {
     pending_save: Option<Settings>,
     available_update: Option<AvailableUpdate>,
     dismissed_update_version: Option<String>,
+    pending_move_notice: Option<String>,
 }
 
 impl AppState {
@@ -1070,6 +1183,7 @@ impl AppState {
             onboarding: OnboardingState::default(),
             lobby_voice: LobbyVoiceState::from_muted(settings.muted_on_join),
             lobby_error: None,
+            lobby_notice: None,
             muted_on_join: settings.muted_on_join,
             invite_copied: false,
             rooms: Vec::new(),
@@ -1078,6 +1192,7 @@ impl AppState {
             close_to_tray: settings.close_to_tray,
             room_sounds: settings.room_sounds,
             picker: SharePicker::default(),
+            admin: AdminState::default(),
             client_id: settings.client_id.clone(),
             last_room: settings.last_room.clone(),
             saved_credential,
@@ -1092,6 +1207,7 @@ impl AppState {
             pending_save: None,
             available_update: None,
             dismissed_update_version: settings.dismissed_update_version.clone(),
+            pending_move_notice: None,
         }
     }
 
@@ -1374,7 +1490,10 @@ impl AppState {
             UserAction::ToggleDeafen => self.toggle_deafen(),
             UserAction::SendChat => self.with_room(RoomState::send_chat),
             UserAction::LoadOlderChat => self.with_room(RoomState::load_older_chat),
-            UserAction::DeleteChat(id) => self.with_room(|room| room.delete_chat(id)),
+            UserAction::DeleteChat(id) => {
+                let is_admin = self.admin.active;
+                self.with_room(|room| room.delete_chat(id, is_admin))
+            }
             UserAction::AttachFile(path) => self.with_room(|_| vec![UiCommand::SendFile { path }]),
             UserAction::PickFile
             | UserAction::SaveReceivedFile { .. }
@@ -1394,6 +1513,7 @@ impl AppState {
             UserAction::OpenSettings => {
                 self.audio.open = true;
                 self.invite_copied = false;
+                self.admin.notice = None;
                 vec![UiCommand::RefreshAudioDevices]
             }
             UserAction::CloseSettings => {
@@ -1401,6 +1521,8 @@ impl AppState {
                 self.hotkeys.capturing = None;
                 self.hotkeys.capture_error = None;
                 self.invite_copied = false;
+                self.admin.error = None;
+                self.admin.notice = None;
                 Vec::new()
             }
             UserAction::StartHotkeyCapture(action) => {
@@ -1545,6 +1667,102 @@ impl AppState {
                 }
                 Vec::new()
             }
+            UserAction::DismissLobbyNotice => {
+                self.lobby_notice = None;
+                Vec::new()
+            }
+            UserAction::AdminLogin => self.admin_login(),
+            UserAction::AdminLogout => self.admin_logout(),
+            UserAction::RotateInvite => self.rotate_invite(),
+            UserAction::DismissAdminNotice => {
+                self.admin.error = None;
+                self.admin.notice = None;
+                Vec::new()
+            }
+            UserAction::OpenCreateRoom => {
+                if self.admin.active {
+                    self.admin.dialog = Some(AdminDialog::CreateRoom {
+                        title: String::new(),
+                        error: None,
+                    });
+                }
+                Vec::new()
+            }
+            UserAction::OpenRenameRoom(id) => {
+                if self.admin.active && self.rooms.iter().any(|r| r.name == id) {
+                    let title = room_display_title(&self.rooms, &id).to_owned();
+                    self.admin.dialog = Some(AdminDialog::RenameRoom {
+                        id,
+                        title,
+                        error: None,
+                    });
+                }
+                Vec::new()
+            }
+            UserAction::OpenDeleteRoom(id) => {
+                if self.admin.active && self.rooms.iter().any(|r| r.name == id) {
+                    let title = room_display_title(&self.rooms, &id).to_owned();
+                    self.admin.dialog = Some(AdminDialog::DeleteRoom { id, title });
+                }
+                Vec::new()
+            }
+            UserAction::MoveRoomUp(id) => self.move_room(&id, -1),
+            UserAction::MoveRoomDown(id) => self.move_room(&id, 1),
+            UserAction::ConfirmAdminDialog => self.confirm_admin_dialog(),
+            UserAction::CancelAdminDialog => {
+                self.admin.dialog = None;
+                Vec::new()
+            }
+            UserAction::AdminMuteParticipant { identity } => {
+                let Some((room, _)) = self.remote_target_room(&identity) else {
+                    return Vec::new();
+                };
+                vec![UiCommand::Admin(AdminAction::MuteParticipant {
+                    room,
+                    identity,
+                })]
+            }
+            UserAction::AdminStopShareParticipant { identity } => {
+                let Some((room, _)) = self.remote_target_room(&identity) else {
+                    return Vec::new();
+                };
+                let is_sharing = matches!(
+                    &self.screen,
+                    Screen::InRoom(state) if state.share.is_sharing_remote(&identity)
+                );
+                if is_sharing {
+                    vec![UiCommand::Admin(AdminAction::StopShareParticipant {
+                        room,
+                        identity,
+                    })]
+                } else {
+                    Vec::new()
+                }
+            }
+            UserAction::AdminMoveParticipant { identity, to_room } => {
+                let Some((room, _)) = self.remote_target_room(&identity) else {
+                    return Vec::new();
+                };
+                if to_room.trim().is_empty() || to_room == room {
+                    return Vec::new();
+                }
+                vec![UiCommand::Admin(AdminAction::MoveParticipant {
+                    room,
+                    identity,
+                    to_room,
+                })]
+            }
+            UserAction::OpenKickParticipant { identity } => {
+                let Some((room, name)) = self.remote_target_room(&identity) else {
+                    return Vec::new();
+                };
+                self.admin.dialog = Some(AdminDialog::KickParticipant {
+                    room,
+                    identity,
+                    name,
+                });
+                Vec::new()
+            }
         }
     }
 
@@ -1610,7 +1828,7 @@ impl AppState {
     }
 
     pub fn can_paste_chat_image(&self) -> bool {
-        if self.audio.open || self.picker.open {
+        if self.audio.open || self.picker.open || self.admin.dialog.is_some() {
             return false;
         }
         match &self.screen {
@@ -1660,8 +1878,11 @@ impl AppState {
         self.pending_save = Some(self.settings_snapshot());
         self.lobby_voice = LobbyVoiceState::from_muted(self.muted_on_join);
         self.lobby_error = None;
+        self.lobby_notice = None;
+        self.pending_move_notice = None;
         self.rooms.clear();
         self.audio.open = false;
+        self.admin.reset();
         self.invite_copied = false;
         self.audio_configured = false;
         self.session_mic_sent = false;
@@ -1711,6 +1932,8 @@ impl AppState {
         }
         commands.push(UiCommand::Join { room: room.clone() });
         self.lobby_error = None;
+        self.lobby_notice = None;
+        self.pending_move_notice = None;
         self.audio.open = false;
         self.screen = Screen::Connecting { room };
         commands
@@ -1730,7 +1953,10 @@ impl AppState {
         self.hotkeys.capturing = None;
         self.hotkeys.capture_error = None;
         self.lobby_error = None;
+        self.lobby_notice = None;
+        self.pending_move_notice = None;
         self.rooms.clear();
+        self.admin.reset();
         self.onboarding.password_rejected = false;
         self.onboarding.link_open = false;
         self.onboarding.link_input.clear();
@@ -1868,6 +2094,7 @@ impl AppState {
 
     fn cancel_connect(&mut self) -> Vec<UiCommand> {
         if matches!(self.screen, Screen::Connecting { .. }) {
+            self.pending_move_notice = None;
             self.screen = Screen::Lobby;
             vec![UiCommand::Leave]
         } else {
@@ -1878,6 +2105,13 @@ impl AppState {
     fn leave(&mut self) -> Vec<UiCommand> {
         self.picker.close();
         self.audio.mic_level = None;
+        self.pending_move_notice = None;
+        if matches!(
+            &self.admin.dialog,
+            Some(AdminDialog::KickParticipant { .. })
+        ) {
+            self.admin.dialog = None;
+        }
         let leave_cue = self.self_left_cue();
         if let Screen::InRoom(room) = &self.screen {
             self.lobby_voice = room.voice_state();
@@ -1893,6 +2127,13 @@ impl AppState {
     fn switch_room(&mut self, room: String) -> Vec<UiCommand> {
         if !matches!(&self.screen, Screen::InRoom(state) if state.room != room) {
             return Vec::new();
+        }
+        self.pending_move_notice = None;
+        if matches!(
+            &self.admin.dialog,
+            Some(AdminDialog::KickParticipant { .. })
+        ) {
+            self.admin.dialog = None;
         }
         let leave_cue = self.self_left_cue();
         if let Screen::InRoom(state) = &mut self.screen {
@@ -1911,6 +2152,7 @@ impl AppState {
                 if !matches!(self.screen, Screen::Onboarding) {
                     self.rooms = rooms;
                     self.lobby_error = None;
+                    self.prune_admin_dialog_for_rooms();
                     if let Some((server, password)) = self.pending_password_save.take() {
                         self.saved_credential = Some((server.clone(), password.clone()));
                         self.pending_credential_ops
@@ -1944,24 +2186,11 @@ impl AppState {
                 rgba,
             } => self.picker.set_thumbnail(id, width, height, rgba),
             UiEvent::Failed { message } => {
-                let leave_cue = self.self_left_cue();
-                self.picker.close();
-                self.audio.mic_level = None;
-                match &self.screen {
-                    Screen::Connecting { .. } => {
-                        self.lobby_error = Some(message);
-                        self.screen = Screen::Lobby;
-                    }
-                    Screen::InRoom(room) => {
-                        self.lobby_voice = room.voice_state();
-                        self.session_mic_sent = room.mic_sent;
-                        self.session_deafened = room.deafened;
-                        self.lobby_error = Some(message);
-                        self.screen = Screen::Lobby;
-                        self.pending_commands.extend(leave_cue);
-                    }
-                    Screen::Onboarding | Screen::Lobby => {}
+                self.pending_move_notice = None;
+                if matches!(self.screen, Screen::Connecting { .. } | Screen::InRoom(_)) {
+                    self.lobby_error = Some(message);
                 }
+                self.leave_to_lobby();
             }
             UiEvent::MicLevel {
                 level_db,
@@ -1975,24 +2204,98 @@ impl AppState {
                 }
             }
             UiEvent::Left => {
-                let leave_cue = self.self_left_cue();
-                self.picker.close();
-                self.audio.mic_level = None;
-                match &self.screen {
-                    Screen::InRoom(room) => {
-                        self.lobby_voice = room.voice_state();
-                        self.session_mic_sent = room.mic_sent;
-                        self.session_deafened = room.deafened;
-                        self.screen = Screen::Lobby;
-                        self.pending_commands.extend(leave_cue);
+                self.pending_move_notice = None;
+                self.leave_to_lobby();
+            }
+            UiEvent::AdminChanged { active } => {
+                if active {
+                    self.admin.active = true;
+                    self.admin.logging_in = false;
+                    self.admin.error = None;
+                } else {
+                    self.admin.reset();
+                }
+            }
+            UiEvent::AdminRoomCreated(room) | UiEvent::AdminRoomUpdated(room) => {
+                if !matches!(self.screen, Screen::Onboarding) {
+                    upsert_admin_room(&mut self.rooms, room);
+                }
+            }
+            UiEvent::AdminRoomDeleted { id } => {
+                if !matches!(self.screen, Screen::Onboarding) {
+                    self.rooms.retain(|r| r.name != id);
+                    self.prune_admin_dialog_for_rooms();
+                }
+            }
+            UiEvent::AdminInviteRotated => {
+                let code = std::mem::take(&mut self.admin.new_invite_input);
+                if !code.is_empty() {
+                    self.active_password = code.clone();
+                    if !self.form.invite_code.is_empty() {
+                        self.form.invite_code = code.clone();
                     }
-                    Screen::Connecting { .. } => {
-                        self.screen = Screen::Lobby;
+                    if let Some((server, _)) = self.saved_credential.take() {
+                        self.saved_credential = Some((server.clone(), code.clone()));
+                        self.pending_credential_ops.push(CredentialOp::Store {
+                            server,
+                            password: code,
+                        });
                     }
-                    Screen::Onboarding | Screen::Lobby => {}
+                }
+                self.admin
+                    .set_notice("Código de convite atualizado.".to_owned());
+            }
+            UiEvent::AdminStoppedScreenShare => {
+                self.set_chat_notice("Um admin parou sua transmissão".to_owned());
+            }
+            UiEvent::MovedByAdmin { to_room } => {
+                let title = room_display_title(&self.rooms, &to_room).to_owned();
+                let message = format!("Um admin moveu você para {title}");
+                self.pending_move_notice = Some(message.clone());
+                self.set_chat_notice(message);
+                if matches!(
+                    &self.admin.dialog,
+                    Some(AdminDialog::KickParticipant { .. })
+                ) {
+                    self.admin.dialog = None;
+                }
+            }
+            UiEvent::RemovedFromRoom { reason } => {
+                self.pending_move_notice = None;
+                if !matches!(self.screen, Screen::Onboarding | Screen::Lobby) {
+                    self.leave_to_lobby();
+                }
+                if !matches!(self.screen, Screen::Onboarding) {
+                    let message = match reason {
+                        RemovalReason::Kicked => "Você foi removido da sala".to_owned(),
+                        RemovalReason::RoomDeleted => "A sala foi apagada".to_owned(),
+                    };
+                    self.lobby_notice = Some(message);
+                }
+            }
+            UiEvent::AdminFailed { message } => {
+                self.admin.logging_in = false;
+                self.admin.set_error(message.clone());
+                if !self.audio.open {
+                    match &mut self.screen {
+                        Screen::InRoom(room) => room.chat.set_notice(message),
+                        Screen::Lobby | Screen::Connecting { .. } => {
+                            self.lobby_notice = Some(message);
+                        }
+                        Screen::Onboarding => {}
+                    }
                 }
             }
             other => {
+                if let UiEvent::ParticipantLeft { ref identity } = other
+                    && matches!(
+                        &self.admin.dialog,
+                        Some(AdminDialog::KickParticipant { identity: target, .. })
+                            if target == identity
+                    )
+                {
+                    self.admin.dialog = None;
+                }
                 let cue = if let Screen::InRoom(state) = &mut self.screen {
                     apply_room_event(state, other)
                 } else {
@@ -2018,6 +2321,9 @@ impl AppState {
         }
         self.rooms.clear();
         self.lobby_error = None;
+        self.lobby_notice = None;
+        self.pending_move_notice = None;
+        self.admin.reset();
         self.pending_password_save = None;
         self.saved_credential = None;
         self.active_password.clear();
@@ -2042,16 +2348,20 @@ impl AppState {
     ) {
         match &mut self.screen {
             Screen::Connecting { .. } => {
-                let state = RoomState::new(
+                let mut state = RoomState::new(
                     room,
                     local_identity,
                     participants,
                     self.lobby_voice,
                     self.audio.voice_mode,
                 );
+                if let Some(notice) = self.pending_move_notice.take() {
+                    state.chat.set_notice(notice);
+                }
                 self.session_mic_sent = state.mic_sent;
                 self.session_deafened = state.deafened;
                 self.lobby_error = None;
+                self.lobby_notice = None;
                 self.screen = Screen::InRoom(Box::new(state));
                 self.last_refresh = None;
                 self.pending_commands.extend(self.room_cue(Cue::SelfJoined));
@@ -2066,11 +2376,222 @@ impl AppState {
                 state.participants = participants;
                 state.status = ConnectionStatus::Connected;
                 state.share = ShareState::default();
+                if let Some(notice) = self.pending_move_notice.take() {
+                    state.chat.set_notice(notice);
+                }
                 if is_new_room {
                     self.pending_commands.extend(self.room_cue(Cue::SelfJoined));
                 }
             }
             Screen::Onboarding | Screen::Lobby => {}
+        }
+    }
+
+    fn leave_to_lobby(&mut self) {
+        let leave_cue = self.self_left_cue();
+        self.picker.close();
+        self.audio.mic_level = None;
+        if matches!(
+            &self.admin.dialog,
+            Some(AdminDialog::KickParticipant { .. })
+        ) {
+            self.admin.dialog = None;
+        }
+        match &self.screen {
+            Screen::InRoom(room) => {
+                self.lobby_voice = room.voice_state();
+                self.session_mic_sent = room.mic_sent;
+                self.session_deafened = room.deafened;
+                self.screen = Screen::Lobby;
+                self.pending_commands.extend(leave_cue);
+            }
+            Screen::Connecting { .. } => {
+                self.screen = Screen::Lobby;
+            }
+            Screen::Onboarding | Screen::Lobby => {}
+        }
+    }
+
+    fn admin_login(&mut self) -> Vec<UiCommand> {
+        let password = std::mem::take(&mut self.admin.password_input);
+        if password.is_empty() {
+            self.admin
+                .set_error("Digite a senha de administrador.".to_owned());
+            return Vec::new();
+        }
+        self.admin.logging_in = true;
+        self.admin.error = None;
+        self.admin.notice = None;
+        vec![UiCommand::AdminLogin { password }]
+    }
+
+    fn admin_logout(&mut self) -> Vec<UiCommand> {
+        if !self.admin.active && !self.admin.logging_in {
+            return Vec::new();
+        }
+        self.admin.new_invite_input.clear();
+        self.admin.dialog = None;
+        self.admin.error = None;
+        self.admin.notice = None;
+        vec![UiCommand::AdminLogout]
+    }
+
+    fn rotate_invite(&mut self) -> Vec<UiCommand> {
+        if !self.admin.active {
+            return Vec::new();
+        }
+        if let Err(message) = validate_invite_code_pt(&self.admin.new_invite_input) {
+            self.admin.set_error(message);
+            return Vec::new();
+        }
+        self.admin.error = None;
+        self.admin.notice = None;
+        let new_code = self.admin.new_invite_input.clone();
+        vec![UiCommand::Admin(AdminAction::RotateInvite { new_code })]
+    }
+
+    fn move_room(&mut self, id: &str, delta: isize) -> Vec<UiCommand> {
+        if !self.admin.active {
+            return Vec::new();
+        }
+        let Some(pos) = self.rooms.iter().position(|r| r.name == id) else {
+            return Vec::new();
+        };
+        let target = pos as isize + delta;
+        if target < 0 || target as usize >= self.rooms.len() {
+            return Vec::new();
+        }
+        vec![UiCommand::Admin(AdminAction::UpdateRoom {
+            id: id.to_owned(),
+            title: None,
+            position: Some(target as usize),
+        })]
+    }
+
+    fn confirm_admin_dialog(&mut self) -> Vec<UiCommand> {
+        if !self.admin.active {
+            self.admin.dialog = None;
+            return Vec::new();
+        }
+        let Some(dialog) = self.admin.dialog.take() else {
+            return Vec::new();
+        };
+        match dialog {
+            AdminDialog::CreateRoom { title, .. } => match validate_room_title_pt(&title) {
+                Ok(trimmed) => {
+                    vec![UiCommand::Admin(AdminAction::CreateRoom { title: trimmed })]
+                }
+                Err(message) => {
+                    self.admin.dialog = Some(AdminDialog::CreateRoom {
+                        title,
+                        error: Some(message),
+                    });
+                    Vec::new()
+                }
+            },
+            AdminDialog::RenameRoom { id, title, .. } => match validate_room_title_pt(&title) {
+                Ok(trimmed) => vec![UiCommand::Admin(AdminAction::UpdateRoom {
+                    id,
+                    title: Some(trimmed),
+                    position: None,
+                })],
+                Err(message) => {
+                    self.admin.dialog = Some(AdminDialog::RenameRoom {
+                        id,
+                        title,
+                        error: Some(message),
+                    });
+                    Vec::new()
+                }
+            },
+            AdminDialog::DeleteRoom { id, .. } => {
+                vec![UiCommand::Admin(AdminAction::DeleteRoom { id })]
+            }
+            AdminDialog::KickParticipant { room, identity, .. } => {
+                let valid = matches!(
+                    &self.screen,
+                    Screen::InRoom(state)
+                        if state.room == room
+                            && !state.local_identity.is_empty()
+                            && identity != state.local_identity
+                );
+                if valid {
+                    vec![UiCommand::Admin(AdminAction::KickParticipant {
+                        room,
+                        identity,
+                    })]
+                } else {
+                    Vec::new()
+                }
+            }
+        }
+    }
+
+    fn remote_target_room(&self, identity: &str) -> Option<(String, String)> {
+        if !self.admin.active {
+            return None;
+        }
+        let Screen::InRoom(room) = &self.screen else {
+            return None;
+        };
+        if room.local_identity.is_empty() || identity == room.local_identity {
+            return None;
+        }
+        let target = room.participants.iter().find(|p| p.identity == identity)?;
+        Some((room.room.clone(), target.name.clone()))
+    }
+
+    fn prune_admin_dialog_for_rooms(&mut self) {
+        let missing = match &self.admin.dialog {
+            Some(AdminDialog::RenameRoom { id, .. } | AdminDialog::DeleteRoom { id, .. }) => {
+                !self.rooms.iter().any(|r| &r.name == id)
+            }
+            _ => false,
+        };
+        if missing {
+            self.admin.dialog = None;
+        }
+    }
+}
+
+fn upsert_admin_room(rooms: &mut Vec<RoomSummary>, room: AdminRoom) {
+    let mut entry = rooms
+        .iter()
+        .position(|r| r.name == room.id)
+        .map(|idx| rooms.remove(idx))
+        .unwrap_or_else(|| RoomSummary {
+            name: room.id,
+            title: String::new(),
+            participants: Vec::new(),
+        });
+    entry.title = room.title;
+    let pos = room.position.min(rooms.len());
+    rooms.insert(pos, entry);
+}
+
+fn validate_room_title_pt(title: &str) -> Result<String, String> {
+    match validate_room_title(title) {
+        Ok(()) => Ok(title.trim().to_owned()),
+        Err(ValidationError::Empty) => Err("Digite o nome da sala.".to_owned()),
+        Err(ValidationError::TooLong { max }) => Err(format!("Use no máximo {max} caracteres.")),
+        Err(ValidationError::InvalidCharacter) => {
+            Err("O título contém caracteres inválidos.".to_owned())
+        }
+    }
+}
+
+fn validate_invite_code_pt(code: &str) -> Result<(), String> {
+    match validate_invite_code(code) {
+        Ok(()) => Ok(()),
+        Err(InviteCodeError::Empty) => Err("Digite o novo código de convite.".to_owned()),
+        Err(InviteCodeError::TooShort { min }) => {
+            Err(format!("O código precisa ter pelo menos {min} caracteres."))
+        }
+        Err(InviteCodeError::TooLong { max }) => {
+            Err(format!("O código deve ter no máximo {max} caracteres."))
+        }
+        Err(InviteCodeError::InvalidCharacter) => {
+            Err("O código contém caracteres inválidos.".to_owned())
         }
     }
 }
@@ -2157,7 +2678,16 @@ fn apply_room_event(state: &mut RoomState, event: UiEvent) -> Option<Cue> {
         | UiEvent::CaptureTargetsUpdated(_)
         | UiEvent::CaptureThumbnail { .. }
         | UiEvent::MicLevel { .. }
-        | UiEvent::AudioDevicesUpdated { .. } => None,
+        | UiEvent::AudioDevicesUpdated { .. }
+        | UiEvent::AdminChanged { .. }
+        | UiEvent::AdminRoomCreated(_)
+        | UiEvent::AdminRoomUpdated(_)
+        | UiEvent::AdminRoomDeleted { .. }
+        | UiEvent::AdminInviteRotated
+        | UiEvent::AdminStoppedScreenShare
+        | UiEvent::MovedByAdmin { .. }
+        | UiEvent::RemovedFromRoom { .. }
+        | UiEvent::AdminFailed { .. } => None,
     }
 }
 
@@ -2384,6 +2914,13 @@ mod tests {
             sent_at_unix_ms: 1000,
             text: text.to_owned(),
             saved: true,
+        }
+    }
+
+    fn chat_msg(id: &str, sender_id: &str, saved: bool) -> ChatMessageView {
+        ChatMessageView {
+            saved,
+            ..saved_message(id, sender_id, &sender_id.to_uppercase(), id)
         }
     }
 
@@ -4953,5 +5490,463 @@ mod tests {
             reloaded.handle_action(UserAction::Leave),
             vec![UiCommand::Leave]
         );
+    }
+
+    #[test]
+    fn room_display_title_uses_title_when_present_and_falls_back_to_id() {
+        let rooms = vec![
+            RoomSummary {
+                name: "sala-1".to_owned(),
+                title: "Bate-papo".to_owned(),
+                participants: Vec::new(),
+            },
+            RoomSummary {
+                name: "geral".to_owned(),
+                title: String::new(),
+                participants: Vec::new(),
+            },
+        ];
+
+        assert_eq!(room_display_title(&rooms, "sala-1"), "Bate-papo");
+        assert_eq!(room_display_title(&rooms, "geral"), "geral");
+        assert_eq!(room_display_title(&rooms, "desconhecida"), "desconhecida");
+    }
+
+    #[test]
+    fn admin_login_clears_password_redacts_debug_and_logout_resets_state() {
+        let mut state = state_with_code();
+        state.handle_action(UserAction::SubmitOnboarding);
+        state.admin.password_input = "super-secret-admin".to_owned();
+        state.admin.new_invite_input = "secret-invite-1234".to_owned();
+
+        let debug_text = format!("{state:?}");
+        assert!(!debug_text.contains("super-secret-admin"));
+        assert!(!debug_text.contains("secret-invite-1234"));
+
+        assert_eq!(
+            state.handle_action(UserAction::AdminLogin),
+            vec![UiCommand::AdminLogin {
+                password: "super-secret-admin".to_owned(),
+            }]
+        );
+        assert!(state.admin.password_input.is_empty());
+        assert!(state.admin.logging_in);
+
+        state.apply_event(UiEvent::AdminChanged { active: true });
+        assert!(state.admin.active);
+        assert!(!state.admin.logging_in);
+        assert!(state.admin.error.is_none());
+
+        assert_eq!(
+            state.handle_action(UserAction::AdminLogout),
+            vec![UiCommand::AdminLogout]
+        );
+        state.apply_event(UiEvent::AdminChanged { active: false });
+        assert!(!state.admin.active);
+        assert!(!state.admin.logging_in);
+        assert!(state.admin.new_invite_input.is_empty());
+        assert!(state.admin.dialog.is_none());
+    }
+
+    #[test]
+    fn admin_expired_emits_error_and_returns_to_non_admin_state() {
+        let mut state = state_with_code();
+        state.handle_action(UserAction::SubmitOnboarding);
+        state.apply_event(UiEvent::AdminChanged { active: true });
+        assert!(state.admin.active);
+
+        state.apply_event(UiEvent::AdminChanged { active: false });
+        state.apply_event(UiEvent::AdminFailed {
+            message: "Sessão de administrador expirada. Entre novamente.".to_owned(),
+        });
+
+        assert!(!state.admin.active);
+        assert_eq!(
+            state.admin.error.as_deref(),
+            Some("Sessão de administrador expirada. Entre novamente.")
+        );
+        assert_eq!(
+            state.lobby_notice.as_deref(),
+            Some("Sessão de administrador expirada. Entre novamente.")
+        );
+    }
+
+    #[test]
+    fn admin_room_actions_require_admin_and_validate_titles() {
+        let mut state = state_with_code();
+        state.handle_action(UserAction::SubmitOnboarding);
+        state.apply_event(UiEvent::RoomsUpdated(vec![
+            RoomSummary {
+                name: "sala-1".to_owned(),
+                title: "Café".to_owned(),
+                participants: Vec::new(),
+            },
+            RoomSummary {
+                name: "sala-2".to_owned(),
+                title: "Jogos".to_owned(),
+                participants: Vec::new(),
+            },
+        ]));
+
+        // Without admin active, all room mutations are ignored.
+        assert!(state.handle_action(UserAction::OpenCreateRoom).is_empty());
+        assert!(state.admin.dialog.is_none());
+        assert!(
+            state
+                .handle_action(UserAction::MoveRoomDown("sala-1".to_owned()))
+                .is_empty()
+        );
+
+        state.apply_event(UiEvent::AdminChanged { active: true });
+
+        // Create room validates non-empty title, then sends trimmed title.
+        state.handle_action(UserAction::OpenCreateRoom);
+        assert!(
+            state
+                .handle_action(UserAction::ConfirmAdminDialog)
+                .is_empty()
+        );
+        assert!(matches!(
+            &state.admin.dialog,
+            Some(AdminDialog::CreateRoom { error: Some(_), .. })
+        ));
+        if let Some(AdminDialog::CreateRoom { title, .. }) = &mut state.admin.dialog {
+            *title = "  Música  ".to_owned();
+        }
+        assert_eq!(
+            state.handle_action(UserAction::ConfirmAdminDialog),
+            vec![UiCommand::Admin(AdminAction::CreateRoom {
+                title: "Música".to_owned(),
+            })]
+        );
+        assert!(state.admin.dialog.is_none());
+
+        // Rename room preserves id and sends trimmed title.
+        state.handle_action(UserAction::OpenRenameRoom("sala-1".to_owned()));
+        if let Some(AdminDialog::RenameRoom { title, .. }) = &mut state.admin.dialog {
+            *title = "Café Novo".to_owned();
+        }
+        assert_eq!(
+            state.handle_action(UserAction::ConfirmAdminDialog),
+            vec![UiCommand::Admin(AdminAction::UpdateRoom {
+                id: "sala-1".to_owned(),
+                title: Some("Café Novo".to_owned()),
+                position: None,
+            })]
+        );
+
+        // Move room down/up respects list bounds.
+        assert!(
+            state
+                .handle_action(UserAction::MoveRoomUp("sala-1".to_owned()))
+                .is_empty()
+        );
+        assert!(
+            state
+                .handle_action(UserAction::MoveRoomDown("sala-2".to_owned()))
+                .is_empty()
+        );
+        assert_eq!(
+            state.handle_action(UserAction::MoveRoomDown("sala-1".to_owned())),
+            vec![UiCommand::Admin(AdminAction::UpdateRoom {
+                id: "sala-1".to_owned(),
+                title: None,
+                position: Some(1),
+            })]
+        );
+        assert_eq!(
+            state.handle_action(UserAction::MoveRoomUp("sala-2".to_owned())),
+            vec![UiCommand::Admin(AdminAction::UpdateRoom {
+                id: "sala-2".to_owned(),
+                title: None,
+                position: Some(0),
+            })]
+        );
+
+        // Delete room confirms by id while displaying title.
+        state.handle_action(UserAction::OpenDeleteRoom("sala-2".to_owned()));
+        assert_eq!(
+            state.admin.dialog,
+            Some(AdminDialog::DeleteRoom {
+                id: "sala-2".to_owned(),
+                title: "Jogos".to_owned(),
+            })
+        );
+        assert_eq!(
+            state.handle_action(UserAction::ConfirmAdminDialog),
+            vec![UiCommand::Admin(AdminAction::DeleteRoom {
+                id: "sala-2".to_owned(),
+            })]
+        );
+    }
+
+    #[test]
+    fn participant_admin_actions_require_admin_and_block_self() {
+        let mut state = state_with_code();
+        in_room(&mut state);
+        state.apply_event(UiEvent::RoomsUpdated(vec![
+            RoomSummary {
+                name: "geral".to_owned(),
+                title: "Geral".to_owned(),
+                participants: Vec::new(),
+            },
+            RoomSummary {
+                name: "sala-2".to_owned(),
+                title: "Sala Dois".to_owned(),
+                participants: Vec::new(),
+            },
+        ]));
+        state.apply_event(UiEvent::RemoteScreenShareStarted {
+            identity: "ana".to_owned(),
+        });
+
+        // Denied without admin.
+        assert!(
+            state
+                .handle_action(UserAction::AdminMuteParticipant {
+                    identity: "ana".to_owned(),
+                })
+                .is_empty()
+        );
+
+        state.apply_event(UiEvent::AdminChanged { active: true });
+
+        // Self is always blocked even when admin.
+        assert!(
+            state
+                .handle_action(UserAction::AdminMuteParticipant {
+                    identity: "pedro".to_owned(),
+                })
+                .is_empty()
+        );
+        assert!(
+            state
+                .handle_action(UserAction::OpenKickParticipant {
+                    identity: "pedro".to_owned(),
+                })
+                .is_empty()
+        );
+        assert!(state.admin.dialog.is_none());
+
+        // Remote mute works.
+        assert_eq!(
+            state.handle_action(UserAction::AdminMuteParticipant {
+                identity: "ana".to_owned(),
+            }),
+            vec![UiCommand::Admin(AdminAction::MuteParticipant {
+                room: "geral".to_owned(),
+                identity: "ana".to_owned(),
+            })]
+        );
+
+        // Stop share works for ana (who is sharing) and not when she isn't.
+        assert_eq!(
+            state.handle_action(UserAction::AdminStopShareParticipant {
+                identity: "ana".to_owned(),
+            }),
+            vec![UiCommand::Admin(AdminAction::StopShareParticipant {
+                room: "geral".to_owned(),
+                identity: "ana".to_owned(),
+            })]
+        );
+        state.apply_event(UiEvent::RemoteScreenShareStopped {
+            identity: "ana".to_owned(),
+        });
+        assert!(
+            state
+                .handle_action(UserAction::AdminStopShareParticipant {
+                    identity: "ana".to_owned(),
+                })
+                .is_empty()
+        );
+
+        // Move participant ignores same room and works for another room.
+        assert!(
+            state
+                .handle_action(UserAction::AdminMoveParticipant {
+                    identity: "ana".to_owned(),
+                    to_room: "geral".to_owned(),
+                })
+                .is_empty()
+        );
+        assert_eq!(
+            state.handle_action(UserAction::AdminMoveParticipant {
+                identity: "ana".to_owned(),
+                to_room: "sala-2".to_owned(),
+            }),
+            vec![UiCommand::Admin(AdminAction::MoveParticipant {
+                room: "geral".to_owned(),
+                identity: "ana".to_owned(),
+                to_room: "sala-2".to_owned(),
+            })]
+        );
+
+        // Kick requires confirmation dialog.
+        state.handle_action(UserAction::OpenKickParticipant {
+            identity: "ana".to_owned(),
+        });
+        assert!(matches!(
+            &state.admin.dialog,
+            Some(AdminDialog::KickParticipant { identity, .. }) if identity == "ana"
+        ));
+        assert_eq!(
+            state.handle_action(UserAction::ConfirmAdminDialog),
+            vec![UiCommand::Admin(AdminAction::KickParticipant {
+                room: "geral".to_owned(),
+                identity: "ana".to_owned(),
+            })]
+        );
+    }
+
+    #[test]
+    fn admin_deletes_other_saved_chat_and_empty_sender_chat_deleted_removes_it() {
+        let mut state = state_with_code();
+        in_room(&mut state);
+        state.apply_event(UiEvent::ChatReceived(chat_msg(
+            "other-unsaved",
+            "ana",
+            false,
+        )));
+        state.apply_event(UiEvent::ChatReceived(chat_msg("other-saved", "ana", true)));
+        state.apply_event(UiEvent::ChatReceived(chat_msg("own-saved", "pedro", true)));
+
+        state.apply_event(UiEvent::AdminChanged { active: true });
+
+        // Unsaved cannot be deleted even as admin.
+        assert!(
+            state
+                .handle_action(UserAction::DeleteChat("other-unsaved".to_owned()))
+                .is_empty()
+        );
+        // Own saved keeps using normal DeleteChat.
+        assert_eq!(
+            state.handle_action(UserAction::DeleteChat("own-saved".to_owned())),
+            vec![UiCommand::DeleteChat {
+                id: "own-saved".to_owned(),
+            }]
+        );
+        // Other's saved uses AdminAction::DeleteChat.
+        assert_eq!(
+            state.handle_action(UserAction::DeleteChat("other-saved".to_owned())),
+            vec![UiCommand::Admin(AdminAction::DeleteChat {
+                room: "geral".to_owned(),
+                id: "other-saved".to_owned(),
+            })]
+        );
+
+        // Empty sender from admin.chat_delete removes the message.
+        state.apply_event(UiEvent::ChatDeleted {
+            id: "other-saved".to_owned(),
+            sender: String::new(),
+        });
+        assert!(!room(&state).chat.contains_text_id("other-saved"));
+    }
+
+    #[test]
+    fn rotate_invite_validates_and_clears_on_success() {
+        let mut state = state_with_code();
+        state.handle_action(UserAction::SubmitOnboarding);
+        state.apply_event(UiEvent::AdminChanged { active: true });
+
+        state.admin.new_invite_input = "curto".to_owned();
+        assert!(state.handle_action(UserAction::RotateInvite).is_empty());
+        assert!(state.admin.error.is_some());
+
+        state.admin.new_invite_input = "novo-convite-seguro".to_owned();
+        assert_eq!(
+            state.handle_action(UserAction::RotateInvite),
+            vec![UiCommand::Admin(AdminAction::RotateInvite {
+                new_code: "novo-convite-seguro".to_owned(),
+            })]
+        );
+
+        state.apply_event(UiEvent::AdminInviteRotated);
+        assert!(state.admin.new_invite_input.is_empty());
+        assert_eq!(state.current_password(), "novo-convite-seguro");
+        assert!(state.admin.error.is_none());
+        assert_eq!(
+            state.admin.notice.as_deref(),
+            Some("Código de convite atualizado.")
+        );
+    }
+
+    #[test]
+    fn admin_event_notices_and_removed_from_room_update_ui_state() {
+        let mut state = state_with_code();
+        state.handle_action(UserAction::SubmitOnboarding);
+        state.apply_event(UiEvent::RoomsUpdated(vec![
+            RoomSummary {
+                name: "geral".to_owned(),
+                title: "Geral".to_owned(),
+                participants: Vec::new(),
+            },
+            RoomSummary {
+                name: "sala-2".to_owned(),
+                title: "Reunião".to_owned(),
+                participants: Vec::new(),
+            },
+        ]));
+        state.handle_action(UserAction::JoinRoom("geral".to_owned()));
+        state.apply_event(UiEvent::Joined {
+            room: "geral".to_owned(),
+            local_identity: "pedro".to_owned(),
+            participants: vec![person("pedro")],
+        });
+
+        state.apply_event(UiEvent::AdminStoppedScreenShare);
+        assert_eq!(
+            room(&state).chat.notice.as_deref(),
+            Some("Um admin parou sua transmissão")
+        );
+
+        // Move shows room title and survives room reset when Joined completes.
+        state.apply_event(UiEvent::MovedByAdmin {
+            to_room: "sala-2".to_owned(),
+        });
+        state.apply_event(UiEvent::Connecting);
+        state.apply_event(UiEvent::Joined {
+            room: "sala-2".to_owned(),
+            local_identity: "pedro".to_owned(),
+            participants: vec![person("pedro")],
+        });
+        assert_eq!(room(&state).room, "sala-2");
+        assert_eq!(
+            room(&state).chat.notice.as_deref(),
+            Some("Um admin moveu você para Reunião")
+        );
+
+        // Kicked returns to Lobby and keeps notice across RoomsUpdated.
+        state.apply_event(UiEvent::Left);
+        state.apply_event(UiEvent::RemovedFromRoom {
+            reason: RemovalReason::Kicked,
+        });
+        assert!(matches!(state.screen, Screen::Lobby));
+        assert_eq!(
+            state.lobby_notice.as_deref(),
+            Some("Você foi removido da sala")
+        );
+        state.apply_event(UiEvent::RoomsUpdated(Vec::new()));
+        assert_eq!(
+            state.lobby_notice.as_deref(),
+            Some("Você foi removido da sala")
+        );
+
+        // RoomDeleted when received directly from InRoom also returns to Lobby.
+        state.apply_event(UiEvent::RoomsUpdated(vec![RoomSummary {
+            name: "sala-2".to_owned(),
+            title: "Reunião".to_owned(),
+            participants: Vec::new(),
+        }]));
+        state.handle_action(UserAction::JoinRoom("sala-2".to_owned()));
+        state.apply_event(UiEvent::Joined {
+            room: "sala-2".to_owned(),
+            local_identity: "pedro".to_owned(),
+            participants: vec![person("pedro")],
+        });
+        state.apply_event(UiEvent::RemovedFromRoom {
+            reason: RemovalReason::RoomDeleted,
+        });
+        assert!(matches!(state.screen, Screen::Lobby));
+        assert_eq!(state.lobby_notice.as_deref(), Some("A sala foi apagada"));
     }
 }

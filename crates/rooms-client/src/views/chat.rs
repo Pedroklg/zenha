@@ -106,6 +106,7 @@ pub fn show(
     chat: &mut ChatState,
     participants: &[ParticipantView],
     local_identity: &str,
+    is_admin: bool,
     images: &mut ChatImages,
 ) -> Vec<UserAction> {
     let mut actions = Vec::new();
@@ -172,7 +173,15 @@ pub fn show(
                         .inner_margin(Margin::same(16)),
                 )
                 .show(ui, |ui| {
-                    messages(ui, chat, participants, local_identity, images, &mut actions);
+                    messages(
+                        ui,
+                        chat,
+                        participants,
+                        local_identity,
+                        is_admin,
+                        images,
+                        &mut actions,
+                    );
                 });
         });
     actions
@@ -217,6 +226,7 @@ fn messages(
     chat: &ChatState,
     participants: &[ParticipantView],
     local_identity: &str,
+    is_admin: bool,
     images: &mut ChatImages,
     actions: &mut Vec<UserAction>,
 ) {
@@ -242,7 +252,7 @@ fn messages(
             for entry in &chat.messages {
                 match entry {
                     ChatEntry::Text(message) => {
-                        text_entry(ui, message, local_identity, actions);
+                        text_entry(ui, message, local_identity, is_admin, actions);
                         ui.add_space(10.0);
                     }
                     ChatEntry::File(file) => {
@@ -258,6 +268,7 @@ fn text_entry(
     ui: &mut egui::Ui,
     message: &ChatMessageView,
     local_identity: &str,
+    is_admin: bool,
     actions: &mut Vec<UserAction>,
 ) {
     let is_self = !local_identity.is_empty() && message.sender_id == local_identity;
@@ -284,7 +295,7 @@ fn text_entry(
         });
         ui.label(RichText::new(&message.text).color(theme::TEXT_SECONDARY));
     });
-    if message.saved && is_self {
+    if message.saved && (is_self || is_admin) {
         entry.response.container_context_menu(|ui| {
             if ui.button("Apagar mensagem").clicked() {
                 actions.push(UserAction::DeleteChat(message.id.clone()));

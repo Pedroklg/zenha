@@ -23,7 +23,7 @@ use crate::settings::VoiceMode;
 use crate::settings::{self, Settings};
 #[cfg(windows)]
 use crate::single_instance::Listener;
-use crate::state::{AppState, ChatEntry, CredentialOp, Screen, UserAction};
+use crate::state::{AppState, ChatEntry, CredentialOp, Screen, UserAction, room_display_title};
 use crate::theme;
 #[cfg(windows)]
 use crate::tray::{Tray, TrayAction};
@@ -531,12 +531,14 @@ impl eframe::App for App {
         let show_password = self.state.show_password_field();
         let ptt_hint = self.state.push_to_talk_hint();
         let available_update = self.state.visible_update().cloned();
+        let had_admin_dialog = self.state.admin.dialog.is_some();
         let AppState {
             screen,
             form,
             onboarding,
             lobby_voice,
             lobby_error,
+            lobby_notice,
             rooms,
             audio,
             hotkeys,
@@ -545,8 +547,11 @@ impl eframe::App for App {
             muted_on_join,
             invite_copied,
             picker,
+            admin,
             ..
         } = &mut self.state;
+        let can_admin = !matches!(screen, Screen::Onboarding);
+        let is_admin = admin.active;
         let renderer = &mut self.renderer;
         let preview_renderer = &mut self.preview_renderer;
         let images = &mut self.images;
@@ -559,9 +564,13 @@ impl eframe::App for App {
                 rooms,
                 server_host(&form.server_url),
                 lobby_error.as_deref(),
+                lobby_notice.as_deref(),
                 available_update.as_ref(),
+                is_admin,
             ),
-            Screen::Connecting { room } => views::screens::connecting(ui, room),
+            Screen::Connecting { room } => {
+                views::screens::connecting(ui, room_display_title(rooms, room))
+            }
             Screen::InRoom(room) => views::room::show(
                 ui,
                 room,
@@ -574,6 +583,7 @@ impl eframe::App for App {
                 &audio.participant_volumes,
                 ptt_hint.as_deref(),
                 available_update.as_ref(),
+                is_admin,
             ),
         };
         actions.extend(views::settings::show(
@@ -587,8 +597,11 @@ impl eframe::App for App {
                 room_sounds: *room_sounds,
                 muted_on_join: *muted_on_join,
                 invite_copied: *invite_copied,
+                can_admin,
+                admin,
             },
         ));
+        actions.extend(views::room::admin_dialog(ui.ctx(), &mut admin.dialog));
         actions.extend(views::share::picker(
             ui.ctx(),
             picker,
@@ -607,6 +620,8 @@ impl eframe::App for App {
             .iter()
             .any(|action| matches!(action, UserAction::ToggleFullscreen));
         let blocking_overlay_open = had_popup_before_views
+            || had_admin_dialog
+            || self.state.admin.dialog.is_some()
             || ui.ctx().any_popup_open()
             || egui::Popup::is_any_open(ui.ctx())
             || had_hotkey_capture;
