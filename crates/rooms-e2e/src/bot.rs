@@ -192,7 +192,7 @@ fn track(event: &Event, watched: &mut Watched, in_room: &mut bool) {
         }
         Event::WatchingStopped => *watched = None,
         Event::Joined { .. } => *in_room = true,
-        Event::Left | Event::Failed(_) => {
+        Event::Left | Event::RemovedFromRoom { .. } | Event::Failed(_) => {
             *in_room = false;
             *watched = None;
         }

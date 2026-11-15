@@ -485,6 +485,14 @@ impl Translator {
                 }]
             }
             Event::ChatDeleted { id, sender } => vec![UiEvent::ChatDeleted { id, sender }],
+            Event::AdminChanged { .. }
+            | Event::AdminRoomCreated(_)
+            | Event::AdminRoomUpdated(_)
+            | Event::AdminRoomDeleted { .. }
+            | Event::AdminInviteRotated
+            | Event::AdminStoppedScreenShare
+            | Event::MovedByAdmin { .. }
+            | Event::RemovedFromRoom { .. } => Vec::new(),
             Event::CommandFailed(error) => {
                 tracing::warn!(%error, "command failed");
                 match &error {

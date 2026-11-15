@@ -44,8 +44,8 @@ mod video;
 pub mod testing;
 
 pub use api::{
-    AudioDevice, AudioDevices, Command, Event, FileTransfer, NoiseSuppression, Participant,
-    SessionConfig, SessionError, TransferState,
+    AdminAction, AudioDevice, AudioDevices, Command, Event, FileTransfer, NoiseSuppression,
+    Participant, RemovalReason, SessionConfig, SessionError, TransferState,
 };
 pub use backend::{BackendEvent, ConnectedRoom, MediaBackend};
 pub use backend_options::{

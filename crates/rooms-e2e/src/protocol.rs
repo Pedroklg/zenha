@@ -1,8 +1,9 @@
 //! Protocolo de linhas JSON entre o orquestrador e os bots: comandos no stdin, eventos no stdout.
 
 use rooms_core::{
-    AudioDevice, AudioDevices, CaptureKind, CaptureTarget, Command, Cue, Event, NoiseSuppression,
-    Participant, SessionError, SharePreset, TEST_PATTERN_TARGET_ID, TransferState,
+    AdminAction, AudioDevice, AudioDevices, CaptureKind, CaptureTarget, Command, Cue, Event,
+    NoiseSuppression, Participant, RemovalReason, SessionError, SharePreset,
+    TEST_PATTERN_TARGET_ID, TransferState,
 };
 use serde::{Deserialize, Serialize};
 
@@ -88,6 +89,56 @@ pub enum BotCommand {
     PlayCue {
         cue: String,
     },
+    #[serde(alias = "admin-login")]
+    AdminLogin {
+        password: String,
+    },
+    #[serde(alias = "admin-logout")]
+    AdminLogout,
+    #[serde(alias = "admin-create-room")]
+    AdminCreateRoom {
+        title: String,
+    },
+    #[serde(alias = "admin-update-room")]
+    AdminUpdateRoom {
+        id: String,
+        title: Option<String>,
+        position: Option<usize>,
+    },
+    #[serde(alias = "admin-delete-room")]
+    AdminDeleteRoom {
+        id: String,
+    },
+    #[serde(alias = "admin-mute-participant")]
+    AdminMuteParticipant {
+        room: String,
+        identity: String,
+    },
+    #[serde(alias = "admin-stop-share-participant")]
+    AdminStopShareParticipant {
+        room: String,
+        identity: String,
+    },
+    #[serde(alias = "admin-kick-participant")]
+    AdminKickParticipant {
+        room: String,
+        identity: String,
+    },
+    #[serde(alias = "admin-move-participant")]
+    AdminMoveParticipant {
+        room: String,
+        identity: String,
+        to_room: String,
+    },
+    #[serde(alias = "admin-delete-chat")]
+    AdminDeleteChat {
+        room: String,
+        id: String,
+    },
+    #[serde(alias = "admin-rotate-invite")]
+    AdminRotateInvite {
+        new_code: String,
+    },
     Quit,
 }
 
@@ -145,6 +196,59 @@ impl BotCommand {
             Self::CancelCaptureTargets => Command::CancelCaptureTargets,
             Self::SetUiVisible { visible } => Command::SetUiVisible(*visible),
             Self::PlayCue { cue } => Command::PlayCue(parse_cue(cue)?),
+            Self::AdminLogin { password } => Command::AdminLogin {
+                password: password.clone(),
+            },
+            Self::AdminLogout => Command::AdminLogout,
+            Self::AdminCreateRoom { title } => Command::Admin(AdminAction::CreateRoom {
+                title: title.clone(),
+            }),
+            Self::AdminUpdateRoom {
+                id,
+                title,
+                position,
+            } => Command::Admin(AdminAction::UpdateRoom {
+                id: id.clone(),
+                title: title.clone(),
+                position: *position,
+            }),
+            Self::AdminDeleteRoom { id } => {
+                Command::Admin(AdminAction::DeleteRoom { id: id.clone() })
+            }
+            Self::AdminMuteParticipant { room, identity } => {
+                Command::Admin(AdminAction::MuteParticipant {
+                    room: room.clone(),
+                    identity: identity.clone(),
+                })
+            }
+            Self::AdminStopShareParticipant { room, identity } => {
+                Command::Admin(AdminAction::StopShareParticipant {
+                    room: room.clone(),
+                    identity: identity.clone(),
+                })
+            }
+            Self::AdminKickParticipant { room, identity } => {
+                Command::Admin(AdminAction::KickParticipant {
+                    room: room.clone(),
+                    identity: identity.clone(),
+                })
+            }
+            Self::AdminMoveParticipant {
+                room,
+                identity,
+                to_room,
+            } => Command::Admin(AdminAction::MoveParticipant {
+                room: room.clone(),
+                identity: identity.clone(),
+                to_room: to_room.clone(),
+            }),
+            Self::AdminDeleteChat { room, id } => Command::Admin(AdminAction::DeleteChat {
+                room: room.clone(),
+                id: id.clone(),
+            }),
+            Self::AdminRotateInvite { new_code } => Command::Admin(AdminAction::RotateInvite {
+                new_code: new_code.clone(),
+            }),
             Self::MeasureFrames { .. } | Self::Quit => return None,
         })
     }
@@ -224,6 +328,13 @@ pub fn error_kind(error: &SessionError) -> &'static str {
         SessionError::Unauthorized => "unauthorized",
         SessionError::RateLimited => "rate_limited",
         SessionError::Chat(_) => "chat",
+        SessionError::AdminInvalidPassword => "admin_invalid_password",
+        SessionError::AdminUnauthorized => "admin_unauthorized",
+        SessionError::AdminDisabled => "admin_disabled",
+        SessionError::AdminForbidden => "admin_forbidden",
+        SessionError::AdminRateLimited => "admin_rate_limited",
+        SessionError::AdminTargetNotFound(_) => "admin_target_not_found",
+        SessionError::Admin(_) => "admin",
         SessionError::Connection(_) => "connection",
         SessionError::InvalidInput(_) => "invalid_input",
         SessionError::NotInRoom => "not_in_room",
@@ -326,6 +437,30 @@ pub enum BotEvent {
         identity: String,
     },
     WatchingStopped,
+    AdminChanged {
+        active: bool,
+    },
+    AdminRoomCreated {
+        id: String,
+        title: String,
+        position: usize,
+    },
+    AdminRoomUpdated {
+        id: String,
+        title: String,
+        position: usize,
+    },
+    AdminRoomDeleted {
+        id: String,
+    },
+    AdminInviteRotated,
+    AdminStoppedScreenShare,
+    MovedByAdmin {
+        to_room: String,
+    },
+    RemovedFromRoom {
+        reason: String,
+    },
     CommandFailed {
         error: ErrorInfo,
     },
@@ -456,6 +591,29 @@ impl BotEvent {
                 identity: identity.clone(),
             },
             Event::WatchingStopped => Self::WatchingStopped,
+            Event::AdminChanged { active } => Self::AdminChanged { active: *active },
+            Event::AdminRoomCreated(room) => Self::AdminRoomCreated {
+                id: room.id.clone(),
+                title: room.title.clone(),
+                position: room.position,
+            },
+            Event::AdminRoomUpdated(room) => Self::AdminRoomUpdated {
+                id: room.id.clone(),
+                title: room.title.clone(),
+                position: room.position,
+            },
+            Event::AdminRoomDeleted { id } => Self::AdminRoomDeleted { id: id.clone() },
+            Event::AdminInviteRotated => Self::AdminInviteRotated,
+            Event::AdminStoppedScreenShare => Self::AdminStoppedScreenShare,
+            Event::MovedByAdmin { to_room } => Self::MovedByAdmin {
+                to_room: to_room.clone(),
+            },
+            Event::RemovedFromRoom { reason } => Self::RemovedFromRoom {
+                reason: match reason {
+                    RemovalReason::Kicked => "kicked".to_owned(),
+                    RemovalReason::RoomDeleted => "room_deleted".to_owned(),
+                },
+            },
             Event::ChatHistory { .. } | Event::ChatDeleted { .. } => return None,
             Event::CommandFailed(error) => Self::CommandFailed {
                 error: error.into(),
@@ -806,6 +964,50 @@ mod tests {
             Some(Command::SetParticipantVolume {
                 identity: "alice".to_owned(),
                 percent: 70,
+            })
+        );
+    }
+
+    #[test]
+    fn admin_commands_errors_and_events_round_trip() {
+        assert_eq!(
+            parse_command(r#"{"cmd":"admin-login","password":"pw"}"#),
+            Ok(BotCommand::AdminLogin {
+                password: "pw".to_owned()
+            })
+        );
+        assert_eq!(
+            BotCommand::AdminMoveParticipant {
+                room: "geral".to_owned(),
+                identity: "ana".to_owned(),
+                to_room: "jogos".to_owned(),
+            }
+            .to_core(),
+            Some(Command::Admin(AdminAction::MoveParticipant {
+                room: "geral".to_owned(),
+                identity: "ana".to_owned(),
+                to_room: "jogos".to_owned(),
+            }))
+        );
+        assert_eq!(
+            error_kind(&SessionError::AdminInvalidPassword),
+            "admin_invalid_password"
+        );
+        assert_eq!(error_kind(&SessionError::AdminDisabled), "admin_disabled");
+        assert_eq!(
+            BotEvent::from_core(&Event::RemovedFromRoom {
+                reason: RemovalReason::RoomDeleted,
+            }),
+            Some(BotEvent::RemovedFromRoom {
+                reason: "room_deleted".to_owned(),
+            })
+        );
+        assert_eq!(
+            BotEvent::from_core(&Event::MovedByAdmin {
+                to_room: "afk".to_owned(),
+            }),
+            Some(BotEvent::MovedByAdmin {
+                to_room: "afk".to_owned(),
             })
         );
     }

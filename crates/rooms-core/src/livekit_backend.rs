@@ -8,10 +8,10 @@ use async_trait::async_trait;
 use futures_util::StreamExt;
 use livekit::options::{self, TrackPublishOptions};
 use livekit::prelude::{
-    AudioError, AudioProcessingOptions, DataPacket, DataPacketKind, LocalAudioTrack, LocalTrack,
-    Participant as SdkParticipant, PlatformAudio, PlayoutDeviceInfo, RecordingDeviceInfo,
-    RemoteParticipant, RemoteTrack, RemoteTrackPublication, Room, RoomError, RoomEvent,
-    RoomOptions, TrackKind, TrackPublication, TrackSid, TrackSource,
+    AudioError, AudioProcessingOptions, DataPacket, DataPacketKind, DisconnectReason,
+    LocalAudioTrack, LocalTrack, Participant as SdkParticipant, PlatformAudio, PlayoutDeviceInfo,
+    RecordingDeviceInfo, RemoteParticipant, RemoteTrack, RemoteTrackPublication, Room, RoomError,
+    RoomEvent, RoomOptions, TrackKind, TrackPublication, TrackSid, TrackSource,
 };
 use livekit::webrtc::audio_frame::AudioFrame;
 use livekit::webrtc::audio_source::native::NativeAudioSource;
@@ -25,7 +25,8 @@ use tokio::task::JoinHandle;
 use tokio::time::timeout;
 
 use crate::api::{
-    AudioDevice, AudioDevices, FileTransfer, NoiseSuppression, Participant, SessionError,
+    AudioDevice, AudioDevices, FileTransfer, NoiseSuppression, Participant, RemovalReason,
+    SessionError,
 };
 use crate::audio_render::{OutputStream, RENDER_CHANNELS, RENDER_SAMPLE_RATE, play_once};
 use crate::backend::{BackendEvent, ConnectedRoom, MediaBackend};
@@ -1531,14 +1532,32 @@ fn mute_event(
     participant: &SdkParticipant,
     publication: &TrackPublication,
     muted: bool,
+    flags: &Flags,
 ) -> Vec<BackendEvent> {
     if publication.source() != TrackSource::Microphone {
         return Vec::new();
+    }
+    if matches!(participant, SdkParticipant::Local(_)) {
+        flags.microphone_muted.store(muted, Ordering::SeqCst);
     }
     vec![BackendEvent::MuteChanged {
         identity: String::from(participant.identity()),
         muted,
     }]
+}
+
+fn disconnect_event(reason: DisconnectReason) -> BackendEvent {
+    match reason {
+        DisconnectReason::ParticipantRemoved => BackendEvent::RemovedFromRoom {
+            reason: RemovalReason::Kicked,
+        },
+        DisconnectReason::RoomDeleted => BackendEvent::RemovedFromRoom {
+            reason: RemovalReason::RoomDeleted,
+        },
+        other => BackendEvent::Disconnected {
+            reason: format!("{other:?}"),
+        },
+    }
 }
 
 fn translate(
@@ -1563,11 +1582,11 @@ fn translate(
         RoomEvent::TrackMuted {
             participant,
             publication,
-        } => mute_event(&participant, &publication, true),
+        } => mute_event(&participant, &publication, true, flags),
         RoomEvent::TrackUnmuted {
             participant,
             publication,
-        } => mute_event(&participant, &publication, false),
+        } => mute_event(&participant, &publication, false, flags),
         RoomEvent::TrackPublished {
             participant,
             publication,
@@ -1732,14 +1751,12 @@ fn translate(
             topic,
             kind,
             participant,
-        } => match (kind, topic, participant) {
-            (DataPacketKind::Reliable, Some(topic), Some(sender)) => {
-                vec![BackendEvent::DataReceived {
-                    sender: String::from(sender.identity()),
-                    topic,
-                    payload: Arc::unwrap_or_clone(payload),
-                }]
-            }
+        } => match (kind, topic) {
+            (DataPacketKind::Reliable, Some(topic)) => vec![BackendEvent::DataReceived {
+                sender: participant.map(|sender| String::from(sender.identity())),
+                topic,
+                payload: Arc::unwrap_or_clone(payload),
+            }],
             _ => Vec::new(),
         },
         RoomEvent::ByteStreamOpened {
@@ -1761,9 +1778,7 @@ fn translate(
         }
         RoomEvent::Reconnecting => vec![BackendEvent::Reconnecting],
         RoomEvent::Reconnected => vec![BackendEvent::Reconnected],
-        RoomEvent::Disconnected { reason } => vec![BackendEvent::Disconnected {
-            reason: format!("{reason:?}"),
-        }],
+        RoomEvent::Disconnected { reason } => vec![disconnect_event(reason.into())],
         _ => Vec::new(),
     }
 }
@@ -1780,7 +1795,10 @@ async fn pump_events(
     while let Some(event) = room_events.recv().await {
         let mut finished = false;
         for backend_event in translate(event, &room, &mut speaking, &flags, &watch, &tx, &files) {
-            finished |= matches!(backend_event, BackendEvent::Disconnected { .. });
+            finished |= matches!(
+                backend_event,
+                BackendEvent::Disconnected { .. } | BackendEvent::RemovedFromRoom { .. }
+            );
             if tx.send(backend_event).is_err() {
                 return;
             }
@@ -1855,5 +1873,27 @@ mod tests {
         let guard = backend.flags.participant_volumes.lock().unwrap();
         assert_eq!(guard.gain_for("alice"), Some(2.0));
         assert_eq!(guard.gain_for("bob"), None);
+    }
+
+    #[test]
+    fn disconnect_reason_maps_removed_and_room_deleted() {
+        assert_eq!(
+            disconnect_event(DisconnectReason::ParticipantRemoved),
+            BackendEvent::RemovedFromRoom {
+                reason: RemovalReason::Kicked
+            }
+        );
+        assert_eq!(
+            disconnect_event(DisconnectReason::RoomDeleted),
+            BackendEvent::RemovedFromRoom {
+                reason: RemovalReason::RoomDeleted
+            }
+        );
+        assert_eq!(
+            disconnect_event(DisconnectReason::ServerShutdown),
+            BackendEvent::Disconnected {
+                reason: "ServerShutdown".to_owned()
+            }
+        );
     }
 }
