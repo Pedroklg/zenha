@@ -1,7 +1,8 @@
-# Liga, desliga ou mostra o estado da VM do servidor na Azure, ou baixa um backup do chat salvo.
-# Uso: server.cmd start|stop|status|backup [-ResourceGroup zenha-rg] [-VmName zenha-vm] [-OutDir backups]
+# Liga, desliga ou mostra o estado da VM do servidor na Azure, controla a agenda ou baixa um backup do chat salvo.
+# Uso: server.cmd start|stop|status|backup|schedule [on|off|status] [-ResourceGroup zenha-rg] [-VmName zenha-vm] [-OutDir backups]
 param(
-    [Parameter(Mandatory = $true)][ValidateSet('start', 'stop', 'status', 'backup')][string]$Action,
+    [Parameter(Mandatory = $true, Position = 0)][ValidateSet('start', 'stop', 'status', 'backup', 'schedule')][string]$Action,
+    [Parameter(Position = 1)][ValidateSet('on', 'off', 'status')][string]$ScheduleAction,
     [string]$ResourceGroup = $(if ($env:ZENHA_AZURE_RG) { $env:ZENHA_AZURE_RG } else { 'zenha-rg' }),
     [string]$VmName = $(if ($env:ZENHA_AZURE_VM) { $env:ZENHA_AZURE_VM } else { 'zenha-vm' }),
     [string]$OutDir
@@ -26,6 +27,32 @@ function Show-Status {
 function Get-PowerState {
     Invoke-Az vm get-instance-view -g $ResourceGroup -n $VmName `
         --query "instanceView.statuses[?starts_with(code,'PowerState/')].code | [0]" -o tsv
+}
+
+function Get-ScheduleIds {
+    $ids = @(Invoke-Az resource list -g $ResourceGroup --resource-type Microsoft.Logic/workflows `
+        --query "[?starts_with(name, 'zenha-schedule-')].id" -o tsv) | Where-Object { $_ }
+    if (-not $ids) { throw "no zenha-schedule-* workflows found in $ResourceGroup" }
+    $ids
+}
+
+function Show-Schedule {
+    $triggerIds = @(Get-ScheduleIds | ForEach-Object { "$_/triggers/Recurrence" })
+    $triggers = Invoke-Az resource show --api-version 2019-05-01 -o json --ids @triggerIds | ConvertFrom-Json
+    $triggers | ForEach-Object {
+        [pscustomobject]@{
+            workflow = ($_.id -split '/')[-3]
+            state    = $_.properties.state
+            nextRun  = if ($_.properties.nextExecutionTime) { ([datetime]$_.properties.nextExecutionTime).ToString('ddd dd/MM HH:mm') } else { '-' }
+        }
+    } | Format-Table -AutoSize
+}
+
+function Set-Schedule([string]$state) {
+    foreach ($id in Get-ScheduleIds) {
+        Invoke-Az resource update --api-version 2019-05-01 --set "properties.state=$state" -o none --ids $id
+    }
+    Show-Schedule
 }
 
 function Invoke-Remote([string]$script) {
@@ -106,4 +133,12 @@ switch ($Action) {
     }
     'status' { Show-Status }
     'backup' { Backup-Chat }
+    'schedule' {
+        switch ($ScheduleAction) {
+            'status' { Show-Schedule }
+            'on' { Set-Schedule 'Enabled' }
+            'off' { Set-Schedule 'Disabled' }
+            default { throw 'usage: server.cmd schedule on|off|status' }
+        }
+    }
 }
