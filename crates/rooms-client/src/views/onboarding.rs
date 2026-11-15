@@ -63,7 +63,10 @@ pub fn show(
     actions
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "egui view renders form inputs and callback state directly"
+)]
 fn card_contents(
     ui: &mut egui::Ui,
     form: &mut LoginForm,

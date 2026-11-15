@@ -143,7 +143,10 @@ impl ChatStore {
     }
 
     #[cfg(test)]
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "test helper populates every message column explicitly"
+    )]
     pub async fn insert_at(
         &self,
         room: String,

@@ -37,6 +37,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 subtle = "2.6"
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
+rfd = { version = "0.15", default-features = false }
 rusqlite = { version = "0.42.0", features = ["bundled"] }
 thiserror = "2.0"
 tokio = { version = "1.54", features = ["macros", "rt-multi-thread", "net", "signal", "sync", "time"] }
@@ -55,11 +56,30 @@ unused_must_use = "deny"
 
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
+
+# Proibições já ativas no projeto (GER-01)
 dbg_macro = "warn"
 expect_used = "warn"
 panic = "warn"
 todo = "warn"
 unwrap_used = "warn"
+
+# Segurança de FFI e supressões documentadas (CORE-03, GER-08)
+undocumented_unsafe_blocks = "warn"
+allow_attributes = "warn"
+allow_attributes_without_reason = "warn"
+
+# Async, concorrência e memória (CORE-06, CORE-08, CORE-09)
+large_futures = "warn"
+mutex_atomic = "warn"
+rc_buffer = "warn"
+rc_mutex = "warn"
+inefficient_to_string = "warn"
+implicit_clone = "warn"
+cloned_instead_of_copied = "warn"
+flat_map_option = "warn"
+manual_let_else = "warn"
+inconsistent_struct_constructor = "warn"
 
 [profile.dev]
 opt-level = 1

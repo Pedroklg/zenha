@@ -29,7 +29,7 @@ tracing-subscriber.workspace = true
 [target.'cfg(windows)'.dependencies]
 global-hotkey.workspace = true
 keyring.workspace = true
-rfd = { version = "0.15", default-features = false }
+rfd.workspace = true
 tray-icon.workspace = true
 
 [build-dependencies]
