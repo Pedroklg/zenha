@@ -155,6 +155,63 @@ pub fn gear(painter: &Painter, rect: Rect, color: Color32, _off: bool) {
     painter.circle_stroke(c, r * 0.28, stroke);
 }
 
+pub fn temporary_clock(painter: &Painter, rect: Rect, color: Color32) {
+    let center = rect.center();
+    let radius = rect.width().min(rect.height()) * 0.42;
+    let stroke = Stroke::new(1.5, color);
+    painter.circle_stroke(center, radius, stroke);
+    painter.line_segment(
+        [center, Pos2::new(center.x, center.y - radius * 0.56)],
+        stroke,
+    );
+    painter.line_segment(
+        [
+            center,
+            Pos2::new(center.x + radius * 0.46, center.y + radius * 0.24),
+        ],
+        stroke,
+    );
+}
+
+pub fn accent_icon_button(
+    ui: &mut egui::Ui,
+    size: f32,
+    icon: fn(&Painter, Rect, Color32),
+    active: bool,
+    tooltip: &str,
+) -> Response {
+    let (rect, response) = ui.allocate_exact_size(Vec2::splat(size), Sense::click());
+    if ui.is_rect_visible(rect) {
+        let hovered = ui.is_enabled() && response.hovered();
+        let (bg, border, fg) = if active {
+            let bg = if hovered {
+                theme::CONTROL_HOVER
+            } else {
+                theme::ACTIVE_ROOM_BG
+            };
+            (bg, theme::ACCENT, theme::ACCENT_TEXT)
+        } else {
+            let bg = if hovered {
+                theme::CONTROL_HOVER
+            } else {
+                theme::CONTROL
+            };
+            (bg, theme::BORDER, theme::TEXT_WEAK)
+        };
+        let painter = ui.painter();
+        painter.rect_filled(rect, CornerRadius::same(6), bg);
+        painter.rect_stroke(
+            rect,
+            CornerRadius::same(6),
+            Stroke::new(1.0, border),
+            StrokeKind::Inside,
+        );
+        let icon_rect = rect.shrink(size * 0.24);
+        icon(painter, icon_rect, fg);
+    }
+    response.on_hover_text(tooltip)
+}
+
 pub fn icon_button(
     ui: &mut egui::Ui,
     size: f32,

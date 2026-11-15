@@ -8,6 +8,7 @@ use eframe::egui;
 
 use crate::chat_images::{ChatImages, ViewerImage};
 use crate::cli::{self, StartupLink};
+use crate::clipboard_image::{self, PasteImageError};
 use crate::core_session::CoreSession;
 use crate::credentials;
 use crate::demo::DemoSession;
@@ -55,6 +56,8 @@ pub struct App {
     save_sender: Sender<Result<PathBuf, ()>>,
     open_results: Receiver<Result<(), ()>>,
     open_sender: Sender<Result<(), ()>>,
+    paste_results: Receiver<Result<PathBuf, PasteImageError>>,
+    paste_sender: Sender<Result<PathBuf, PasteImageError>>,
     update_rx: Option<Receiver<AvailableUpdate>>,
     #[cfg(windows)]
     forwarded_links: Option<Receiver<String>>,
@@ -91,6 +94,7 @@ impl App {
         }
         let (save_sender, save_results) = channel();
         let (open_sender, open_results) = channel();
+        let (paste_sender, paste_results) = channel();
         let update_rx = (!demo_flag)
             .then(|| update::spawn_check(ctx.clone()))
             .flatten();
@@ -118,6 +122,8 @@ impl App {
             save_sender,
             open_results,
             open_sender,
+            paste_results,
+            paste_sender,
             update_rx,
             #[cfg(windows)]
             forwarded_links,
@@ -262,6 +268,20 @@ impl App {
                 .collect()
         });
         resolved.extend(dropped.into_iter().map(UserAction::AttachFile));
+        if self.state.can_paste_chat_image() && !ctx.will_discard() {
+            let pasted: Vec<Arc<egui::ColorImage>> = ctx.input(|i| {
+                i.events
+                    .iter()
+                    .filter_map(|event| match event {
+                        egui::Event::PasteImage(image) => Some(Arc::clone(image)),
+                        _ => None,
+                    })
+                    .collect()
+            });
+            for image in pasted {
+                self.paste_image_in_background(ctx, image);
+            }
+        }
         resolved
     }
 
@@ -352,6 +372,36 @@ impl App {
         }
     }
 
+    fn paste_image_in_background(&self, ctx: &egui::Context, image: Arc<egui::ColorImage>) {
+        let sender = self.paste_sender.clone();
+        let ctx = ctx.clone();
+        let spawned = std::thread::Builder::new()
+            .name("paste-clipboard-image".to_owned())
+            .spawn(move || {
+                let dir = clipboard_image::paste_temp_dir();
+                let result = clipboard_image::save_pasted_image(&image, &dir);
+                let _ = sender.send(result);
+                ctx.request_repaint();
+            });
+        if let Err(err) = spawned {
+            tracing::warn!(%err, "could not start clipboard image thread");
+            let _ = self.paste_sender.send(Err(PasteImageError::PrepareFailed));
+        }
+    }
+
+    fn pump_pasted_images(&mut self, ctx: &egui::Context) {
+        let mut attached = Vec::new();
+        while let Ok(result) = self.paste_results.try_recv() {
+            match result {
+                Ok(path) => attached.push(UserAction::AttachFile(path)),
+                Err(err) => self.state.set_chat_notice(err.user_message().to_owned()),
+            }
+        }
+        if !attached.is_empty() {
+            self.dispatch(ctx, attached);
+        }
+    }
+
     fn dispatch(&mut self, ctx: &egui::Context, actions: Vec<UserAction>) {
         if actions.contains(&UserAction::SubmitOnboarding) && self.state.can_submit_onboarding() {
             self.session.configure(self.state.credentials());
@@ -426,6 +476,7 @@ impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.pump_saves();
         self.pump_image_opens();
+        self.pump_pasted_images(ui.ctx());
         if let Some(label) = self.banner {
             views::screens::demo_banner(ui, label);
         }
