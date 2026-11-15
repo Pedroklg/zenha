@@ -2,7 +2,8 @@ use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use rooms_protocol::RoomSummary;
+use rooms_core::{AdminAction, RemovalReason};
+use rooms_protocol::{AdminRoom, RoomSummary};
 
 use crate::core_session::TestFeed;
 use crate::ui_model::{
@@ -63,6 +64,12 @@ struct Scheduled {
     event: UiEvent,
 }
 
+struct DemoRoom {
+    id: String,
+    title: String,
+    idle_occupants: Vec<String>,
+}
+
 pub struct DemoSession {
     commands_tx: Sender<UiCommand>,
     commands_rx: Receiver<UiCommand>,
@@ -70,6 +77,9 @@ pub struct DemoSession {
     scheduled: Vec<Scheduled>,
     next_seq: u64,
     room: Option<String>,
+    rooms_list: Vec<DemoRoom>,
+    room_counter: u64,
+    admin_active: bool,
     participants: Vec<ParticipantView>,
     muted: bool,
     chat_counter: u64,
@@ -128,6 +138,25 @@ impl DemoSession {
             scheduled: Vec::new(),
             next_seq: 0,
             room: None,
+            rooms_list: vec![
+                DemoRoom {
+                    id: "geral".to_owned(),
+                    title: "Geral".to_owned(),
+                    idle_occupants: vec!["Ana".to_owned(), "Bruno".to_owned()],
+                },
+                DemoRoom {
+                    id: "jogos".to_owned(),
+                    title: "Jogos".to_owned(),
+                    idle_occupants: vec!["Carla".to_owned()],
+                },
+                DemoRoom {
+                    id: "musica".to_owned(),
+                    title: "Música".to_owned(),
+                    idle_occupants: Vec::new(),
+                },
+            ],
+            room_counter: 0,
+            admin_active: false,
             participants: Vec::new(),
             muted: false,
             chat_counter: 0,
@@ -261,6 +290,201 @@ impl DemoSession {
             UiCommand::RefreshRooms => {
                 let rooms = self.rooms();
                 self.schedule(Duration::ZERO, UiEvent::RoomsUpdated(rooms));
+            }
+            UiCommand::AdminLogin { password } => {
+                if password.is_empty() {
+                    self.schedule(
+                        Duration::ZERO,
+                        UiEvent::AdminFailed {
+                            message: "Senha de administrador incorreta.".to_owned(),
+                        },
+                    );
+                } else {
+                    self.admin_active = true;
+                    self.schedule(Duration::ZERO, UiEvent::AdminChanged { active: true });
+                }
+            }
+            UiCommand::AdminLogout => {
+                self.admin_active = false;
+                self.schedule(Duration::ZERO, UiEvent::AdminChanged { active: false });
+            }
+            UiCommand::Admin(action) => self.handle_admin(action),
+        }
+    }
+
+    fn handle_admin(&mut self, action: AdminAction) {
+        if !self.admin_active {
+            self.schedule(
+                Duration::ZERO,
+                UiEvent::AdminFailed {
+                    message: "Sessão de administrador expirada. Entre novamente.".to_owned(),
+                },
+            );
+            return;
+        }
+        match action {
+            AdminAction::CreateRoom { title } => {
+                self.room_counter += 1;
+                let id = format!("demo-sala-{}", self.room_counter);
+                let position = self.rooms_list.len();
+                self.rooms_list.push(DemoRoom {
+                    id: id.clone(),
+                    title: title.clone(),
+                    idle_occupants: Vec::new(),
+                });
+                self.schedule(
+                    Duration::ZERO,
+                    UiEvent::AdminRoomCreated(AdminRoom {
+                        id,
+                        title,
+                        position,
+                    }),
+                );
+                let rooms = self.rooms();
+                self.schedule(Duration::ZERO, UiEvent::RoomsUpdated(rooms));
+            }
+            AdminAction::UpdateRoom {
+                id,
+                title,
+                position,
+            } => {
+                let Some(idx) = self.rooms_list.iter().position(|r| r.id == id) else {
+                    self.schedule(
+                        Duration::ZERO,
+                        UiEvent::AdminFailed {
+                            message: "Sala, participante ou mensagem não encontrado no servidor."
+                                .to_owned(),
+                        },
+                    );
+                    return;
+                };
+                let mut entry = self.rooms_list.remove(idx);
+                if let Some(title) = title {
+                    entry.title = title;
+                }
+                let final_pos = position.unwrap_or(idx).min(self.rooms_list.len());
+                let updated = AdminRoom {
+                    id: entry.id.clone(),
+                    title: entry.title.clone(),
+                    position: final_pos,
+                };
+                self.rooms_list.insert(final_pos, entry);
+                self.schedule(Duration::ZERO, UiEvent::AdminRoomUpdated(updated));
+                let rooms = self.rooms();
+                self.schedule(Duration::ZERO, UiEvent::RoomsUpdated(rooms));
+            }
+            AdminAction::DeleteRoom { id } => {
+                if self.rooms_list.len() <= 1 {
+                    self.schedule(
+                        Duration::ZERO,
+                        UiEvent::AdminFailed {
+                            message: "Não é possível apagar a última sala.".to_owned(),
+                        },
+                    );
+                    return;
+                }
+                let before = self.rooms_list.len();
+                self.rooms_list.retain(|r| r.id != id);
+                if self.rooms_list.len() == before {
+                    self.schedule(
+                        Duration::ZERO,
+                        UiEvent::AdminFailed {
+                            message: "Sala, participante ou mensagem não encontrado no servidor."
+                                .to_owned(),
+                        },
+                    );
+                    return;
+                }
+                if self.room.as_deref() == Some(id.as_str()) {
+                    self.room = None;
+                    self.participants.clear();
+                    self.share_preview = None;
+                    self.watch = None;
+                    self.ana_sharing = false;
+                    self.schedule(Duration::ZERO, UiEvent::Left);
+                    self.schedule(
+                        Duration::ZERO,
+                        UiEvent::RemovedFromRoom {
+                            reason: RemovalReason::RoomDeleted,
+                        },
+                    );
+                }
+                self.schedule(Duration::ZERO, UiEvent::AdminRoomDeleted { id });
+                let rooms = self.rooms();
+                self.schedule(Duration::ZERO, UiEvent::RoomsUpdated(rooms));
+            }
+            AdminAction::MuteParticipant { identity, .. } => {
+                if let Some(participant) = self
+                    .participants
+                    .iter_mut()
+                    .find(|p| p.identity == identity)
+                {
+                    participant.muted = true;
+                    let updated = participant.clone();
+                    self.schedule(Duration::ZERO, UiEvent::ParticipantUpdated(updated));
+                }
+            }
+            AdminAction::StopShareParticipant { identity, .. } => {
+                if identity == "demo-ana" && self.ana_sharing {
+                    self.ana_sharing = false;
+                    if self.watch.take().is_some() {
+                        self.schedule(Duration::ZERO, UiEvent::WatchingStopped);
+                    }
+                    self.schedule(
+                        Duration::ZERO,
+                        UiEvent::RemoteScreenShareStopped { identity },
+                    );
+                }
+            }
+            AdminAction::KickParticipant { identity, .. } => {
+                let before = self.participants.len();
+                self.participants.retain(|p| p.identity != identity);
+                if self.participants.len() != before {
+                    if identity == "demo-ana" && self.ana_sharing {
+                        self.ana_sharing = false;
+                        if self.watch.take().is_some() {
+                            self.schedule(Duration::ZERO, UiEvent::WatchingStopped);
+                        }
+                        self.schedule(
+                            Duration::ZERO,
+                            UiEvent::RemoteScreenShareStopped {
+                                identity: identity.clone(),
+                            },
+                        );
+                    }
+                    self.schedule(Duration::ZERO, UiEvent::ParticipantLeft { identity });
+                    let rooms = self.rooms();
+                    self.schedule(Duration::ZERO, UiEvent::RoomsUpdated(rooms));
+                }
+            }
+            AdminAction::MoveParticipant {
+                identity, to_room, ..
+            } => {
+                if let Some(pos) = self
+                    .participants
+                    .iter()
+                    .position(|p| p.identity == identity)
+                {
+                    let removed = self.participants.remove(pos);
+                    if let Some(dest) = self.rooms_list.iter_mut().find(|r| r.id == to_room) {
+                        dest.idle_occupants.push(removed.name);
+                    }
+                    self.schedule(Duration::ZERO, UiEvent::ParticipantLeft { identity });
+                    let rooms = self.rooms();
+                    self.schedule(Duration::ZERO, UiEvent::RoomsUpdated(rooms));
+                }
+            }
+            AdminAction::DeleteChat { id, .. } => {
+                self.schedule(
+                    Duration::ZERO,
+                    UiEvent::ChatDeleted {
+                        id,
+                        sender: String::new(),
+                    },
+                );
+            }
+            AdminAction::RotateInvite { .. } => {
+                self.schedule(Duration::ZERO, UiEvent::AdminInviteRotated);
             }
         }
     }
@@ -567,22 +791,17 @@ impl DemoSession {
     }
 
     fn rooms(&self) -> Vec<RoomSummary> {
-        let fixed = [
-            ("geral", vec!["Ana", "Bruno"]),
-            ("jogos", vec!["Carla"]),
-            ("musica", vec![]),
-        ];
-        fixed
-            .into_iter()
-            .map(|(name, occupants)| {
-                let participants = if self.room.as_deref() == Some(name) {
+        self.rooms_list
+            .iter()
+            .map(|room| {
+                let participants = if self.room.as_deref() == Some(room.id.as_str()) {
                     self.participants.iter().map(|p| p.name.clone()).collect()
                 } else {
-                    occupants.into_iter().map(str::to_owned).collect()
+                    room.idle_occupants.clone()
                 };
                 RoomSummary {
-                    name: name.to_owned(),
-                    title: String::new(),
+                    name: room.id.clone(),
+                    title: room.title.clone(),
                     participants,
                 }
             })
@@ -938,5 +1157,54 @@ mod tests {
         session.send(UiCommand::SetUiVisible(false));
         session.send(UiCommand::SetUiVisible(true));
         assert!(drain(&mut session).is_empty());
+    }
+
+    #[test]
+    fn demo_admin_commands_emit_simulated_events() {
+        let mut session = DemoSession::with_delays(DemoDelays::instant());
+        session.send(UiCommand::AdminLogin {
+            password: "admin".to_owned(),
+        });
+        assert_eq!(
+            drain(&mut session),
+            vec![UiEvent::AdminChanged { active: true }]
+        );
+
+        session.send(UiCommand::Admin(AdminAction::CreateRoom {
+            title: "Estudos".to_owned(),
+        }));
+        let events = drain(&mut session);
+        assert!(events.iter().any(|e| matches!(
+            e,
+            UiEvent::AdminRoomCreated(room) if room.title == "Estudos"
+        )));
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, UiEvent::RoomsUpdated(rooms) if rooms.len() == 4))
+        );
+
+        session.send(UiCommand::Admin(AdminAction::RotateInvite {
+            new_code: "novo-codigo-123".to_owned(),
+        }));
+        assert_eq!(drain(&mut session), vec![UiEvent::AdminInviteRotated]);
+
+        session.send(UiCommand::Admin(AdminAction::DeleteChat {
+            room: "geral".to_owned(),
+            id: "demo-hist-1".to_owned(),
+        }));
+        assert_eq!(
+            drain(&mut session),
+            vec![UiEvent::ChatDeleted {
+                id: "demo-hist-1".to_owned(),
+                sender: String::new(),
+            }]
+        );
+
+        session.send(UiCommand::AdminLogout);
+        assert_eq!(
+            drain(&mut session),
+            vec![UiEvent::AdminChanged { active: false }]
+        );
     }
 }

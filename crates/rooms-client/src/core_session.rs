@@ -140,6 +140,9 @@ fn to_core(command: UiCommand) -> Command {
         UiCommand::StopWatching => Command::StopWatching,
         UiCommand::SetUiVisible(visible) => Command::SetUiVisible(visible),
         UiCommand::PlayCue(cue) => Command::PlayCue(cue),
+        UiCommand::AdminLogin { password } => Command::AdminLogin { password },
+        UiCommand::AdminLogout => Command::AdminLogout,
+        UiCommand::Admin(action) => Command::Admin(action),
     }
 }
 
@@ -263,8 +266,43 @@ fn describe(error: &SessionError) -> String {
             "O servidor não respondeu ao chat salvo. A mensagem não foi salva; tente de novo."
                 .to_owned()
         }
+        SessionError::AdminInvalidPassword => "Senha de administrador incorreta.".to_owned(),
+        SessionError::AdminUnauthorized => {
+            "Sessão de administrador expirada. Entre novamente.".to_owned()
+        }
+        SessionError::AdminDisabled => {
+            "O modo administrador não está habilitado neste servidor.".to_owned()
+        }
+        SessionError::AdminForbidden => "Sem permissão de administrador.".to_owned(),
+        SessionError::AdminRateLimited => {
+            "Muitas tentativas de login de administrador. Aguarde antes de tentar novamente."
+                .to_owned()
+        }
+        SessionError::AdminTargetNotFound(_) => {
+            "Sala, participante ou mensagem não encontrado no servidor.".to_owned()
+        }
+        SessionError::Admin(detail) => {
+            if detail == "cannot delete the last room" {
+                "Não é possível apagar a última sala.".to_owned()
+            } else {
+                format!("Falha na ação de administrador: {detail}")
+            }
+        }
         other => other.to_string(),
     }
+}
+
+fn is_admin_error(error: &SessionError) -> bool {
+    matches!(
+        error,
+        SessionError::AdminInvalidPassword
+            | SessionError::AdminUnauthorized
+            | SessionError::AdminDisabled
+            | SessionError::AdminForbidden
+            | SessionError::AdminRateLimited
+            | SessionError::AdminTargetNotFound(_)
+            | SessionError::Admin(_)
+    )
 }
 
 fn is_share_error(error: &SessionError) -> bool {
@@ -485,14 +523,25 @@ impl Translator {
                 }]
             }
             Event::ChatDeleted { id, sender } => vec![UiEvent::ChatDeleted { id, sender }],
-            Event::AdminChanged { .. }
-            | Event::AdminRoomCreated(_)
-            | Event::AdminRoomUpdated(_)
-            | Event::AdminRoomDeleted { .. }
-            | Event::AdminInviteRotated
-            | Event::AdminStoppedScreenShare
-            | Event::MovedByAdmin { .. }
-            | Event::RemovedFromRoom { .. } => Vec::new(),
+            Event::AdminChanged { active } => vec![UiEvent::AdminChanged { active }],
+            Event::AdminRoomCreated(room) => vec![UiEvent::AdminRoomCreated(room)],
+            Event::AdminRoomUpdated(room) => vec![UiEvent::AdminRoomUpdated(room)],
+            Event::AdminRoomDeleted { id } => vec![UiEvent::AdminRoomDeleted { id }],
+            Event::AdminInviteRotated => vec![UiEvent::AdminInviteRotated],
+            Event::AdminStoppedScreenShare => vec![UiEvent::AdminStoppedScreenShare],
+            Event::MovedByAdmin { to_room } => {
+                if self.room.is_some() {
+                    self.switch_pending.set(true);
+                }
+                vec![UiEvent::MovedByAdmin { to_room }]
+            }
+            Event::RemovedFromRoom { reason } => {
+                self.switch_pending.set(false);
+                self.room = None;
+                self.local_identity.clear();
+                self.participants.clear();
+                vec![UiEvent::RemovedFromRoom { reason }]
+            }
             Event::CommandFailed(error) => {
                 tracing::warn!(%error, "command failed");
                 match &error {
@@ -506,6 +555,9 @@ impl Translator {
                         message: describe(&error),
                     }],
                     _ if is_share_error(&error) => vec![UiEvent::ShareFailed {
+                        message: describe(&error),
+                    }],
+                    _ if is_admin_error(&error) => vec![UiEvent::AdminFailed {
                         message: describe(&error),
                     }],
                     _ => Vec::new(),
@@ -1050,6 +1102,154 @@ mod tests {
         assert_eq!(
             to_core(UiCommand::SetUiVisible(true)),
             Command::SetUiVisible(true)
+        );
+    }
+
+    #[test]
+    fn admin_commands_translate_to_core() {
+        assert_eq!(
+            to_core(UiCommand::AdminLogin {
+                password: "pw".to_owned(),
+            }),
+            Command::AdminLogin {
+                password: "pw".to_owned(),
+            }
+        );
+        assert_eq!(to_core(UiCommand::AdminLogout), Command::AdminLogout);
+
+        let action = rooms_core::AdminAction::MuteParticipant {
+            room: "sala-1".to_owned(),
+            identity: "bob".to_owned(),
+        };
+        assert_eq!(
+            to_core(UiCommand::Admin(action.clone())),
+            Command::Admin(action)
+        );
+    }
+
+    #[test]
+    fn admin_errors_translate_to_portuguese_admin_failed() {
+        let mut translator = Translator::default();
+        let cases = [
+            (
+                SessionError::AdminInvalidPassword,
+                "Senha de administrador incorreta.",
+            ),
+            (
+                SessionError::AdminUnauthorized,
+                "Sessão de administrador expirada. Entre novamente.",
+            ),
+            (
+                SessionError::AdminDisabled,
+                "O modo administrador não está habilitado neste servidor.",
+            ),
+            (
+                SessionError::AdminForbidden,
+                "Sem permissão de administrador.",
+            ),
+            (
+                SessionError::AdminRateLimited,
+                "Muitas tentativas de login de administrador. Aguarde antes de tentar novamente.",
+            ),
+            (
+                SessionError::AdminTargetNotFound("bob".to_owned()),
+                "Sala, participante ou mensagem não encontrado no servidor.",
+            ),
+            (
+                SessionError::Admin("cannot delete the last room".to_owned()),
+                "Não é possível apagar a última sala.",
+            ),
+            (
+                SessionError::Admin("erro qualquer".to_owned()),
+                "Falha na ação de administrador: erro qualquer",
+            ),
+        ];
+
+        for (err, expected) in cases {
+            assert_eq!(
+                translator.translate(Event::CommandFailed(err)),
+                vec![UiEvent::AdminFailed {
+                    message: expected.to_owned(),
+                }]
+            );
+        }
+    }
+
+    #[test]
+    fn moved_by_admin_suppresses_intermediate_left_and_emits_notice_event() {
+        let mut translator = Translator::default();
+        joined(&mut translator);
+
+        assert_eq!(
+            translator.translate(Event::MovedByAdmin {
+                to_room: "sala-2".to_owned(),
+            }),
+            vec![UiEvent::MovedByAdmin {
+                to_room: "sala-2".to_owned(),
+            }]
+        );
+        assert!(translator.translate(Event::Left).is_empty());
+        assert_eq!(
+            translator.translate(Event::Connecting),
+            vec![UiEvent::Connecting]
+        );
+    }
+
+    #[test]
+    fn removed_from_room_resets_translator_even_during_switch() {
+        let mut translator = Translator::default();
+        joined(&mut translator);
+        translator.switch_pending.set(true);
+
+        let events = translator.translate(Event::RemovedFromRoom {
+            reason: rooms_core::RemovalReason::Kicked,
+        });
+        assert_eq!(
+            events,
+            vec![UiEvent::RemovedFromRoom {
+                reason: rooms_core::RemovalReason::Kicked,
+            }]
+        );
+        assert!(translator.room.is_none());
+        assert!(translator.participants.is_empty());
+        assert!(!translator.switch_pending.get());
+    }
+
+    #[test]
+    fn admin_events_translate_cleanly() {
+        let mut translator = Translator::default();
+        let room = rooms_protocol::AdminRoom {
+            id: "sala-2".to_owned(),
+            title: "Sala Dois".to_owned(),
+            position: 1,
+        };
+        assert_eq!(
+            translator.translate(Event::AdminChanged { active: true }),
+            vec![UiEvent::AdminChanged { active: true }]
+        );
+        assert_eq!(
+            translator.translate(Event::AdminRoomCreated(room.clone())),
+            vec![UiEvent::AdminRoomCreated(room.clone())]
+        );
+        assert_eq!(
+            translator.translate(Event::AdminRoomUpdated(room.clone())),
+            vec![UiEvent::AdminRoomUpdated(room)]
+        );
+        assert_eq!(
+            translator.translate(Event::AdminRoomDeleted {
+                id: "sala-2".to_owned(),
+            }),
+            vec![UiEvent::AdminRoomDeleted {
+                id: "sala-2".to_owned(),
+            }]
+        );
+        assert_eq!(
+            translator.translate(Event::AdminInviteRotated),
+            vec![UiEvent::AdminInviteRotated]
+        );
+        assert_eq!(
+            translator.translate(Event::AdminStoppedScreenShare),
+            vec![UiEvent::AdminStoppedScreenShare]
         );
     }
 }

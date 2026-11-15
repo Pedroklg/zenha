@@ -2,7 +2,9 @@ use eframe::egui::{self, RichText};
 
 use crate::hotkeys::{HotkeyAction, binding_from_key, binding_label, binding_warning};
 use crate::settings::{NoiseMode, VoiceMode};
-use crate::state::{AudioState, DEFAULT_DEVICE_LABEL, HotkeyState, MicLevelView, UserAction};
+use crate::state::{
+    AdminState, AudioState, DEFAULT_DEVICE_LABEL, HotkeyState, MicLevelView, UserAction,
+};
 use crate::theme;
 use crate::ui_model::AudioDeviceView;
 
@@ -21,9 +23,11 @@ pub struct SettingsView<'a> {
     pub room_sounds: bool,
     pub muted_on_join: bool,
     pub invite_copied: bool,
+    pub can_admin: bool,
+    pub admin: &'a mut AdminState,
 }
 
-pub fn show(ctx: &egui::Context, view: SettingsView<'_>) -> Vec<UserAction> {
+pub fn show(ctx: &egui::Context, mut view: SettingsView<'_>) -> Vec<UserAction> {
     let mut actions = Vec::new();
     if !view.audio.open {
         return actions;
@@ -39,7 +43,7 @@ pub fn show(ctx: &egui::Context, view: SettingsView<'_>) -> Vec<UserAction> {
         .show(ctx, |ui| {
             egui::ScrollArea::vertical()
                 .max_height(max_height)
-                .show(ui, |ui| content(ui, &view, &mut actions));
+                .show(ui, |ui| content(ui, &mut view, &mut actions));
         });
     if !open {
         actions.push(UserAction::CloseSettings);
@@ -47,7 +51,7 @@ pub fn show(ctx: &egui::Context, view: SettingsView<'_>) -> Vec<UserAction> {
     actions
 }
 
-fn content(ui: &mut egui::Ui, view: &SettingsView<'_>, actions: &mut Vec<UserAction>) {
+fn content(ui: &mut egui::Ui, view: &mut SettingsView<'_>, actions: &mut Vec<UserAction>) {
     let audio = view.audio;
     let hotkeys = view.hotkeys;
     ui.heading("Áudio");
@@ -177,6 +181,84 @@ fn content(ui: &mut egui::Ui, view: &SettingsView<'_>, actions: &mut Vec<UserAct
     });
     if view.invite_copied {
         ui.small(RichText::new("Link copiado.").color(theme::ACCENT_TEXT));
+    }
+
+    admin_section(ui, view.can_admin, view.admin, actions);
+}
+
+fn admin_section(
+    ui: &mut egui::Ui,
+    can_admin: bool,
+    admin: &mut AdminState,
+    actions: &mut Vec<UserAction>,
+) {
+    ui.separator();
+    ui.heading("Administração");
+    ui.add_space(4.0);
+
+    if !can_admin {
+        ui.weak("Entre em um servidor para usar as ferramentas de administrador.");
+        return;
+    }
+
+    if admin.active {
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Admin ativo").color(theme::ACCENT_TEXT));
+            if ui.button("Sair do admin").clicked() {
+                actions.push(UserAction::AdminLogout);
+            }
+        });
+        ui.add_space(6.0);
+        ui.label("Novo código de convite");
+        let invite_resp = ui.add(
+            egui::TextEdit::singleline(&mut admin.new_invite_input)
+                .desired_width(COMBO_WIDTH - 120.0)
+                .hint_text("Mínimo 8 caracteres"),
+        );
+        ui.horizontal(|ui| {
+            if ui.button("Trocar convite").clicked()
+                || (invite_resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)))
+            {
+                actions.push(UserAction::RotateInvite);
+            }
+        });
+    } else {
+        ui.label("Senha de administrador");
+        let pw_resp = ui.add_enabled(
+            !admin.logging_in,
+            egui::TextEdit::singleline(&mut admin.password_input)
+                .password(true)
+                .desired_width(COMBO_WIDTH),
+        );
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            let enter = pw_resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+            if ui
+                .add_enabled(!admin.logging_in, egui::Button::new("Entrar como admin"))
+                .clicked()
+                || (!admin.logging_in && enter)
+            {
+                actions.push(UserAction::AdminLogin);
+            }
+            if admin.logging_in {
+                ui.spinner();
+            }
+        });
+    }
+
+    let message = match (&admin.error, &admin.notice) {
+        (Some(error), _) => Some((theme::ERROR, error)),
+        (None, Some(notice)) => Some((theme::ACCENT_TEXT, notice)),
+        (None, None) => None,
+    };
+    if let Some((color, text)) = message {
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            ui.colored_label(color, text);
+            if ui.small_button("Fechar").clicked() {
+                actions.push(UserAction::DismissAdminNotice);
+            }
+        });
     }
 }
 

@@ -2,11 +2,12 @@ use std::fmt;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use rooms_protocol::RoomSummary;
+use rooms_core::{AdminAction, RemovalReason};
+use rooms_protocol::{AdminRoom, RoomSummary};
 
 use crate::settings::NoiseMode;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum UiCommand {
     Join {
         room: String,
@@ -51,6 +52,72 @@ pub enum UiCommand {
     StopWatching,
     SetUiVisible(bool),
     PlayCue(rooms_core::Cue),
+    AdminLogin {
+        password: String,
+    },
+    AdminLogout,
+    Admin(AdminAction),
+}
+
+impl fmt::Debug for UiCommand {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Join { room } => f.debug_struct("Join").field("room", room).finish(),
+            Self::Leave => f.write_str("Leave"),
+            Self::SetMuted(muted) => f.debug_tuple("SetMuted").field(muted).finish(),
+            Self::SetDeafened(deafened) => f.debug_tuple("SetDeafened").field(deafened).finish(),
+            Self::SendChat { text, save } => f
+                .debug_struct("SendChat")
+                .field("text", text)
+                .field("save", save)
+                .finish(),
+            Self::LoadChatHistory { before } => f
+                .debug_struct("LoadChatHistory")
+                .field("before", before)
+                .finish(),
+            Self::DeleteChat { id } => f.debug_struct("DeleteChat").field("id", id).finish(),
+            Self::SendFile { path } => f.debug_struct("SendFile").field("path", path).finish(),
+            Self::RefreshRooms => f.write_str("RefreshRooms"),
+            Self::RefreshAudioDevices => f.write_str("RefreshAudioDevices"),
+            Self::SetInputDevice(id) => f.debug_tuple("SetInputDevice").field(id).finish(),
+            Self::SetOutputDevice(id) => f.debug_tuple("SetOutputDevice").field(id).finish(),
+            Self::SetNoiseSuppression(mode) => {
+                f.debug_tuple("SetNoiseSuppression").field(mode).finish()
+            }
+            Self::SetStreamVolume(percent) => {
+                f.debug_tuple("SetStreamVolume").field(percent).finish()
+            }
+            Self::SetParticipantVolume { identity, percent } => f
+                .debug_struct("SetParticipantVolume")
+                .field("identity", identity)
+                .field("percent", percent)
+                .finish(),
+            Self::SetNoiseGate(threshold) => {
+                f.debug_tuple("SetNoiseGate").field(threshold).finish()
+            }
+            Self::RefreshCaptureTargets => f.write_str("RefreshCaptureTargets"),
+            Self::CancelCaptureTargets => f.write_str("CancelCaptureTargets"),
+            Self::StartScreenShare { target_id, preset } => f
+                .debug_struct("StartScreenShare")
+                .field("target_id", target_id)
+                .field("preset", preset)
+                .finish(),
+            Self::StopScreenShare => f.write_str("StopScreenShare"),
+            Self::WatchScreenShare { identity } => f
+                .debug_struct("WatchScreenShare")
+                .field("identity", identity)
+                .finish(),
+            Self::StopWatching => f.write_str("StopWatching"),
+            Self::SetUiVisible(visible) => f.debug_tuple("SetUiVisible").field(visible).finish(),
+            Self::PlayCue(cue) => f.debug_tuple("PlayCue").field(cue).finish(),
+            Self::AdminLogin { .. } => f
+                .debug_struct("AdminLogin")
+                .field("password", &"<redacted>")
+                .finish(),
+            Self::AdminLogout => f.write_str("AdminLogout"),
+            Self::Admin(action) => f.debug_tuple("Admin").field(action).finish(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -244,6 +311,25 @@ pub enum UiEvent {
         feed: FeedHandle,
     },
     WatchingStopped,
+    AdminChanged {
+        active: bool,
+    },
+    AdminRoomCreated(AdminRoom),
+    AdminRoomUpdated(AdminRoom),
+    AdminRoomDeleted {
+        id: String,
+    },
+    AdminInviteRotated,
+    AdminStoppedScreenShare,
+    MovedByAdmin {
+        to_room: String,
+    },
+    RemovedFromRoom {
+        reason: RemovalReason,
+    },
+    AdminFailed {
+        message: String,
+    },
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -259,4 +345,22 @@ pub trait SessionPort {
 
     fn send(&self, command: UiCommand);
     fn try_recv(&mut self) -> Option<UiEvent>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn command_debug_redacts_admin_secrets() {
+        let login = UiCommand::AdminLogin {
+            password: "admin-secret-password".to_owned(),
+        };
+        assert!(!format!("{login:?}").contains("admin-secret-password"));
+
+        let invite = UiCommand::Admin(AdminAction::RotateInvite {
+            new_code: "new-secret-invite-123".to_owned(),
+        });
+        assert!(!format!("{invite:?}").contains("new-secret-invite-123"));
+    }
 }
