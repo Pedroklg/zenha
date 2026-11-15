@@ -424,3 +424,42 @@ Logging in via `POST /admin/login` issues a signed admin JWT (`ROOMS_TOKEN_TTL_S
 - **Moderate connected participants (`POST /admin/rooms/{room}/participants/{identity}/...`):** Mute microphone (`/mute`), mute screen share tracks + send `admin.stop_share` (`/stop-share`), kick from room (`/kick`), or request room move via `admin.move` (`/move` — note LiveKit `MoveParticipant` is LiveKit Cloud-only, so self-hosted servers signal the client via data packet).
 - **Delete any user's saved chat message (`DELETE /admin/rooms/{room}/chat/{id}`):** Deletes the message from `chat.db` and broadcasts `admin.chat_delete` to the room.
 - **Rotate the shared invite code (`POST /admin/invite`):** Hashes the new code (`8..=128` characters) with Argon2id and stores it in `chat.db`, immediately overriding `ROOMS_INVITE_CODE_HASH` across restarts without editing `.env`.
+
+---
+
+## 14. Automatic Start/Stop Schedule (`deploy/azure/schedule.bicep`)
+
+`deploy/azure/schedule.bicep` deploys four Azure Logic Apps Consumption workflows (`zenha-schedule-*`) with system-assigned managed identities granted `Virtual Machine Contributor` solely on the VM (`zenha-vm`). They automatically start and deallocate the VM in the `America/Sao_Paulo` (`E. South America Standard Time`) time zone:
+
+| Action | Days | Time (`America/Sao_Paulo`) | Workflow Name |
+| :--- | :--- | :--- | :--- |
+| Start | Mon–Fri | 18:00 | `zenha-schedule-start-mon-fri` |
+| Start | Sat, Sun | 11:00 | `zenha-schedule-start-sat-sun` |
+| Deallocate (stop) | Tue–Sat | 01:00 | `zenha-schedule-deallocate-tue-sat` |
+| Deallocate (stop) | Sun, Mon | 02:00 | `zenha-schedule-deallocate-sun-mon` |
+
+Manual control via `scripts\server.cmd start|stop|status` remains available at any time.
+
+> **Warning:** Scheduled deallocation immediately shuts down the VM and disconnects anyone currently in a call. If a session runs past 01:00 (Tue–Sat) or 02:00 (Sun–Mon), pause the schedule beforehand with `scripts\server.cmd schedule off` or start the VM again with `scripts\server.cmd start`.
+
+### Deploying the Schedule
+
+```bash
+az deployment group create -g zenha-rg -f deploy/azure/schedule.bicep
+```
+
+### Changing Schedule Times
+
+Edit the `schedules` parameter array in `deploy/azure/schedule.bicep` (or pass `--parameters schedules=...`) and re-run `az deployment group create -g zenha-rg -f deploy/azure/schedule.bicep`.
+
+### Checking Status and Pausing
+
+```powershell
+scripts\server.cmd schedule status
+scripts\server.cmd schedule off
+scripts\server.cmd schedule on
+```
+
+### Cost
+
+Negligible: Azure Logic Apps Consumption includes the first 4,000 built-in actions per month free (and charges $0.000025 per action thereafter), while the four weekly schedules execute ~60 HTTP actions per month. Deallocating the VM outside active hours releases compute billing while keeping the disk and static public IP intact.
