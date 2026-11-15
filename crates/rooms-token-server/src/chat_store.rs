@@ -1,14 +1,18 @@
-//! Armazenamento SQLite para mensagens de chat salvas por sala.
+//! Armazenamento SQLite para mensagens de chat salvas, salas e configurações.
 
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use rooms_protocol::{CHAT_HISTORY_PAGE, ChatHistoryResponse, ChatMessage, SavedChatMessage};
+use rooms_protocol::{
+    AdminRoom, CHAT_HISTORY_PAGE, ChatHistoryResponse, ChatMessage, MAX_ROOM_NAME_LEN,
+    MAX_ROOMS_COUNT, SavedChatMessage,
+};
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 
 const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_FUTURE_SKEW_MS: u64 = 60_000;
+const INVITE_HASH_SETTING_KEY: &str = "invite_code_hash";
 
 #[derive(Debug, thiserror::Error)]
 pub enum ChatStoreError {
@@ -32,6 +36,26 @@ pub enum DeleteOutcome {
     Deleted,
     NotFound,
     Forbidden,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CreateRoomOutcome {
+    Created(AdminRoom),
+    LimitReached,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeleteRoomCheck {
+    Ready,
+    NotFound,
+    LastRoom,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeleteRoomOutcome {
+    Deleted,
+    NotFound,
+    LastRoom,
 }
 
 #[derive(Clone)]
@@ -67,11 +91,27 @@ impl ChatStore {
                 PRIMARY KEY (room, id)
             );
             CREATE INDEX IF NOT EXISTS idx_chat_messages_room_order
-                ON chat_messages (room, saved_at_unix_ms DESC, id DESC);",
+                ON chat_messages (room, saved_at_unix_ms DESC, id DESC);
+            CREATE TABLE IF NOT EXISTS rooms (
+                id TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                position INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_rooms_position
+                ON rooms (position ASC, id ASC);
+            CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );",
         )?;
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
         })
+    }
+
+    pub fn seed_rooms_if_empty_sync(&self, rooms: &[String]) -> Result<(), ChatStoreError> {
+        let mut guard = self.conn.lock().map_err(|_| ChatStoreError::LockPoisoned)?;
+        seed_rooms_sync(&mut guard, rooms)
     }
 
     pub async fn insert(
@@ -151,6 +191,90 @@ impl ChatStore {
     ) -> Result<DeleteOutcome, ChatStoreError> {
         self.with_conn(move |conn| delete_sync(conn, &room, &id, &sender_id))
             .await
+    }
+
+    pub async fn delete_as_admin(&self, room: String, id: String) -> Result<bool, ChatStoreError> {
+        self.with_conn(move |conn| {
+            let changed = conn.execute(
+                "DELETE FROM chat_messages WHERE room = ?1 AND id = ?2",
+                params![room, id],
+            )?;
+            Ok(changed > 0)
+        })
+        .await
+    }
+
+    pub async fn list_rooms(&self) -> Result<Vec<AdminRoom>, ChatStoreError> {
+        self.with_conn(list_rooms_sync).await
+    }
+
+    pub async fn room_exists(&self, id: String) -> Result<bool, ChatStoreError> {
+        self.with_conn(move |conn| {
+            let found: Option<i64> = conn
+                .query_row("SELECT 1 FROM rooms WHERE id = ?1", params![id], |row| {
+                    row.get(0)
+                })
+                .optional()?;
+            Ok(found.is_some())
+        })
+        .await
+    }
+
+    pub async fn create_room(&self, title: String) -> Result<CreateRoomOutcome, ChatStoreError> {
+        self.with_conn(move |conn| create_room_sync(conn, &title))
+            .await
+    }
+
+    pub async fn update_room(
+        &self,
+        id: String,
+        title: Option<String>,
+        position: Option<usize>,
+    ) -> Result<Option<AdminRoom>, ChatStoreError> {
+        self.with_conn(move |conn| update_room_sync(conn, &id, title.as_deref(), position))
+            .await
+    }
+
+    pub async fn check_can_delete_room(
+        &self,
+        id: String,
+    ) -> Result<DeleteRoomCheck, ChatStoreError> {
+        self.with_conn(move |conn| check_can_delete_room_sync(conn, &id))
+            .await
+    }
+
+    pub async fn commit_delete_room(
+        &self,
+        id: String,
+    ) -> Result<DeleteRoomOutcome, ChatStoreError> {
+        self.with_conn(move |conn| commit_delete_room_sync(conn, &id))
+            .await
+    }
+
+    pub async fn get_invite_code_hash(&self) -> Result<Option<String>, ChatStoreError> {
+        self.with_conn(|conn| {
+            let value = conn
+                .query_row(
+                    "SELECT value FROM settings WHERE key = ?1",
+                    params![INVITE_HASH_SETTING_KEY],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            Ok(value)
+        })
+        .await
+    }
+
+    pub async fn set_invite_code_hash(&self, hash: String) -> Result<(), ChatStoreError> {
+        self.with_conn(move |conn| {
+            conn.execute(
+                "INSERT INTO settings (key, value) VALUES (?1, ?2)
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                params![INVITE_HASH_SETTING_KEY, hash],
+            )?;
+            Ok(())
+        })
+        .await
     }
 
     async fn with_conn<T, F>(&self, op: F) -> Result<T, ChatStoreError>
@@ -363,6 +487,223 @@ where
         out.push(row?);
     }
     Ok(out)
+}
+
+fn seed_rooms_sync(conn: &mut Connection, rooms: &[String]) -> Result<(), ChatStoreError> {
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let count: i64 = tx.query_row("SELECT COUNT(*) FROM rooms", [], |row| row.get(0))?;
+    if count == 0 {
+        for (idx, id) in rooms.iter().enumerate() {
+            let pos = i64::try_from(idx).unwrap_or(i64::MAX);
+            tx.execute(
+                "INSERT INTO rooms (id, title, position) VALUES (?1, ?2, ?3)",
+                params![id, id, pos],
+            )?;
+        }
+    }
+    tx.commit()?;
+    Ok(())
+}
+
+fn list_rooms_sync(conn: &mut Connection) -> Result<Vec<AdminRoom>, ChatStoreError> {
+    let mut stmt =
+        conn.prepare("SELECT id, title, position FROM rooms ORDER BY position ASC, id ASC")?;
+    let rows = stmt.query_map([], |row| {
+        let pos: i64 = row.get(2)?;
+        Ok(AdminRoom {
+            id: row.get(0)?,
+            title: row.get(1)?,
+            position: usize::try_from(pos).unwrap_or(0),
+        })
+    })?;
+    let mut out = Vec::new();
+    for row in rows {
+        out.push(row?);
+    }
+    Ok(out)
+}
+
+fn create_room_sync(
+    conn: &mut Connection,
+    title: &str,
+) -> Result<CreateRoomOutcome, ChatStoreError> {
+    let trimmed = title.trim();
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let existing = load_ordered_rooms(&tx)?;
+    if existing.len() >= MAX_ROOMS_COUNT {
+        return Ok(CreateRoomOutcome::LimitReached);
+    }
+    let existing_ids: Vec<String> = existing.iter().map(|(id, _)| id.clone()).collect();
+    let id = unique_room_id(trimmed, &existing_ids);
+    let position = existing.len();
+    let pos_i64 = i64::try_from(position).unwrap_or(i64::MAX);
+    tx.execute(
+        "INSERT INTO rooms (id, title, position) VALUES (?1, ?2, ?3)",
+        params![id, trimmed, pos_i64],
+    )?;
+    tx.commit()?;
+    Ok(CreateRoomOutcome::Created(AdminRoom {
+        id,
+        title: trimmed.to_owned(),
+        position,
+    }))
+}
+
+fn update_room_sync(
+    conn: &mut Connection,
+    id: &str,
+    title: Option<&str>,
+    position: Option<usize>,
+) -> Result<Option<AdminRoom>, ChatStoreError> {
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let mut rooms = load_ordered_rooms(&tx)?;
+    let Some(mut idx) = rooms.iter().position(|(room_id, _)| room_id == id) else {
+        return Ok(None);
+    };
+    if let Some(new_title) = title {
+        rooms[idx].1 = new_title.trim().to_owned();
+    }
+    if let Some(target) = position {
+        let clamped = target.min(rooms.len().saturating_sub(1));
+        if clamped != idx {
+            let item = rooms.remove(idx);
+            rooms.insert(clamped, item);
+            idx = clamped;
+        }
+    }
+    for (pos, (room_id, room_title)) in rooms.iter().enumerate() {
+        let pos_i64 = i64::try_from(pos).unwrap_or(i64::MAX);
+        tx.execute(
+            "UPDATE rooms SET title = ?1, position = ?2 WHERE id = ?3",
+            params![room_title, pos_i64, room_id],
+        )?;
+    }
+    tx.commit()?;
+    Ok(Some(AdminRoom {
+        id: rooms[idx].0.clone(),
+        title: rooms[idx].1.clone(),
+        position: idx,
+    }))
+}
+
+fn check_can_delete_room_sync(
+    conn: &mut Connection,
+    id: &str,
+) -> Result<DeleteRoomCheck, ChatStoreError> {
+    let tx = conn.transaction()?;
+    let rooms = load_ordered_rooms(&tx)?;
+    if !rooms.iter().any(|(room_id, _)| room_id == id) {
+        return Ok(DeleteRoomCheck::NotFound);
+    }
+    if rooms.len() <= 1 {
+        return Ok(DeleteRoomCheck::LastRoom);
+    }
+    Ok(DeleteRoomCheck::Ready)
+}
+
+fn commit_delete_room_sync(
+    conn: &mut Connection,
+    id: &str,
+) -> Result<DeleteRoomOutcome, ChatStoreError> {
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let rooms = load_ordered_rooms(&tx)?;
+    if !rooms.iter().any(|(room_id, _)| room_id == id) {
+        return Ok(DeleteRoomOutcome::NotFound);
+    }
+    if rooms.len() <= 1 {
+        return Ok(DeleteRoomOutcome::LastRoom);
+    }
+    tx.execute("DELETE FROM rooms WHERE id = ?1", params![id])?;
+    tx.execute("DELETE FROM chat_messages WHERE room = ?1", params![id])?;
+    let remaining = rooms.into_iter().filter(|(room_id, _)| room_id != id);
+    for (pos, (room_id, _)) in remaining.enumerate() {
+        let pos_i64 = i64::try_from(pos).unwrap_or(i64::MAX);
+        tx.execute(
+            "UPDATE rooms SET position = ?1 WHERE id = ?2",
+            params![pos_i64, room_id],
+        )?;
+    }
+    tx.commit()?;
+    Ok(DeleteRoomOutcome::Deleted)
+}
+
+fn load_ordered_rooms(
+    tx: &rusqlite::Transaction<'_>,
+) -> Result<Vec<(String, String)>, ChatStoreError> {
+    let mut stmt = tx.prepare("SELECT id, title FROM rooms ORDER BY position ASC, id ASC")?;
+    let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+    let mut out = Vec::new();
+    for row in rows {
+        out.push(row?);
+    }
+    Ok(out)
+}
+
+fn fold_latin(c: char) -> char {
+    match c {
+        'á' | 'à' | 'â' | 'ã' | 'ä' | 'å' | 'Á' | 'À' | 'Â' | 'Ã' | 'Ä' | 'Å' => 'a',
+        'é' | 'è' | 'ê' | 'ë' | 'É' | 'È' | 'Ê' | 'Ë' => 'e',
+        'í' | 'ì' | 'î' | 'ï' | 'Í' | 'Ì' | 'Î' | 'Ï' => 'i',
+        'ó' | 'ò' | 'ô' | 'õ' | 'ö' | 'ø' | 'Ó' | 'Ò' | 'Ô' | 'Õ' | 'Ö' | 'Ø' => 'o',
+        'ú' | 'ù' | 'û' | 'ü' | 'Ú' | 'Ù' | 'Û' | 'Ü' => 'u',
+        'ç' | 'Ç' => 'c',
+        'ñ' | 'Ñ' => 'n',
+        'ý' | 'ÿ' | 'Ý' => 'y',
+        other => other.to_ascii_lowercase(),
+    }
+}
+
+pub fn slugify_room_title(title: &str) -> String {
+    let mut out = String::new();
+    let mut last_dash = false;
+    for ch in title.trim().chars() {
+        let mapped = fold_latin(ch);
+        if mapped.is_ascii_lowercase() || mapped.is_ascii_digit() || mapped == '_' {
+            out.push(mapped);
+            last_dash = false;
+        } else if !out.is_empty() && !last_dash {
+            out.push('-');
+            last_dash = true;
+        }
+    }
+    while out.ends_with('-') {
+        out.pop();
+    }
+    if out.len() > MAX_ROOM_NAME_LEN {
+        out.truncate(MAX_ROOM_NAME_LEN);
+        while out.ends_with('-') {
+            out.pop();
+        }
+    }
+    if out.is_empty() {
+        "sala".to_owned()
+    } else {
+        out
+    }
+}
+
+fn unique_room_id(title: &str, existing: &[String]) -> String {
+    let base = slugify_room_title(title);
+    if !existing.iter().any(|id| id == &base) {
+        return base;
+    }
+    for n in 2..=(MAX_ROOMS_COUNT + 2) {
+        let suffix = format!("-{n}");
+        let max_prefix = MAX_ROOM_NAME_LEN.saturating_sub(suffix.len());
+        let mut prefix: String = base.chars().take(max_prefix).collect();
+        while prefix.ends_with('-') {
+            prefix.pop();
+        }
+        let candidate = if prefix.is_empty() {
+            format!("sala{suffix}")
+        } else {
+            format!("{prefix}{suffix}")
+        };
+        if !existing.iter().any(|id| id == &candidate) {
+            return candidate;
+        }
+    }
+    base
 }
 
 #[cfg(test)]
@@ -666,5 +1007,212 @@ mod tests {
         );
         let page = store.list_page("geral".to_owned(), None).await.unwrap();
         assert!(page.messages.is_empty());
+    }
+
+    #[tokio::test]
+    async fn rooms_seed_only_when_empty_and_preserve_admin_changes() {
+        let store = ChatStore::open_in_memory().unwrap();
+        let seed = vec!["geral".to_owned(), "jogos".to_owned(), "afk".to_owned()];
+        store.seed_rooms_if_empty_sync(&seed).unwrap();
+
+        let rooms = store.list_rooms().await.unwrap();
+        assert_eq!(
+            rooms,
+            vec![
+                AdminRoom {
+                    id: "geral".to_owned(),
+                    title: "geral".to_owned(),
+                    position: 0,
+                },
+                AdminRoom {
+                    id: "jogos".to_owned(),
+                    title: "jogos".to_owned(),
+                    position: 1,
+                },
+                AdminRoom {
+                    id: "afk".to_owned(),
+                    title: "afk".to_owned(),
+                    position: 2,
+                },
+            ]
+        );
+
+        store
+            .update_room("geral".to_owned(), Some("Sala Geral".to_owned()), None)
+            .await
+            .unwrap();
+        store
+            .seed_rooms_if_empty_sync(&["outra".to_owned()])
+            .unwrap();
+        let after = store.list_rooms().await.unwrap();
+        assert_eq!(after.len(), 3);
+        assert_eq!(after[0].title, "Sala Geral");
+    }
+
+    #[test]
+    fn slugify_and_unique_room_id_produce_valid_room_names() {
+        use rooms_protocol::validate_room_name;
+
+        for (title, expected) in [
+            ("Sala Geral", "sala-geral"),
+            ("Bate-papo & Música!", "bate-papo-musica"),
+            ("  Café_2  ", "cafe_2"),
+            ("🎮🔥", "sala"),
+            ("---", "sala"),
+        ] {
+            let slug = slugify_room_title(title);
+            assert_eq!(slug, expected, "{title:?}");
+            assert_eq!(validate_room_name(&slug), Ok(()), "{slug:?}");
+        }
+
+        let long_slug = slugify_room_title(&"a".repeat(50));
+        assert_eq!(long_slug.len(), MAX_ROOM_NAME_LEN);
+        assert_eq!(validate_room_name(&long_slug), Ok(()));
+
+        let existing = vec![long_slug.clone(), "sala".to_owned()];
+        let dedup_long = unique_room_id(&"a".repeat(50), &existing);
+        assert!(dedup_long.len() <= MAX_ROOM_NAME_LEN);
+        assert!(dedup_long.ends_with("-2"));
+        assert_eq!(validate_room_name(&dedup_long), Ok(()));
+
+        let dedup_fallback = unique_room_id("🎮", &existing);
+        assert_eq!(dedup_fallback, "sala-2");
+        assert_eq!(validate_room_name(&dedup_fallback), Ok(()));
+    }
+
+    #[tokio::test]
+    async fn rooms_crud_enforces_limit_reorders_and_cleans_deleted_chat() {
+        let store = ChatStore::open_in_memory().unwrap();
+        store
+            .seed_rooms_if_empty_sync(&["geral".to_owned(), "jogos".to_owned()])
+            .unwrap();
+
+        let created = store.create_room("Música & Voz".to_owned()).await.unwrap();
+        assert_eq!(
+            created,
+            CreateRoomOutcome::Created(AdminRoom {
+                id: "musica-voz".to_owned(),
+                title: "Música & Voz".to_owned(),
+                position: 2,
+            })
+        );
+
+        let moved = store
+            .update_room("musica-voz".to_owned(), Some("Música".to_owned()), Some(0))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(moved.position, 0);
+        assert_eq!(moved.title, "Música");
+
+        let ordered: Vec<String> = store
+            .list_rooms()
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|r| r.id)
+            .collect();
+        assert_eq!(ordered, vec!["musica-voz", "geral", "jogos"]);
+
+        store
+            .insert(
+                "jogos".to_owned(),
+                "chat-1".to_owned(),
+                "client-a".to_owned(),
+                "Ana".to_owned(),
+                "bora".to_owned(),
+                1000,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            store
+                .check_can_delete_room("jogos".to_owned())
+                .await
+                .unwrap(),
+            DeleteRoomCheck::Ready
+        );
+        assert_eq!(
+            store.commit_delete_room("jogos".to_owned()).await.unwrap(),
+            DeleteRoomOutcome::Deleted
+        );
+        assert!(
+            store
+                .list_page("jogos".to_owned(), None)
+                .await
+                .unwrap()
+                .messages
+                .is_empty()
+        );
+
+        assert_eq!(
+            store.commit_delete_room("geral".to_owned()).await.unwrap(),
+            DeleteRoomOutcome::Deleted
+        );
+        assert_eq!(
+            store
+                .check_can_delete_room("musica-voz".to_owned())
+                .await
+                .unwrap(),
+            DeleteRoomCheck::LastRoom
+        );
+        assert_eq!(
+            store
+                .commit_delete_room("musica-voz".to_owned())
+                .await
+                .unwrap(),
+            DeleteRoomOutcome::LastRoom
+        );
+
+        for i in 1..MAX_ROOMS_COUNT {
+            let outcome = store.create_room(format!("Sala {i}")).await.unwrap();
+            assert!(matches!(outcome, CreateRoomOutcome::Created(_)));
+        }
+        assert_eq!(
+            store.create_room("Extra".to_owned()).await.unwrap(),
+            CreateRoomOutcome::LimitReached
+        );
+    }
+
+    #[tokio::test]
+    async fn admin_delete_removes_any_message_and_invite_override_persists() {
+        let temp = TempDb::new();
+        {
+            let store = ChatStore::open(&temp.path).unwrap();
+            store
+                .insert(
+                    "geral".to_owned(),
+                    "m-1".to_owned(),
+                    "client-ana".to_owned(),
+                    "Ana".to_owned(),
+                    "olá".to_owned(),
+                    1000,
+                )
+                .await
+                .unwrap();
+            assert!(
+                store
+                    .delete_as_admin("geral".to_owned(), "m-1".to_owned())
+                    .await
+                    .unwrap()
+            );
+            assert!(
+                !store
+                    .delete_as_admin("geral".to_owned(), "m-1".to_owned())
+                    .await
+                    .unwrap()
+            );
+            assert_eq!(store.get_invite_code_hash().await.unwrap(), None);
+            store
+                .set_invite_code_hash("$argon2id$override".to_owned())
+                .await
+                .unwrap();
+        }
+        let reopened = ChatStore::open(&temp.path).unwrap();
+        assert_eq!(
+            reopened.get_invite_code_hash().await.unwrap().as_deref(),
+            Some("$argon2id$override")
+        );
     }
 }

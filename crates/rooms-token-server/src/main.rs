@@ -4,6 +4,7 @@ mod directory;
 mod routes;
 mod token;
 
+use std::net::SocketAddr;
 use std::sync::Arc;
 
 use anyhow::Context;
@@ -12,7 +13,9 @@ use tokio::net::TcpListener;
 use crate::chat_store::ChatStore;
 use crate::config::Config;
 use crate::directory::LiveKitDirectory;
-use crate::routes::{AppState, ChatRateLimiter, router};
+use crate::routes::{
+    AdminLoginLimiter, AppState, ChatRateLimiter, DEFAULT_ADMIN_FAILURE_DELAY, router,
+};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -37,13 +40,20 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!(?config, "starting");
 
     let db_path = config.chat_db_path.clone();
-    let chat = match tokio::task::spawn_blocking(move || ChatStore::open(&db_path)).await {
+    let seed_rooms = config.rooms.clone();
+    let chat = match tokio::task::spawn_blocking(move || -> anyhow::Result<ChatStore> {
+        let store = ChatStore::open(&db_path)?;
+        store.seed_rooms_if_empty_sync(&seed_rooms)?;
+        Ok(store)
+    })
+    .await
+    {
         Ok(Ok(store)) => Some(Arc::new(store)),
         Ok(Err(err)) => {
             tracing::error!(
                 path = %config.chat_db_path.display(),
                 %err,
-                "failed to open chat database; chat routes will return 503"
+                "failed to open database; room admin, chat, and invite routes will return 503"
             );
             None
         }
@@ -51,7 +61,7 @@ async fn main() -> anyhow::Result<()> {
             tracing::error!(
                 path = %config.chat_db_path.display(),
                 %err,
-                "chat database init task failed; chat routes will return 503"
+                "database init task failed; room admin, chat, and invite routes will return 503"
             );
             None
         }
@@ -61,17 +71,24 @@ async fn main() -> anyhow::Result<()> {
         .await
         .with_context(|| format!("binding {}", config.bind_addr))?;
 
+    let directory = Arc::new(LiveKitDirectory::new(&config));
     let state = AppState {
-        directory: Arc::new(LiveKitDirectory::new(&config)),
+        directory: directory.clone(),
+        moderator: directory,
         chat,
         chat_limiter: Arc::new(ChatRateLimiter::default()),
+        admin_login_limiter: Arc::new(AdminLoginLimiter::default()),
+        admin_failure_delay: DEFAULT_ADMIN_FAILURE_DELAY,
         config: Arc::new(config),
     };
 
-    axum::serve(listener, router(state))
-        .with_graceful_shutdown(shutdown_signal())
-        .await
-        .context("serving")
+    axum::serve(
+        listener,
+        router(state).into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal())
+    .await
+    .context("serving")
 }
 
 async fn shutdown_signal() {

@@ -16,6 +16,7 @@ pub struct Config {
     pub bind_addr: SocketAddr,
     pub invite_code: String,
     pub invite_code_hash: Option<String>,
+    pub admin_code_hash: Option<String>,
     pub livekit_url: String,
     pub livekit_api_key: String,
     pub livekit_api_secret: String,
@@ -51,23 +52,10 @@ impl Config {
                 reason: err.to_string(),
             })?;
 
-        let invite_code_hash = match lookup("ROOMS_INVITE_CODE_HASH") {
-            Some(value) if !value.trim().is_empty() => {
-                let trimmed = value.trim();
-                let parsed = PasswordHash::new(trimmed).map_err(|err| ConfigError::Invalid {
-                    name: "ROOMS_INVITE_CODE_HASH",
-                    reason: err.to_string(),
-                })?;
-                if parsed.salt.is_none() || parsed.hash.is_none() {
-                    return Err(ConfigError::Invalid {
-                        name: "ROOMS_INVITE_CODE_HASH",
-                        reason: "hash must include salt and digest".to_owned(),
-                    });
-                }
-                Some(trimmed.to_owned())
-            }
-            _ => None,
-        };
+        let invite_code_hash =
+            parse_password_hash("ROOMS_INVITE_CODE_HASH", lookup("ROOMS_INVITE_CODE_HASH"))?;
+        let admin_code_hash =
+            parse_password_hash("ROOMS_ADMIN_CODE_HASH", lookup("ROOMS_ADMIN_CODE_HASH"))?;
 
         let invite_code = if invite_code_hash.is_some() {
             lookup("ROOMS_INVITE_CODE")
@@ -91,6 +79,7 @@ impl Config {
             bind_addr,
             invite_code,
             invite_code_hash,
+            admin_code_hash,
             livekit_url: required("LIVEKIT_URL")?,
             livekit_api_key: required("LIVEKIT_API_KEY")?,
             livekit_api_secret: required("LIVEKIT_API_SECRET")?,
@@ -101,13 +90,40 @@ impl Config {
     }
 }
 
-pub fn hash_password(line: &str) -> anyhow::Result<String> {
-    let password = line.trim_end_matches(['\r', '\n']);
-    anyhow::ensure!(!password.trim().is_empty(), "password must not be empty");
+fn parse_password_hash(
+    name: &'static str,
+    value: Option<String>,
+) -> Result<Option<String>, ConfigError> {
+    match value {
+        Some(value) if !value.trim().is_empty() => {
+            let trimmed = value.trim();
+            let parsed = PasswordHash::new(trimmed).map_err(|err| ConfigError::Invalid {
+                name,
+                reason: err.to_string(),
+            })?;
+            if parsed.salt.is_none() || parsed.hash.is_none() {
+                return Err(ConfigError::Invalid {
+                    name,
+                    reason: "hash must include salt and digest".to_owned(),
+                });
+            }
+            Ok(Some(trimmed.to_owned()))
+        }
+        _ => Ok(None),
+    }
+}
+
+pub fn hash_secret(secret: &str) -> anyhow::Result<String> {
+    anyhow::ensure!(!secret.trim().is_empty(), "password must not be empty");
     let hash: PasswordHash = Argon2::default()
-        .hash_password(password.as_bytes())
+        .hash_password(secret.as_bytes())
         .map_err(|err| anyhow::anyhow!("argon2 hash failed: {err}"))?;
     Ok(hash.to_string())
+}
+
+pub fn hash_password(line: &str) -> anyhow::Result<String> {
+    let password = line.trim_end_matches(['\r', '\n']);
+    hash_secret(password)
 }
 
 pub fn parse_token_ttl(value: Option<&str>) -> Result<u64, ConfigError> {
@@ -275,8 +291,10 @@ mod tests {
     #[test]
     fn debug_omits_secrets() {
         let hash = hash_password("top-secret-password\n").unwrap();
+        let admin_hash = hash_password("top-secret-admin\n").unwrap();
         let config = Config::from_lookup(|name| match name {
             "ROOMS_INVITE_CODE_HASH" => Some(hash.clone()),
+            "ROOMS_ADMIN_CODE_HASH" => Some(admin_hash.clone()),
             _ => lookup(name),
         })
         .unwrap();
@@ -284,7 +302,41 @@ mod tests {
         assert!(!text.contains("secret"));
         assert!(!text.contains("code\""));
         assert!(!text.contains(&hash));
+        assert!(!text.contains(&admin_hash));
         assert!(!text.contains("argon2"));
+    }
+
+    #[test]
+    fn from_lookup_reads_optional_admin_hash_and_rejects_invalid() {
+        let unset = Config::from_lookup(lookup).unwrap();
+        assert!(unset.admin_code_hash.is_none());
+
+        let blank = Config::from_lookup(|name| match name {
+            "ROOMS_ADMIN_CODE_HASH" => Some("   ".to_owned()),
+            _ => lookup(name),
+        })
+        .unwrap();
+        assert!(blank.admin_code_hash.is_none());
+
+        let hash = hash_password("admin-secret").unwrap();
+        let valid = Config::from_lookup(|name| match name {
+            "ROOMS_ADMIN_CODE_HASH" => Some(format!("  {hash}  ")),
+            _ => lookup(name),
+        })
+        .unwrap();
+        assert_eq!(valid.admin_code_hash.as_deref(), Some(hash.as_str()));
+
+        let invalid = Config::from_lookup(|name| match name {
+            "ROOMS_ADMIN_CODE_HASH" => Some("not-a-phc-string".to_owned()),
+            _ => lookup(name),
+        });
+        assert!(matches!(
+            invalid,
+            Err(ConfigError::Invalid {
+                name: "ROOMS_ADMIN_CODE_HASH",
+                ..
+            })
+        ));
     }
 
     #[test]
