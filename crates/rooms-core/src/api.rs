@@ -1,7 +1,7 @@
 use std::fmt;
 use std::path::PathBuf;
 
-use rooms_protocol::{ChatMessage, RoomSummary, SavedChatMessage};
+use rooms_protocol::{AdminRoom, ChatMessage, RoomSummary, SavedChatMessage};
 
 use crate::capture::CaptureEnd;
 use crate::cue::Cue;
@@ -92,7 +92,111 @@ pub struct AudioDevices {
     pub selected_output: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Motivo pelo qual o usuário foi removido de uma sala pelo servidor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RemovalReason {
+    /// Removido por um administrador.
+    Kicked,
+    /// A sala em que estava foi apagada.
+    RoomDeleted,
+}
+
+/// Ações administrativas executadas no servidor de tokens.
+#[derive(Clone, PartialEq, Eq)]
+pub enum AdminAction {
+    CreateRoom {
+        title: String,
+    },
+    UpdateRoom {
+        id: String,
+        title: Option<String>,
+        position: Option<usize>,
+    },
+    DeleteRoom {
+        id: String,
+    },
+    MuteParticipant {
+        room: String,
+        identity: String,
+    },
+    StopShareParticipant {
+        room: String,
+        identity: String,
+    },
+    KickParticipant {
+        room: String,
+        identity: String,
+    },
+    MoveParticipant {
+        room: String,
+        identity: String,
+        to_room: String,
+    },
+    DeleteChat {
+        room: String,
+        id: String,
+    },
+    RotateInvite {
+        new_code: String,
+    },
+}
+
+impl fmt::Debug for AdminAction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::CreateRoom { title } => {
+                f.debug_struct("CreateRoom").field("title", title).finish()
+            }
+            Self::UpdateRoom {
+                id,
+                title,
+                position,
+            } => f
+                .debug_struct("UpdateRoom")
+                .field("id", id)
+                .field("title", title)
+                .field("position", position)
+                .finish(),
+            Self::DeleteRoom { id } => f.debug_struct("DeleteRoom").field("id", id).finish(),
+            Self::MuteParticipant { room, identity } => f
+                .debug_struct("MuteParticipant")
+                .field("room", room)
+                .field("identity", identity)
+                .finish(),
+            Self::StopShareParticipant { room, identity } => f
+                .debug_struct("StopShareParticipant")
+                .field("room", room)
+                .field("identity", identity)
+                .finish(),
+            Self::KickParticipant { room, identity } => f
+                .debug_struct("KickParticipant")
+                .field("room", room)
+                .field("identity", identity)
+                .finish(),
+            Self::MoveParticipant {
+                room,
+                identity,
+                to_room,
+            } => f
+                .debug_struct("MoveParticipant")
+                .field("room", room)
+                .field("identity", identity)
+                .field("to_room", to_room)
+                .finish(),
+            Self::DeleteChat { room, id } => f
+                .debug_struct("DeleteChat")
+                .field("room", room)
+                .field("id", id)
+                .finish(),
+            Self::RotateInvite { .. } => f
+                .debug_struct("RotateInvite")
+                .field("new_code", &"<redacted>")
+                .finish(),
+        }
+    }
+}
+
+#[derive(Clone, PartialEq, Eq)]
 pub enum Command {
     Join {
         room: String,
@@ -143,6 +247,73 @@ pub enum Command {
     SetUiVisible(bool),
     /// Som curto de confirmação, só para quem usa o app.
     PlayCue(Cue),
+    /// Autentica como administrador no servidor de tokens (token mantido só em memória).
+    AdminLogin {
+        password: String,
+    },
+    /// Encerra a sessão administrativa local sem sair da sala atual.
+    AdminLogout,
+    /// Executa uma ação administrativa autenticada.
+    Admin(AdminAction),
+}
+
+impl fmt::Debug for Command {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Join { room } => f.debug_struct("Join").field("room", room).finish(),
+            Self::Leave => f.write_str("Leave"),
+            Self::SetMuted(muted) => f.debug_tuple("SetMuted").field(muted).finish(),
+            Self::SetDeafened(deafened) => f.debug_tuple("SetDeafened").field(deafened).finish(),
+            Self::SendChat { text, save } => f
+                .debug_struct("SendChat")
+                .field("text", text)
+                .field("save", save)
+                .finish(),
+            Self::LoadChatHistory { before } => f
+                .debug_struct("LoadChatHistory")
+                .field("before", before)
+                .finish(),
+            Self::DeleteChat { id } => f.debug_struct("DeleteChat").field("id", id).finish(),
+            Self::SendFile { path } => f.debug_struct("SendFile").field("path", path).finish(),
+            Self::RefreshRooms => f.write_str("RefreshRooms"),
+            Self::RefreshAudioDevices => f.write_str("RefreshAudioDevices"),
+            Self::SetInputDevice(id) => f.debug_tuple("SetInputDevice").field(id).finish(),
+            Self::SetOutputDevice(id) => f.debug_tuple("SetOutputDevice").field(id).finish(),
+            Self::SetNoiseSuppression(mode) => {
+                f.debug_tuple("SetNoiseSuppression").field(mode).finish()
+            }
+            Self::SetStreamVolume(percent) => {
+                f.debug_tuple("SetStreamVolume").field(percent).finish()
+            }
+            Self::SetParticipantVolume { identity, percent } => f
+                .debug_struct("SetParticipantVolume")
+                .field("identity", identity)
+                .field("percent", percent)
+                .finish(),
+            Self::SetNoiseGate(db) => f.debug_tuple("SetNoiseGate").field(db).finish(),
+            Self::RefreshCaptureTargets => f.write_str("RefreshCaptureTargets"),
+            Self::StartScreenShare { target_id, preset } => f
+                .debug_struct("StartScreenShare")
+                .field("target_id", target_id)
+                .field("preset", preset)
+                .finish(),
+            Self::StopScreenShare => f.write_str("StopScreenShare"),
+            Self::WatchScreenShare { identity } => f
+                .debug_struct("WatchScreenShare")
+                .field("identity", identity)
+                .finish(),
+            Self::StopWatching => f.write_str("StopWatching"),
+            Self::PlayCue(cue) => f.debug_tuple("PlayCue").field(cue).finish(),
+            Self::CancelCaptureTargets => f.write_str("CancelCaptureTargets"),
+            Self::SetUiVisible(visible) => f.debug_tuple("SetUiVisible").field(visible).finish(),
+            Self::AdminLogin { .. } => f
+                .debug_struct("AdminLogin")
+                .field("password", &"<redacted>")
+                .finish(),
+            Self::AdminLogout => f.write_str("AdminLogout"),
+            Self::Admin(action) => f.debug_tuple("Admin").field(action).finish(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -181,6 +352,7 @@ pub enum Event {
     ///
     /// A interface (T31c) deve conferir a autoria comparando `sender` com o
     /// `sender_id` ou identidade local que já possui antes de remover o item.
+    /// Quando `sender` é vazio (`""`), a remoção veio de um comando administrativo do servidor.
     ChatDeleted {
         id: String,
         sender: String,
@@ -216,6 +388,30 @@ pub enum Event {
         frames: FrameSlot,
     },
     WatchingStopped,
+    /// Indica mudança no estado da sessão administrativa em memória.
+    AdminChanged {
+        active: bool,
+    },
+    /// Sala criada via ação administrativa.
+    AdminRoomCreated(AdminRoom),
+    /// Sala atualizada via ação administrativa.
+    AdminRoomUpdated(AdminRoom),
+    /// Sala removida via ação administrativa.
+    AdminRoomDeleted {
+        id: String,
+    },
+    /// Código de convite atualizado via ação administrativa.
+    AdminInviteRotated,
+    /// Um administrador encerrou a transmissão de tela local.
+    AdminStoppedScreenShare,
+    /// Um administrador moveu o usuário para outra sala.
+    MovedByAdmin {
+        to_room: String,
+    },
+    /// O servidor removeu o usuário da sala sem permitir reconexão automática.
+    RemovedFromRoom {
+        reason: RemovalReason,
+    },
     CommandFailed(SessionError),
 }
 
@@ -231,6 +427,20 @@ pub enum SessionError {
     RateLimited,
     #[error("saved chat request failed: {0}")]
     Chat(String),
+    #[error("invalid admin password")]
+    AdminInvalidPassword,
+    #[error("admin session expired")]
+    AdminUnauthorized,
+    #[error("admin access is not enabled on this server")]
+    AdminDisabled,
+    #[error("admin permission denied")]
+    AdminForbidden,
+    #[error("too many admin login attempts; try again later")]
+    AdminRateLimited,
+    #[error("admin target not found: {0}")]
+    AdminTargetNotFound(String),
+    #[error("admin request failed: {0}")]
+    Admin(String),
     #[error("connection to the media server failed: {0}")]
     Connection(String),
     #[error("invalid input: {0}")]
@@ -261,5 +471,18 @@ mod tests {
         assert!(!NoiseSuppression::Standard.uses_own_capture());
         assert!(NoiseSuppression::Enhanced.uses_own_capture());
         assert!(NoiseSuppression::Maximum.uses_own_capture());
+    }
+
+    #[test]
+    fn command_debug_redacts_secrets() {
+        let login = Command::AdminLogin {
+            password: "super-secret-admin-pw".to_owned(),
+        };
+        assert!(!format!("{login:?}").contains("super-secret-admin-pw"));
+
+        let invite = Command::Admin(AdminAction::RotateInvite {
+            new_code: "secret-invite-code-999".to_owned(),
+        });
+        assert!(!format!("{invite:?}").contains("secret-invite-code-999"));
     }
 }

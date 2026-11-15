@@ -4,7 +4,9 @@ use std::time::Duration;
 use async_trait::async_trait;
 use tokio::sync::mpsc::UnboundedReceiver;
 
-use crate::api::{AudioDevices, FileTransfer, NoiseSuppression, Participant, SessionError};
+use crate::api::{
+    AudioDevices, FileTransfer, NoiseSuppression, Participant, RemovalReason, SessionError,
+};
 use crate::capture::CaptureEnd;
 use crate::cue::Cue;
 use crate::video::{CaptureTarget, FrameSlot, SharePreset, VideoFrame};
@@ -24,7 +26,7 @@ pub enum BackendEvent {
         speaking: bool,
     },
     DataReceived {
-        sender: String,
+        sender: Option<String>,
         topic: String,
         payload: Vec<u8>,
     },
@@ -48,6 +50,9 @@ pub enum BackendEvent {
     },
     Reconnecting,
     Reconnected,
+    RemovedFromRoom {
+        reason: RemovalReason,
+    },
     Disconnected {
         reason: String,
     },

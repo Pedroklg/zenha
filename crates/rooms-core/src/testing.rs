@@ -5,7 +5,9 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use rooms_protocol::{
-    ChatHistoryResponse, ChatMessage, RoomSummary, SaveChatRequest, TokenRequest, TokenResponse,
+    AdminLoginRequest, AdminLoginResponse, AdminRoom, ChatHistoryResponse, ChatMessage,
+    CreateRoomRequest, MoveParticipantRequest, RoomSummary, SaveChatRequest, TokenRequest,
+    TokenResponse, UpdateInviteRequest, UpdateRoomRequest,
 };
 use tokio::sync::mpsc::{self, UnboundedSender};
 use tokio::time::Instant;
@@ -231,6 +233,14 @@ impl FakeBackend {
             Some(tx) => tx.send(event).is_ok(),
             None => false,
         }
+    }
+
+    pub fn emit_server_data(&self, topic: &str, payload: Vec<u8>) -> bool {
+        self.emit(BackendEvent::DataReceived {
+            sender: None,
+            topic: topic.to_owned(),
+            payload,
+        })
     }
 
     pub fn calls(&self) -> Vec<BackendCall> {
@@ -473,12 +483,61 @@ impl MediaBackend for FakeBackend {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AdminTokenCall {
+    Login(AdminLoginRequest),
+    CreateRoom {
+        jwt: String,
+        request: CreateRoomRequest,
+    },
+    UpdateRoom {
+        jwt: String,
+        id: String,
+        request: UpdateRoomRequest,
+    },
+    DeleteRoom {
+        jwt: String,
+        id: String,
+    },
+    MuteParticipant {
+        jwt: String,
+        room: String,
+        identity: String,
+    },
+    StopShareParticipant {
+        jwt: String,
+        room: String,
+        identity: String,
+    },
+    KickParticipant {
+        jwt: String,
+        room: String,
+        identity: String,
+    },
+    MoveParticipant {
+        jwt: String,
+        room: String,
+        identity: String,
+        request: MoveParticipantRequest,
+    },
+    DeleteChat {
+        jwt: String,
+        room: String,
+        id: String,
+    },
+    RotateInvite {
+        jwt: String,
+        request: UpdateInviteRequest,
+    },
+}
+
 #[derive(Debug)]
 struct TokenState {
     requests: Vec<TokenRequest>,
     reject_invite: bool,
     remaining_failures: u32,
     rooms: Vec<RoomSummary>,
+    rooms_calls: usize,
     chat_history_pages: HashMap<Option<String>, ChatHistoryResponse>,
     save_calls: Vec<(String, String, SaveChatRequest)>,
     history_calls: Vec<(String, String, Option<String>)>,
@@ -486,6 +545,10 @@ struct TokenState {
     save_results: VecDeque<Result<ChatMessage, SessionError>>,
     history_results: VecDeque<Result<ChatHistoryResponse, SessionError>>,
     delete_results: VecDeque<Result<(), SessionError>>,
+    admin_calls: Vec<AdminTokenCall>,
+    admin_login_results: VecDeque<Result<AdminLoginResponse, SessionError>>,
+    admin_room_results: VecDeque<Result<AdminRoom, SessionError>>,
+    admin_unit_results: VecDeque<Result<(), SessionError>>,
 }
 
 #[derive(Debug, Clone)]
@@ -507,6 +570,7 @@ impl FakeTokenClient {
                 reject_invite: false,
                 remaining_failures: 0,
                 rooms: Vec::new(),
+                rooms_calls: 0,
                 chat_history_pages: HashMap::new(),
                 save_calls: Vec::new(),
                 history_calls: Vec::new(),
@@ -514,6 +578,10 @@ impl FakeTokenClient {
                 save_results: VecDeque::new(),
                 history_results: VecDeque::new(),
                 delete_results: VecDeque::new(),
+                admin_calls: Vec::new(),
+                admin_login_results: VecDeque::new(),
+                admin_room_results: VecDeque::new(),
+                admin_unit_results: VecDeque::new(),
             })),
         }
     }
@@ -561,6 +629,26 @@ impl FakeTokenClient {
     pub fn delete_calls(&self) -> Vec<(String, String, String)> {
         lock(&self.state).delete_calls.clone()
     }
+
+    pub fn rooms_calls(&self) -> usize {
+        lock(&self.state).rooms_calls
+    }
+
+    pub fn admin_calls(&self) -> Vec<AdminTokenCall> {
+        lock(&self.state).admin_calls.clone()
+    }
+
+    pub fn push_admin_login_result(&self, result: Result<AdminLoginResponse, SessionError>) {
+        lock(&self.state).admin_login_results.push_back(result);
+    }
+
+    pub fn push_admin_room_result(&self, result: Result<AdminRoom, SessionError>) {
+        lock(&self.state).admin_room_results.push_back(result);
+    }
+
+    pub fn push_admin_unit_result(&self, result: Result<(), SessionError>) {
+        lock(&self.state).admin_unit_results.push_back(result);
+    }
 }
 
 #[async_trait]
@@ -582,7 +670,8 @@ impl TokenClient for FakeTokenClient {
     }
 
     async fn fetch_rooms(&self, _invite_code: &str) -> Result<Vec<RoomSummary>, SessionError> {
-        let state = lock(&self.state);
+        let mut state = lock(&self.state);
+        state.rooms_calls += 1;
         if state.reject_invite {
             return Err(SessionError::InviteRejected);
         }
@@ -650,5 +739,158 @@ impl TokenClient for FakeTokenClient {
             return result;
         }
         Ok(())
+    }
+
+    async fn admin_login(
+        &self,
+        request: AdminLoginRequest,
+    ) -> Result<AdminLoginResponse, SessionError> {
+        let mut state = lock(&self.state);
+        state.admin_calls.push(AdminTokenCall::Login(request));
+        if let Some(result) = state.admin_login_results.pop_front() {
+            return result;
+        }
+        Ok(AdminLoginResponse {
+            token: "admin-jwt-1".to_owned(),
+            expires_at: 9_999_999_999,
+        })
+    }
+
+    async fn admin_create_room(
+        &self,
+        jwt: &str,
+        request: CreateRoomRequest,
+    ) -> Result<AdminRoom, SessionError> {
+        let mut state = lock(&self.state);
+        state.admin_calls.push(AdminTokenCall::CreateRoom {
+            jwt: jwt.to_owned(),
+            request: request.clone(),
+        });
+        if let Some(result) = state.admin_room_results.pop_front() {
+            return result;
+        }
+        Ok(AdminRoom {
+            id: "new-room".to_owned(),
+            title: request.title,
+            position: 0,
+        })
+    }
+
+    async fn admin_update_room(
+        &self,
+        jwt: &str,
+        id: &str,
+        request: UpdateRoomRequest,
+    ) -> Result<AdminRoom, SessionError> {
+        let mut state = lock(&self.state);
+        state.admin_calls.push(AdminTokenCall::UpdateRoom {
+            jwt: jwt.to_owned(),
+            id: id.to_owned(),
+            request: request.clone(),
+        });
+        if let Some(result) = state.admin_room_results.pop_front() {
+            return result;
+        }
+        Ok(AdminRoom {
+            id: id.to_owned(),
+            title: request.title.unwrap_or_else(|| "Updated".to_owned()),
+            position: request.position.unwrap_or(0),
+        })
+    }
+
+    async fn admin_delete_room(&self, jwt: &str, id: &str) -> Result<(), SessionError> {
+        let mut state = lock(&self.state);
+        state.admin_calls.push(AdminTokenCall::DeleteRoom {
+            jwt: jwt.to_owned(),
+            id: id.to_owned(),
+        });
+        state.admin_unit_results.pop_front().unwrap_or(Ok(()))
+    }
+
+    async fn admin_mute_participant(
+        &self,
+        jwt: &str,
+        room: &str,
+        identity: &str,
+    ) -> Result<(), SessionError> {
+        let mut state = lock(&self.state);
+        state.admin_calls.push(AdminTokenCall::MuteParticipant {
+            jwt: jwt.to_owned(),
+            room: room.to_owned(),
+            identity: identity.to_owned(),
+        });
+        state.admin_unit_results.pop_front().unwrap_or(Ok(()))
+    }
+
+    async fn admin_stop_share_participant(
+        &self,
+        jwt: &str,
+        room: &str,
+        identity: &str,
+    ) -> Result<(), SessionError> {
+        let mut state = lock(&self.state);
+        state
+            .admin_calls
+            .push(AdminTokenCall::StopShareParticipant {
+                jwt: jwt.to_owned(),
+                room: room.to_owned(),
+                identity: identity.to_owned(),
+            });
+        state.admin_unit_results.pop_front().unwrap_or(Ok(()))
+    }
+
+    async fn admin_kick_participant(
+        &self,
+        jwt: &str,
+        room: &str,
+        identity: &str,
+    ) -> Result<(), SessionError> {
+        let mut state = lock(&self.state);
+        state.admin_calls.push(AdminTokenCall::KickParticipant {
+            jwt: jwt.to_owned(),
+            room: room.to_owned(),
+            identity: identity.to_owned(),
+        });
+        state.admin_unit_results.pop_front().unwrap_or(Ok(()))
+    }
+
+    async fn admin_move_participant(
+        &self,
+        jwt: &str,
+        room: &str,
+        identity: &str,
+        request: MoveParticipantRequest,
+    ) -> Result<(), SessionError> {
+        let mut state = lock(&self.state);
+        state.admin_calls.push(AdminTokenCall::MoveParticipant {
+            jwt: jwt.to_owned(),
+            room: room.to_owned(),
+            identity: identity.to_owned(),
+            request,
+        });
+        state.admin_unit_results.pop_front().unwrap_or(Ok(()))
+    }
+
+    async fn admin_delete_chat(&self, jwt: &str, room: &str, id: &str) -> Result<(), SessionError> {
+        let mut state = lock(&self.state);
+        state.admin_calls.push(AdminTokenCall::DeleteChat {
+            jwt: jwt.to_owned(),
+            room: room.to_owned(),
+            id: id.to_owned(),
+        });
+        state.admin_unit_results.pop_front().unwrap_or(Ok(()))
+    }
+
+    async fn admin_rotate_invite(
+        &self,
+        jwt: &str,
+        request: UpdateInviteRequest,
+    ) -> Result<(), SessionError> {
+        let mut state = lock(&self.state);
+        state.admin_calls.push(AdminTokenCall::RotateInvite {
+            jwt: jwt.to_owned(),
+            request,
+        });
+        state.admin_unit_results.pop_front().unwrap_or(Ok(()))
     }
 }
