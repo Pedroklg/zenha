@@ -1,12 +1,12 @@
 use std::collections::HashSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
 use std::time::{Duration, Instant};
 
 use eframe::egui;
 
-use crate::chat_images::ChatImages;
+use crate::chat_images::{ChatImages, ViewerImage};
 use crate::cli::{self, StartupLink};
 use crate::core_session::CoreSession;
 use crate::credentials;
@@ -48,8 +48,11 @@ pub struct App {
     banner: Option<&'static str>,
     renderer: views::share::VideoRenderer,
     images: ChatImages,
+    viewer_image: ViewerImage,
     save_results: Receiver<Result<PathBuf, ()>>,
     save_sender: Sender<Result<PathBuf, ()>>,
+    open_results: Receiver<Result<(), ()>>,
+    open_sender: Sender<Result<(), ()>>,
     update_rx: Option<Receiver<AvailableUpdate>>,
     #[cfg(windows)]
     forwarded_links: Option<Receiver<String>>,
@@ -85,6 +88,7 @@ impl App {
             session.configure(state.credentials());
         }
         let (save_sender, save_results) = channel();
+        let (open_sender, open_results) = channel();
         let update_rx = (!demo_flag)
             .then(|| update::spawn_check(ctx.clone()))
             .flatten();
@@ -105,8 +109,11 @@ impl App {
             banner,
             renderer: views::share::VideoRenderer::default(),
             images: ChatImages::default(),
+            viewer_image: ViewerImage::default(),
             save_results,
             save_sender,
+            open_results,
+            open_sender,
             update_rx,
             #[cfg(windows)]
             forwarded_links,
@@ -235,6 +242,10 @@ impl App {
                         self.copy_in_background(ctx, source, dest);
                     }
                 }
+                UserAction::OpenImageExternally(path) => {
+                    self.state.clear_image_viewer_error();
+                    self.open_in_background(ctx, path);
+                }
                 other => resolved.push(other),
             }
         }
@@ -283,7 +294,40 @@ impl App {
         }
     }
 
+    fn open_in_background(&self, ctx: &egui::Context, path: PathBuf) {
+        let sender = self.open_sender.clone();
+        let ctx = ctx.clone();
+        let spawned = std::thread::Builder::new()
+            .name("open-chat-image".to_owned())
+            .spawn(move || {
+                let result = open_path_in_os(&path).map_err(|err| {
+                    tracing::warn!(
+                        %err,
+                        path = %path.display(),
+                        "could not open chat image in OS viewer"
+                    );
+                });
+                if sender.send(result).is_ok() {
+                    ctx.request_repaint();
+                }
+            });
+        if let Err(err) = spawned {
+            tracing::warn!(%err, "could not start OS viewer thread");
+            let _ = self.open_sender.send(Err(()));
+        }
+    }
+
+    fn pump_image_opens(&mut self) {
+        while let Ok(result) = self.open_results.try_recv() {
+            if result.is_err() {
+                self.state
+                    .set_image_viewer_error("Não foi possível abrir no Windows.");
+            }
+        }
+    }
+
     fn prune_images(&mut self) {
+        self.viewer_image.retain_id(self.state.open_image_id());
         if self.images.is_empty() {
             return;
         }
@@ -377,6 +421,7 @@ impl eframe::App for App {
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.pump_saves();
+        self.pump_image_opens();
         if let Some(label) = self.banner {
             views::screens::demo_banner(ui, label);
         }
@@ -441,6 +486,15 @@ impl eframe::App for App {
             },
         ));
         actions.extend(views::share::picker(ui.ctx(), picker));
+        let open_viewer = match screen {
+            Screen::InRoom(room) => room.chat.viewer.as_ref(),
+            _ => None,
+        };
+        actions.extend(views::chat::viewer(
+            ui.ctx(),
+            open_viewer,
+            &mut self.viewer_image,
+        ));
         let actions = self.resolve_effects(ui.ctx(), actions);
         self.dispatch(ui.ctx(), actions);
         self.prune_images();
@@ -476,4 +530,47 @@ fn bring_to_front(ctx: &egui::Context) {
     ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
     ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
     ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+}
+
+fn open_path_in_os(path: &Path) -> std::io::Result<()> {
+    let meta = std::fs::metadata(path)?;
+    if !meta.is_file() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "image path is not a file",
+        ));
+    }
+    let target = std::path::absolute(path)?;
+    #[cfg(windows)]
+    {
+        std::process::Command::new("explorer")
+            .arg(&target)
+            .spawn()?;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open").arg(&target).spawn()?;
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(&target)
+            .spawn()?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::open_path_in_os;
+
+    #[test]
+    fn open_path_in_os_rejects_missing_and_directory_paths() {
+        let missing = std::env::temp_dir().join(format!(
+            "zenha-missing-viewer-image-{}.png",
+            std::process::id()
+        ));
+        assert!(open_path_in_os(&missing).is_err());
+        assert!(open_path_in_os(&std::env::temp_dir()).is_err());
+    }
 }

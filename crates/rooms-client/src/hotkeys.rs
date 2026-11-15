@@ -23,14 +23,12 @@ impl HotkeyAction {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BindingError {
-    NeedsModifier,
     Unsupported,
 }
 
 impl BindingError {
     pub fn message(self) -> &'static str {
         match self {
-            Self::NeedsModifier => "Use Ctrl, Alt ou Shift junto com essa tecla.",
             Self::Unsupported => "Essa tecla não pode ser usada como atalho.",
         }
     }
@@ -41,10 +39,6 @@ pub fn binding_from_key(
     modifiers: egui::Modifiers,
 ) -> Result<String, BindingError> {
     let token = key_token(key).ok_or(BindingError::Unsupported)?;
-    let has_modifier = modifiers.shift || modifiers.ctrl || modifiers.alt;
-    if !has_modifier && !allows_bare(key) {
-        return Err(BindingError::NeedsModifier);
-    }
     let mut out = String::new();
     if modifiers.shift {
         out.push_str("shift+");
@@ -59,38 +53,68 @@ pub fn binding_from_key(
     Ok(out)
 }
 
-pub fn binding_label(binding: &str) -> String {
-    let mut ctrl = false;
-    let mut alt = false;
-    let mut shift = false;
-    let mut meta = false;
-    let mut key = None;
+struct ParsedBinding<'a> {
+    ctrl: bool,
+    alt: bool,
+    shift: bool,
+    meta: bool,
+    key: Option<&'a str>,
+}
+
+fn parse_binding(binding: &str) -> ParsedBinding<'_> {
+    let mut parsed = ParsedBinding {
+        ctrl: false,
+        alt: false,
+        shift: false,
+        meta: false,
+        key: None,
+    };
     for part in binding.split('+').filter(|part| !part.is_empty()) {
         match part {
-            "control" => ctrl = true,
-            "alt" => alt = true,
-            "shift" => shift = true,
-            "meta" => meta = true,
-            other => key = Some(other),
+            "control" => parsed.ctrl = true,
+            "alt" => parsed.alt = true,
+            "shift" => parsed.shift = true,
+            "meta" => parsed.meta = true,
+            other => parsed.key = Some(other),
         }
     }
+    parsed
+}
+
+pub fn binding_label(binding: &str) -> String {
+    let parsed = parse_binding(binding);
     let mut parts = Vec::with_capacity(5);
-    if ctrl {
+    if parsed.ctrl {
         parts.push("Ctrl");
     }
-    if alt {
+    if parsed.alt {
         parts.push("Alt");
     }
-    if shift {
+    if parsed.shift {
         parts.push("Shift");
     }
-    if meta {
+    if parsed.meta {
         parts.push("Win");
     }
-    if let Some(key) = key {
+    if let Some(key) = parsed.key {
         parts.push(token_label(key));
     }
     parts.join("+")
+}
+
+pub fn binding_warning(binding: &str) -> Option<String> {
+    let parsed = parse_binding(binding);
+    if parsed.ctrl || parsed.alt || parsed.shift || parsed.meta {
+        return None;
+    }
+    let key = parsed.key?;
+    if is_recommended_bare_token(key) {
+        return None;
+    }
+    let label = binding_label(key);
+    Some(format!(
+        "Sem Ctrl, Alt ou Shift, a tecla {label} deixa de funcionar nos outros programas enquanto o Zenha estiver aberto. Prefira F13–F24, Insert, Home, End, PgUp, PgDn ou Pause, ou combine com Ctrl, Alt ou Shift."
+    ))
 }
 
 fn token_label(token: &str) -> &str {
@@ -114,39 +138,38 @@ fn token_label(token: &str) -> &str {
     }
 }
 
-fn allows_bare(key: Key) -> bool {
+fn is_recommended_bare_token(token: &str) -> bool {
     matches!(
-        key,
-        Key::F1
-            | Key::F2
-            | Key::F3
-            | Key::F4
-            | Key::F5
-            | Key::F6
-            | Key::F7
-            | Key::F8
-            | Key::F9
-            | Key::F10
-            | Key::F11
-            | Key::F12
-            | Key::F13
-            | Key::F14
-            | Key::F15
-            | Key::F16
-            | Key::F17
-            | Key::F18
-            | Key::F19
-            | Key::F20
-            | Key::F21
-            | Key::F22
-            | Key::F23
-            | Key::F24
-            | Key::Insert
-            | Key::Home
-            | Key::End
-            | Key::PageUp
-            | Key::PageDown
-            | Key::Pause
+        token,
+        "F1" | "F2"
+            | "F3"
+            | "F4"
+            | "F5"
+            | "F6"
+            | "F7"
+            | "F8"
+            | "F9"
+            | "F10"
+            | "F11"
+            | "F12"
+            | "F13"
+            | "F14"
+            | "F15"
+            | "F16"
+            | "F17"
+            | "F18"
+            | "F19"
+            | "F20"
+            | "F21"
+            | "F22"
+            | "F23"
+            | "F24"
+            | "Insert"
+            | "Home"
+            | "End"
+            | "PageUp"
+            | "PageDown"
+            | "Pause"
     )
 }
 
@@ -394,9 +417,10 @@ mod tests {
     }
 
     #[test]
-    fn enforces_modifier_rule_and_rejects_unsupported_keys() {
+    fn accepts_bare_keys_and_rejects_unsupported_keys() {
         for key in [
             Key::F1,
+            Key::F9,
             Key::F12,
             Key::F24,
             Key::Insert,
@@ -405,10 +429,6 @@ mod tests {
             Key::PageUp,
             Key::PageDown,
             Key::Pause,
-        ] {
-            assert!(binding_from_key(key, Modifiers::NONE).is_ok(), "{key:?}");
-        }
-        for key in [
             Key::A,
             Key::Num1,
             Key::Space,
@@ -419,12 +439,12 @@ mod tests {
             Key::ArrowUp,
             Key::Minus,
         ] {
-            assert_eq!(
-                binding_from_key(key, Modifiers::NONE),
-                Err(BindingError::NeedsModifier),
-                "{key:?}"
-            );
+            assert!(binding_from_key(key, Modifiers::NONE).is_ok(), "{key:?}");
         }
+        assert_eq!(
+            binding_from_key(Key::OpenBracket, Modifiers::NONE),
+            Ok("BracketLeft".to_owned())
+        );
         let command_only = Modifiers {
             command: true,
             mac_cmd: true,
@@ -432,7 +452,7 @@ mod tests {
         };
         assert_eq!(
             binding_from_key(Key::M, command_only),
-            Err(BindingError::NeedsModifier)
+            Ok("KeyM".to_owned())
         );
         for key in [Key::Escape, Key::F25, Key::F35] {
             assert_eq!(
@@ -447,13 +467,42 @@ mod tests {
             );
         }
         assert_eq!(
-            BindingError::NeedsModifier.message(),
-            "Use Ctrl, Alt ou Shift junto com essa tecla."
-        );
-        assert_eq!(
             BindingError::Unsupported.message(),
             "Essa tecla não pode ser usada como atalho."
         );
+    }
+
+    #[test]
+    fn binding_warning_flags_non_recommended_bare_keys() {
+        assert_eq!(
+            binding_warning("BracketLeft").as_deref(),
+            Some(
+                "Sem Ctrl, Alt ou Shift, a tecla BracketLeft deixa de funcionar nos outros programas enquanto o Zenha estiver aberto. Prefira F13–F24, Insert, Home, End, PgUp, PgDn ou Pause, ou combine com Ctrl, Alt ou Shift."
+            )
+        );
+        assert_eq!(
+            binding_warning("KeyM").as_deref(),
+            Some(
+                "Sem Ctrl, Alt ou Shift, a tecla M deixa de funcionar nos outros programas enquanto o Zenha estiver aberto. Prefira F13–F24, Insert, Home, End, PgUp, PgDn ou Pause, ou combine com Ctrl, Alt ou Shift."
+            )
+        );
+        assert_eq!(
+            binding_warning("Space").as_deref(),
+            Some(
+                "Sem Ctrl, Alt ou Shift, a tecla Espaço deixa de funcionar nos outros programas enquanto o Zenha estiver aberto. Prefira F13–F24, Insert, Home, End, PgUp, PgDn ou Pause, ou combine com Ctrl, Alt ou Shift."
+            )
+        );
+        assert_eq!(binding_warning("F9"), None);
+        assert_eq!(binding_warning("control+BracketLeft"), None);
+        assert_eq!(binding_warning("Insert"), None);
+        for recommended in [
+            "F1", "F12", "F13", "F24", "Insert", "Home", "End", "PageUp", "PageDown", "Pause",
+        ] {
+            assert_eq!(binding_warning(recommended), None, "{recommended}");
+        }
+        assert_eq!(binding_warning("shift+KeyM"), None);
+        assert_eq!(binding_warning("alt+Space"), None);
+        assert_eq!(binding_warning(""), None);
     }
 
     #[test]
@@ -489,16 +538,13 @@ mod tests {
         use global_hotkey::hotkey::HotKey;
 
         for &key in ALL_SUPPORTED_KEYS {
-            let m = if allows_bare(key) {
-                Modifiers::NONE
-            } else {
-                mods(true, true, true)
-            };
-            let binding = binding_from_key(key, m).unwrap();
-            let parsed: HotKey = binding.parse().unwrap_or_else(|err| {
-                panic!("failed to parse {binding:?} for {key:?}: {err}");
-            });
-            assert_eq!(parsed.into_string(), binding, "mismatch for {key:?}");
+            for m in [Modifiers::NONE, mods(true, true, true)] {
+                let binding = binding_from_key(key, m).unwrap();
+                let parsed: HotKey = binding.parse().unwrap_or_else(|err| {
+                    panic!("failed to parse {binding:?} for {key:?}: {err}");
+                });
+                assert_eq!(parsed.into_string(), binding, "mismatch for {key:?}");
+            }
         }
     }
 }
