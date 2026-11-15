@@ -4,7 +4,7 @@ Complementa [general.md](general.md). Escopo: `.github/workflows/`, `deploy/`, `
 
 ## OPS-01: Paridade entre `cargo ci` local, `cargo review` e o workflow de CI
 
-- `cargo ci` (`xtask/src/main.rs`) centraliza a verificação local e no GitHub Actions (`.github/workflows/ci.yml`), executando as checagens de fronteira sem falso positivo, `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings` e `cargo test --workspace`.
+- `cargo ci` (`xtask/src/main.rs`) centraliza a verificação, que roda só no PC (não há workflow de build ou teste no GitHub Actions): checagens de fronteira, `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace` e `cargo deny check`.
 - Dependências em `Cargo.toml` devem respeitar `deny.toml` (licenças permitidas, `wildcards = "deny"`, fontes restritas ao `crates.io` e ao repositório git fixado do `DeepFilterNet`, sem advisories não justificados e respeitando `[bans] wrappers`).
 
 ## OPS-02: Dockerfile reproduzível (`--locked`) e sem privilégio de root
@@ -25,7 +25,7 @@ Complementa [general.md](general.md). Escopo: `.github/workflows/`, `deploy/`, `
 
 ## OPS-05: Release validada antes de empacotar
 
-- `.github/workflows/release.yml` exige que a versão informada bata com `[workspace.package].version` do `Cargo.toml`, que a tag `vX.Y.Z` não exista e que o workflow `ci.yml` tenha passado no commit `GITHUB_SHA` antes de gerar o instalador (`installer/zenha.iss`) e disparar `server-image.yml`.
+- `scripts/release.cmd X.Y.Z` publica a release do PC: exige estar na `main` limpa, versão igual a `[workspace.package].version` e tag `vX.Y.Z` inexistente, roda `cargo ci`, gera instalador e zip (`scripts/package.cmd`, `installer/zenha.iss`), faz push e cria a release com `gh`; a tag dispara `server-image.yml` e depois `deploy.yml`.
 
 ## OPS-06: Arquivos proibidos e `.gitignore`
 

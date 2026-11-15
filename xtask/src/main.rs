@@ -55,7 +55,22 @@ fn ci() -> ExitCode {
             }
         }
     }
-    ExitCode::SUCCESS
+    deny(&cargo)
+}
+
+fn deny(cargo: &str) -> ExitCode {
+    eprintln!("==> deny");
+    match Command::new(cargo).args(["deny", "check"]).status() {
+        Ok(status) if status.success() => ExitCode::SUCCESS,
+        Ok(status) => {
+            eprintln!("deny failed: {status} (if cargo-deny is missing: cargo install cargo-deny)");
+            ExitCode::FAILURE
+        }
+        Err(err) => {
+            eprintln!("could not run cargo deny: {err}");
+            ExitCode::FAILURE
+        }
+    }
 }
 
 fn run_icon() -> ExitCode {

@@ -52,7 +52,7 @@ cargo client -- --demo  # simulated rooms and participants, no server required
 
 | Command | Description |
 | --- | --- |
-| `cargo ci` | Runs formatting check, clippy (`-D warnings`), and workspace tests |
+| `cargo ci` | Runs boundary checks, formatting check, clippy (`-D warnings`), workspace tests and `cargo deny` |
 | `cargo lint` | Runs clippy across all workspace targets |
 | `cargo server` | Starts `rooms-token-server` (`cargo run -p rooms-token-server -- hash-password` generates `ROOMS_INVITE_CODE_HASH`) |
 | `cargo client` | Launches the `zenha` desktop client |
