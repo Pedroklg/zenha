@@ -1,6 +1,6 @@
 use eframe::egui::{self, RichText};
 
-use crate::hotkeys::{HotkeyAction, binding_from_key, binding_label};
+use crate::hotkeys::{HotkeyAction, binding_from_key, binding_label, binding_warning};
 use crate::settings::{NoiseMode, VoiceMode};
 use crate::state::{AudioState, DEFAULT_DEVICE_LABEL, HotkeyState, MicLevelView, UserAction};
 use crate::theme;
@@ -237,6 +237,9 @@ fn hotkeys_section(
                     "Defina a tecla de push-to-talk; sem ela o microfone fica fechado.",
                 );
             }
+        }
+        if let Some(warning) = hotkeys.binding(action).and_then(binding_warning) {
+            ui.small(RichText::new(warning).color(theme::ACCENT));
         }
         if hotkeys.capturing == Some(action)
             && let Some(err) = &hotkeys.capture_error
