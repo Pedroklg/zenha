@@ -1,6 +1,7 @@
 //! Automação do repositório: verificação local e geração de assets.
 
 mod icon;
+mod review_checks;
 
 use std::env;
 use std::process::{Command, ExitCode};
@@ -22,17 +23,23 @@ const STEPS: &[(&str, &[&str])] = &[
 ];
 
 fn main() -> ExitCode {
-    match env::args().nth(1).as_deref() {
+    let args: Vec<String> = env::args().skip(1).collect();
+    match args.first().map(String::as_str) {
         Some("ci") => ci(),
         Some("icon") => run_icon(),
+        Some("review-checks") => review_checks::run(args.get(1).map_or("HEAD", String::as_str)),
         other => {
-            eprintln!("unknown task: {other:?}\nusage: cargo xtask <ci|icon>");
+            eprintln!("unknown task: {other:?}\nusage: cargo xtask <ci|icon|review-checks>");
             ExitCode::FAILURE
         }
     }
 }
 
 fn ci() -> ExitCode {
+    eprintln!("==> boundaries");
+    if !review_checks::boundaries() {
+        return ExitCode::FAILURE;
+    }
     let cargo = env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned());
     for (name, args) in STEPS {
         eprintln!("==> {name}");

@@ -55,9 +55,12 @@ impl AudioScope {
 
 fn window_process_id(window: u64) -> Option<u32> {
     let mut process = 0u32;
+    #[expect(
+        unsafe_code,
+        reason = "Win32 GetWindowThreadProcessId has no safe wrapper in the windows crate"
+    )]
     // SAFETY: the call only reads the handle value and writes the process id to a live local;
     // a stale or invalid handle makes it return 0 without touching memory.
-    #[expect(unsafe_code)]
     let thread = unsafe {
         GetWindowThreadProcessId(
             HWND(window as usize as *mut core::ffi::c_void),

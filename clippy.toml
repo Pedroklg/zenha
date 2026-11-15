@@ -1,3 +1,10 @@
 allow-unwrap-in-tests = true
 allow-expect-in-tests = true
 allow-panic-in-tests = true
+allow-dbg-in-tests = true
+
+# Métodos cujo uso direto pede justificativa ou substituição (TST-05)
+disallowed-methods = [
+    { path = "std::env::set_var", reason = "TST-05/SRV-08: injete um lookup (ex.: Config::from_lookup) em vez de mutar o ambiente do processo" },
+    { path = "std::env::remove_var", reason = "TST-05/SRV-08: injete um lookup em vez de mutar o ambiente do processo" },
+]

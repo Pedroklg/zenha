@@ -451,14 +451,11 @@ pub(crate) async fn publish_share(
     };
     capture.start(target, preset.fps(), Box::new(sink))?;
 
-    let source_size = match timeout(FIRST_FRAME_TIMEOUT, size_rx).await {
-        Ok(Ok(size)) => size,
-        _ => {
-            stop_capture(capture).await;
-            return Err(SessionError::Video(
-                "no frame was captured from the target".to_owned(),
-            ));
-        }
+    let Ok(Ok(source_size)) = timeout(FIRST_FRAME_TIMEOUT, size_rx).await else {
+        stop_capture(capture).await;
+        return Err(SessionError::Video(
+            "no frame was captured from the target".to_owned(),
+        ));
     };
     let (width, height) = fit_within(
         source_size.0,

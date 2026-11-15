@@ -24,7 +24,10 @@ const FOOTER_BUTTON_SIZE: f32 = 36.0;
 const FOOTER_BUTTON_GAP: f32 = 6.0;
 const TWO_COL_BREAKPOINT: f32 = 520.0;
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "egui room view takes panel state and control handles directly"
+)]
 pub fn show(
     ui: &mut egui::Ui,
     state: &mut RoomState,
