@@ -38,19 +38,20 @@ function Get-ScheduleIds {
 
 function Show-Schedule {
     $triggerIds = @(Get-ScheduleIds | ForEach-Object { "$_/triggers/Recurrence" })
-    $triggers = @(Invoke-Az resource show --api-version 2019-05-01 -o json --ids @triggerIds | ConvertFrom-Json)
+    $triggers = Invoke-Az resource show --api-version 2019-05-01 -o json --ids @triggerIds | ConvertFrom-Json
     $triggers | ForEach-Object {
         [pscustomobject]@{
             workflow = ($_.id -split '/')[-3]
             state    = $_.properties.state
-            nextRun  = if ($_.properties.nextExecutionTime) { $_.properties.nextExecutionTime } else { '-' }
+            nextRun  = if ($_.properties.nextExecutionTime) { ([datetime]$_.properties.nextExecutionTime).ToString('ddd dd/MM HH:mm') } else { '-' }
         }
     } | Format-Table -AutoSize
 }
 
 function Set-Schedule([string]$state) {
-    $ids = @(Get-ScheduleIds)
-    Invoke-Az resource update --api-version 2019-05-01 --set "properties.state=$state" -o none --ids @ids
+    foreach ($id in Get-ScheduleIds) {
+        Invoke-Az resource update --api-version 2019-05-01 --set "properties.state=$state" -o none --ids $id
+    }
     Show-Schedule
 }
 
