@@ -130,6 +130,7 @@ fn to_core(command: UiCommand) -> Command {
             NoiseMode::Maximum => NoiseSuppression::Maximum,
         }),
         UiCommand::RefreshCaptureTargets => Command::RefreshCaptureTargets,
+        UiCommand::CancelCaptureTargets => Command::CancelCaptureTargets,
         UiCommand::StartScreenShare { target_id, preset } => Command::StartScreenShare {
             target_id,
             preset: to_core_preset(preset),
@@ -137,6 +138,7 @@ fn to_core(command: UiCommand) -> Command {
         UiCommand::StopScreenShare => Command::StopScreenShare,
         UiCommand::WatchScreenShare { identity } => Command::WatchScreenShare { identity },
         UiCommand::StopWatching => Command::StopWatching,
+        UiCommand::SetUiVisible(visible) => Command::SetUiVisible(visible),
         UiCommand::PlayCue(cue) => Command::PlayCue(cue),
     }
 }
@@ -1024,6 +1026,22 @@ mod tests {
                 identity: "alice".to_owned(),
                 percent: 135,
             }
+        );
+    }
+
+    #[test]
+    fn cancel_capture_targets_and_ui_visibility_translate_to_core() {
+        assert_eq!(
+            to_core(UiCommand::CancelCaptureTargets),
+            Command::CancelCaptureTargets
+        );
+        assert_eq!(
+            to_core(UiCommand::SetUiVisible(false)),
+            Command::SetUiVisible(false)
+        );
+        assert_eq!(
+            to_core(UiCommand::SetUiVisible(true)),
+            Command::SetUiVisible(true)
         );
     }
 }

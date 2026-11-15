@@ -62,10 +62,83 @@ const SHARE_AUDIO_QUEUE_MS: u32 = 100;
 const SHARE_AUDIO_BACKLOG_FRAMES: usize = 20;
 const ENHANCED_BACKLOG_FRAMES: usize = 20;
 
+#[derive(Debug)]
+struct UiVisibleFlag(Arc<AtomicBool>);
+
+impl Default for UiVisibleFlag {
+    fn default() -> Self {
+        Self(Arc::new(AtomicBool::new(true)))
+    }
+}
+
+#[derive(Debug, Default)]
+struct ShareSids {
+    video: StdMutex<Option<std::sync::Weak<StdMutex<TrackSid>>>>,
+    audio: StdMutex<Option<std::sync::Weak<StdMutex<TrackSid>>>>,
+}
+
+impl ShareSids {
+    fn set_video(&self, sid: &Arc<StdMutex<TrackSid>>) {
+        Self::set(&self.video, sid);
+    }
+
+    fn set_audio(&self, sid: &Arc<StdMutex<TrackSid>>) {
+        Self::set(&self.audio, sid);
+    }
+
+    fn republish_video(&self, previous: &TrackSid, next: TrackSid) -> bool {
+        Self::update(&self.video, previous, next)
+    }
+
+    fn republish_audio(&self, previous: &TrackSid, next: TrackSid) -> bool {
+        Self::update(&self.audio, previous, next)
+    }
+
+    fn set(
+        slot: &StdMutex<Option<std::sync::Weak<StdMutex<TrackSid>>>>,
+        sid: &Arc<StdMutex<TrackSid>>,
+    ) {
+        let mut guard = slot
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *guard = Some(Arc::downgrade(sid));
+    }
+
+    fn update(
+        slot: &StdMutex<Option<std::sync::Weak<StdMutex<TrackSid>>>>,
+        previous: &TrackSid,
+        next: TrackSid,
+    ) -> bool {
+        let target = {
+            let mut guard = slot
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            match guard.as_ref().and_then(std::sync::Weak::upgrade) {
+                Some(arc) => arc,
+                None => {
+                    *guard = None;
+                    return false;
+                }
+            }
+        };
+        let mut sid = target
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if *sid == *previous {
+            *sid = next;
+            true
+        } else {
+            false
+        }
+    }
+}
+
 #[derive(Debug, Default)]
 struct Flags {
     microphone_muted: AtomicBool,
     output_muted: AtomicBool,
+    ui_visible: UiVisibleFlag,
+    share_sids: ShareSids,
     /// 100 minus the stream volume, so the zero default means full volume.
     stream_attenuation: Arc<AtomicU8>,
     /// Noise gate threshold in dBFS; the zero default means the gate is off.
@@ -206,7 +279,7 @@ impl StreamPlayer {
 /// Sound published along with the local screen share.
 struct ShareAudio {
     room: Arc<Room>,
-    sid: TrackSid,
+    sid: Arc<StdMutex<TrackSid>>,
     _pump: TaskGuard,
     _capture: ShareAudioCapture,
 }
@@ -536,6 +609,7 @@ impl LiveKitBackend {
         let events = tokio::spawn(pump_events(
             room_events,
             tx.clone(),
+            room.clone(),
             self.flags.clone(),
             self.watch.clone(),
             self.files.clone(),
@@ -768,20 +842,25 @@ impl MediaBackend for LiveKitBackend {
         }
         let target = self.resolve_target(target_id).await?;
         let (capture, capture_target) = capture_for(target.clone())?;
-        *slot = Some(
-            livekit_video::publish_share(
-                room.clone(),
-                events,
-                capture,
-                &capture_target,
-                preset,
-                preview,
-            )
-            .await?,
-        );
+        let share = livekit_video::publish_share(
+            room.clone(),
+            events,
+            capture,
+            &capture_target,
+            preset,
+            preview,
+            Arc::clone(&self.flags.ui_visible.0),
+        )
+        .await?;
+        self.flags.share_sids.set_video(&share.sid_handle());
+        *slot = Some(share);
         // The picture is what was asked for; the sound is best effort.
         if let Some(scope) = AudioScope::for_target(&target) {
-            *self.local_share_audio.lock().await = publish_share_audio(room, scope).await;
+            let audio = publish_share_audio(room, scope).await;
+            if let Some(audio) = &audio {
+                self.flags.share_sids.set_audio(&audio.sid);
+            }
+            *self.local_share_audio.lock().await = audio;
         }
         Ok(())
     }
@@ -820,7 +899,12 @@ impl MediaBackend for LiveKitBackend {
             }
         }
         if let Some(RemoteTrack::Video(video)) = publication.track() {
-            self.watch.start_stream(identity, video.rtc_track(), events);
+            self.watch.start_stream(
+                identity,
+                video.rtc_track(),
+                events,
+                Arc::clone(&self.flags.ui_visible.0),
+            );
         }
         Ok(())
     }
@@ -833,6 +917,10 @@ impl MediaBackend for LiveKitBackend {
             set_screen_share_subscribed(&room, &identity, false);
         }
         Ok(())
+    }
+
+    fn set_ui_visible(&self, visible: bool) {
+        self.flags.ui_visible.0.store(visible, Ordering::Relaxed);
     }
 
     fn play_cue(&self, cue: Cue) {
@@ -1210,7 +1298,7 @@ async fn publish_share_audio(room: Arc<Room>, scope: AudioScope) -> Option<Share
     tracing::info!(?scope, "share audio published");
     Some(ShareAudio {
         room,
-        sid: publication.sid(),
+        sid: Arc::new(StdMutex::new(publication.sid())),
         _pump: TaskGuard(pump),
         _capture: capture,
     })
@@ -1218,6 +1306,10 @@ async fn publish_share_audio(room: Arc<Room>, scope: AudioScope) -> Option<Share
 
 async fn stop_share_audio(audio: ShareAudio) {
     let ShareAudio { room, sid, .. } = audio;
+    let sid = sid
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone();
     if let Err(err) = room.local_participant().unpublish_track(&sid).await {
         tracing::warn!(%err, "unpublishing the share audio failed");
     }
@@ -1451,6 +1543,7 @@ fn mute_event(
 
 fn translate(
     event: RoomEvent,
+    room: &Arc<Room>,
     speaking: &mut SpeakingTracker,
     flags: &Flags,
     watch: &Watch,
@@ -1544,7 +1637,12 @@ fn translate(
             {
                 let identity = String::from(participant.identity());
                 tracing::info!(%identity, "remote screen share track subscribed");
-                watch.start_stream(&identity, video.rtc_track(), events.clone());
+                watch.start_stream(
+                    &identity,
+                    video.rtc_track(),
+                    events.clone(),
+                    Arc::clone(&flags.ui_visible.0),
+                );
             }
             Vec::new()
         }
@@ -1573,6 +1671,8 @@ fn translate(
             let identity = String::from(participant.identity());
             tracing::warn!(%identity, ?error, "remote track subscription failed");
             if watch.failed_sid_matches(&identity, &track_sid) {
+                flags.stop_stream();
+                set_screen_share_subscribed(room, &identity, false);
                 watch.clear();
                 return vec![BackendEvent::WatchEnded {
                     identity,
@@ -1582,11 +1682,41 @@ fn translate(
             Vec::new()
         }
         RoomEvent::LocalTrackRepublished {
-            track: LocalTrack::Audio(track),
+            previous_sid,
+            publication,
+            track,
             ..
         } => {
-            if flags.microphone_muted.load(Ordering::SeqCst) {
-                track.disable();
+            let new_sid = publication.sid();
+            match (track, publication.source()) {
+                (LocalTrack::Audio(track), TrackSource::Microphone)
+                    if flags.microphone_muted.load(Ordering::SeqCst) =>
+                {
+                    track.disable();
+                }
+                (LocalTrack::Video(_), TrackSource::Screenshare)
+                    if flags
+                        .share_sids
+                        .republish_video(&previous_sid, new_sid.clone()) =>
+                {
+                    tracing::info!(
+                        %previous_sid,
+                        %new_sid,
+                        "local screen share video track republished"
+                    );
+                }
+                (LocalTrack::Audio(_), TrackSource::ScreenshareAudio)
+                    if flags
+                        .share_sids
+                        .republish_audio(&previous_sid, new_sid.clone()) =>
+                {
+                    tracing::info!(
+                        %previous_sid,
+                        %new_sid,
+                        "local screen share audio track republished"
+                    );
+                }
+                _ => {}
             }
             Vec::new()
         }
@@ -1641,6 +1771,7 @@ fn translate(
 async fn pump_events(
     mut room_events: UnboundedReceiver<RoomEvent>,
     tx: UnboundedSender<BackendEvent>,
+    room: Arc<Room>,
     flags: Arc<Flags>,
     watch: Arc<Watch>,
     files: Arc<FileReceiver>,
@@ -1648,7 +1779,7 @@ async fn pump_events(
     let mut speaking = SpeakingTracker::default();
     while let Some(event) = room_events.recv().await {
         let mut finished = false;
-        for backend_event in translate(event, &mut speaking, &flags, &watch, &tx, &files) {
+        for backend_event in translate(event, &room, &mut speaking, &flags, &watch, &tx, &files) {
             finished |= matches!(backend_event, BackendEvent::Disconnected { .. });
             if tx.send(backend_event).is_err() {
                 return;
@@ -1671,6 +1802,34 @@ mod tests {
     };
 
     use super::*;
+
+    fn track_sid(id: &str) -> TrackSid {
+        TrackSid::try_from(id.to_owned()).expect("valid track sid")
+    }
+
+    #[test]
+    fn share_sids_update_when_previous_matches_and_ignore_stale_tracks() {
+        let sids = ShareSids::default();
+        let video_sid = Arc::new(StdMutex::new(track_sid("TR_video_1")));
+        let audio_sid = Arc::new(StdMutex::new(track_sid("TR_audio_1")));
+        sids.set_video(&video_sid);
+        sids.set_audio(&audio_sid);
+
+        assert!(!sids.republish_video(&track_sid("TR_other"), track_sid("TR_video_x")));
+        assert_eq!(*video_sid.lock().unwrap(), track_sid("TR_video_1"));
+
+        assert!(sids.republish_video(&track_sid("TR_video_1"), track_sid("TR_video_2")));
+        assert_eq!(*video_sid.lock().unwrap(), track_sid("TR_video_2"));
+
+        assert!(sids.republish_video(&track_sid("TR_video_2"), track_sid("TR_video_3")));
+        assert_eq!(*video_sid.lock().unwrap(), track_sid("TR_video_3"));
+
+        assert!(sids.republish_audio(&track_sid("TR_audio_1"), track_sid("TR_audio_2")));
+        assert_eq!(*audio_sid.lock().unwrap(), track_sid("TR_audio_2"));
+
+        drop(video_sid);
+        assert!(!sids.republish_video(&track_sid("TR_video_3"), track_sid("TR_video_4")));
+    }
 
     #[test]
     fn audio_track_set_volume_accepts_in_and_out_of_range_values() {

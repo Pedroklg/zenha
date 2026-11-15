@@ -244,6 +244,7 @@ impl DemoSession {
                     }
                 }
             }
+            UiCommand::CancelCaptureTargets => self.cancel_capture_targets(),
             UiCommand::StartScreenShare { target_id, .. } => self.start_share(&target_id),
             UiCommand::StopScreenShare => {
                 if self.share_preview.take().is_some() {
@@ -256,11 +257,21 @@ impl DemoSession {
                     self.schedule(Duration::ZERO, UiEvent::WatchingStopped);
                 }
             }
+            UiCommand::SetUiVisible(_) => {}
             UiCommand::RefreshRooms => {
                 let rooms = self.rooms();
                 self.schedule(Duration::ZERO, UiEvent::RoomsUpdated(rooms));
             }
         }
+    }
+
+    fn cancel_capture_targets(&mut self) {
+        self.scheduled.retain(|s| {
+            !matches!(
+                s.event,
+                UiEvent::CaptureTargetsUpdated(_) | UiEvent::CaptureThumbnail { .. }
+            )
+        });
     }
 
     fn publish_audio_devices(&mut self) {
@@ -272,6 +283,7 @@ impl DemoSession {
         if self.room.is_none() || self.share_preview.is_some() {
             return;
         }
+        self.cancel_capture_targets();
         if demo_targets().iter().any(|t| t.id == target_id) {
             let Some(feed) = TestFeed::start_with(480, 270, 10) else {
                 return;
@@ -915,6 +927,16 @@ mod tests {
             identity: "demo-ana".to_owned(),
             percent: 60,
         });
+        assert!(drain(&mut session).is_empty());
+    }
+
+    #[test]
+    fn cancel_capture_targets_drops_scheduled_thumbnails_and_ui_visible_is_accepted() {
+        let mut session = DemoSession::with_delays(DemoDelays::instant());
+        session.send(UiCommand::RefreshCaptureTargets);
+        session.send(UiCommand::CancelCaptureTargets);
+        session.send(UiCommand::SetUiVisible(false));
+        session.send(UiCommand::SetUiVisible(true));
         assert!(drain(&mut session).is_empty());
     }
 }

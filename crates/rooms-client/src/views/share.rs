@@ -74,12 +74,21 @@ pub struct VideoRenderer {
     last_seen: u64,
     serial: u64,
     size: (usize, usize),
+    paused: bool,
 }
 
 impl VideoRenderer {
+    pub fn set_paused(&mut self, paused: bool) {
+        self.paused = paused;
+    }
+
     pub fn reset(&mut self) {
         if self.texture.is_some() || self.last_seen != 0 || self.serial != 0 {
-            *self = Self::default();
+            let paused = self.paused;
+            *self = Self {
+                paused,
+                ..Self::default()
+            };
         }
     }
 
@@ -87,6 +96,7 @@ impl VideoRenderer {
         if self.serial != serial {
             *self = Self {
                 serial,
+                paused: self.paused,
                 ..Self::default()
             };
         }
@@ -125,7 +135,9 @@ impl VideoRenderer {
         feed: &FeedHandle,
         waiting_label: &str,
     ) {
-        self.sync(ui.ctx(), serial, feed);
+        if !self.paused {
+            self.sync(ui.ctx(), serial, feed);
+        }
         let avail = ui.available_size();
         let (rect, _) = ui.allocate_exact_size(avail, Sense::hover());
         ui.painter().rect_filled(rect, 0.0, theme::VIDEO_BG);

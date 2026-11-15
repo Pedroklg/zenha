@@ -348,12 +348,14 @@ impl Session {
                 }
             }
             Command::RefreshCaptureTargets => self.refresh_capture_targets().await,
+            Command::CancelCaptureTargets => self.cancel_capture_targets(),
             Command::StartScreenShare { target_id, preset } => {
                 self.start_share(&target_id, preset).await;
             }
             Command::StopScreenShare => self.stop_share().await,
             Command::WatchScreenShare { identity } => self.watch(identity).await,
             Command::StopWatching => self.stop_watch().await,
+            Command::SetUiVisible(visible) => self.backend.set_ui_visible(visible),
             Command::PlayCue(cue) => self.backend.play_cue(cue),
         }
     }
@@ -362,9 +364,13 @@ impl Session {
         matches!(self.phase, Phase::Connected { .. })
     }
 
-    async fn refresh_capture_targets(&mut self) {
+    fn cancel_capture_targets(&mut self) {
         self.capture_targets_seq = self.capture_targets_seq.wrapping_add(1);
         self.thumbnail_job = None;
+    }
+
+    async fn refresh_capture_targets(&mut self) {
+        self.cancel_capture_targets();
         let targets = match self.backend.capture_targets().await {
             Ok(targets) => targets,
             Err(err) => {
@@ -404,6 +410,7 @@ impl Session {
             self.emit(Event::CommandFailed(SessionError::ShareActive));
             return;
         }
+        self.cancel_capture_targets();
         let preview = FrameSlot::with_waker(self.sink.waker());
         match self
             .backend
@@ -2509,6 +2516,90 @@ mod tests {
                     percent: 0,
                 },
             ]
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn cancel_capture_targets_and_start_share_stop_pending_thumbnails() {
+        use crate::testing::FakeThumbnail;
+
+        let mut h = harness();
+        h.backend.set_capture_targets(vec![target("slow")]);
+        h.backend.set_thumbnail(
+            "slow",
+            FakeThumbnail::Delay {
+                delay: Duration::from_secs(1),
+                frame: frame(99),
+            },
+        );
+        h.send(Command::RefreshCaptureTargets);
+        assert_eq!(
+            h.next().await,
+            Event::CaptureTargetsUpdated(vec![target("slow")])
+        );
+        h.send(Command::CancelCaptureTargets);
+        tokio::time::advance(Duration::from_secs(2)).await;
+        tokio::task::yield_now().await;
+        assert_eq!(h.events.try_recv().ok(), None);
+
+        h.join("geral").await;
+        h.send(Command::RefreshCaptureTargets);
+        assert_eq!(
+            h.next().await,
+            Event::CaptureTargetsUpdated(vec![target("slow")])
+        );
+        h.send(Command::StartScreenShare {
+            target_id: "slow".to_owned(),
+            preset: SharePreset::P720F30,
+        });
+        assert!(matches!(h.next().await, Event::ScreenShareStarted { .. }));
+        tokio::time::advance(Duration::from_secs(2)).await;
+        tokio::task::yield_now().await;
+        assert_eq!(h.events.try_recv().ok(), None);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn ui_visibility_hides_and_resumes_watch_and_preview_frames() {
+        let mut h = harness();
+        h.join("geral").await;
+        h.backend.set_capture_targets(vec![target("s1")]);
+        h.send(Command::StartScreenShare {
+            target_id: "s1".to_owned(),
+            preset: SharePreset::P720F30,
+        });
+        let Event::ScreenShareStarted { preview } = h.next().await else {
+            panic!("expected ScreenShareStarted");
+        };
+        let watch_slot = watch(&mut h, "ana").await;
+
+        let mut seen_preview = 0;
+        let mut seen_watch = 0;
+        assert!(h.backend.push_share_preview_frame(frame(1)));
+        assert!(h.backend.push_frame(frame(2)));
+        assert_eq!(preview.take_if_newer(&mut seen_preview).unwrap().rgba[0], 1);
+        assert_eq!(
+            watch_slot.take_if_newer(&mut seen_watch).unwrap().rgba[0],
+            2
+        );
+
+        h.send(Command::SetUiVisible(false));
+        h.send(Command::RefreshRooms);
+        assert!(matches!(h.next().await, Event::RoomsUpdated(_)));
+        assert!(!h.backend.push_share_preview_frame(frame(3)));
+        assert!(!h.backend.push_frame(frame(4)));
+        assert!(preview.take_if_newer(&mut seen_preview).is_none());
+        assert!(watch_slot.take_if_newer(&mut seen_watch).is_none());
+        assert_eq!(h.backend.watching().as_deref(), Some("ana"));
+
+        h.send(Command::SetUiVisible(true));
+        h.send(Command::RefreshRooms);
+        assert!(matches!(h.next().await, Event::RoomsUpdated(_)));
+        assert!(h.backend.push_share_preview_frame(frame(5)));
+        assert!(h.backend.push_frame(frame(6)));
+        assert_eq!(preview.take_if_newer(&mut seen_preview).unwrap().rgba[0], 5);
+        assert_eq!(
+            watch_slot.take_if_newer(&mut seen_watch).unwrap().rgba[0],
+            6
         );
     }
 }

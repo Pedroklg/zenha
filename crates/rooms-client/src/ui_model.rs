@@ -39,6 +39,7 @@ pub enum UiCommand {
     },
     SetNoiseGate(Option<i8>),
     RefreshCaptureTargets,
+    CancelCaptureTargets,
     StartScreenShare {
         target_id: String,
         preset: SharePresetView,
@@ -48,6 +49,7 @@ pub enum UiCommand {
         identity: String,
     },
     StopWatching,
+    SetUiVisible(bool),
     PlayCue(rooms_core::Cue),
 }
 

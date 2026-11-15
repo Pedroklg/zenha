@@ -42,6 +42,9 @@ pub fn show(
     if state.share.preview.is_none() {
         preview_renderer.reset();
     }
+    if state.share.watching.is_none() {
+        renderer.reset();
+    }
 
     if let Some(watch) = state.share.watching.as_ref().filter(|w| w.fullscreen) {
         egui::CentralPanel::default()

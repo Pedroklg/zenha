@@ -128,6 +128,8 @@ pub enum Command {
     /// Limiar da porta de ruído em dBFS, de -70 a -20; `None` a desliga.
     SetNoiseGate(Option<i8>),
     RefreshCaptureTargets,
+    /// Interrompe a geração de miniaturas de captura em andamento.
+    CancelCaptureTargets,
     StartScreenShare {
         target_id: String,
         preset: SharePreset,
@@ -137,6 +139,8 @@ pub enum Command {
         identity: String,
     },
     StopWatching,
+    /// Informa ao núcleo se a janela está visível para pular conversões de vídeo ocultas.
+    SetUiVisible(bool),
     /// Som curto de confirmação, só para quem usa o app.
     PlayCue(Cue),
 }

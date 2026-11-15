@@ -74,6 +74,12 @@ pub enum BotCommand {
     },
     #[serde(alias = "stop-watching")]
     StopWatching,
+    #[serde(alias = "cancel-capture-targets")]
+    CancelCaptureTargets,
+    #[serde(alias = "set-ui-visible")]
+    SetUiVisible {
+        visible: bool,
+    },
     #[serde(alias = "measure-frames")]
     MeasureFrames {
         duration_ms: u64,
@@ -136,6 +142,8 @@ impl BotCommand {
                 identity: identity.clone(),
             },
             Self::StopWatching => Command::StopWatching,
+            Self::CancelCaptureTargets => Command::CancelCaptureTargets,
+            Self::SetUiVisible { visible } => Command::SetUiVisible(*visible),
             Self::PlayCue { cue } => Command::PlayCue(parse_cue(cue)?),
             Self::MeasureFrames { .. } | Self::Quit => return None,
         })
@@ -554,6 +562,8 @@ mod tests {
                 identity: "t".into(),
             },
             BotCommand::StopWatching,
+            BotCommand::CancelCaptureTargets,
+            BotCommand::SetUiVisible { visible: false },
             BotCommand::MeasureFrames { duration_ms: 10 },
             BotCommand::PlayCue {
                 cue: "muted".into(),
@@ -601,6 +611,14 @@ mod tests {
             BotCommand::StartShare.to_core(),
             Some(Command::StartScreenShare { target_id, .. }) if target_id == TEST_PATTERN_TARGET_ID
         ));
+        assert_eq!(
+            BotCommand::CancelCaptureTargets.to_core(),
+            Some(Command::CancelCaptureTargets)
+        );
+        assert_eq!(
+            BotCommand::SetUiVisible { visible: false }.to_core(),
+            Some(Command::SetUiVisible(false))
+        );
         assert_eq!(BotCommand::Quit.to_core(), None);
         assert_eq!(BotCommand::MeasureFrames { duration_ms: 1 }.to_core(), None);
     }
