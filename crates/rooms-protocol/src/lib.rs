@@ -2,16 +2,27 @@
 //!
 //! Esta crate não faz I/O nem depende de runtime assíncrono.
 
+use std::fmt;
+
 use serde::{Deserialize, Serialize};
 
 pub const MAX_DISPLAY_NAME_LEN: usize = 32;
 pub const MAX_ROOM_NAME_LEN: usize = 32;
+pub const MAX_ROOM_TITLE_LEN: usize = 64;
+pub const MAX_ROOMS_COUNT: usize = 50;
 pub const MAX_CLIENT_ID_LEN: usize = 64;
 pub const MAX_CHAT_MESSAGE_LEN: usize = 2000;
 pub const MAX_FILE_BYTES: u64 = 50 * 1024 * 1024;
 pub const MAX_FILE_NAME_LEN: usize = 120;
 pub const MAX_CHAT_ID_LEN: usize = 64;
 pub const CHAT_HISTORY_PAGE: usize = 100;
+pub const MIN_INVITE_CODE_LEN: usize = 8;
+pub const MAX_INVITE_CODE_LEN: usize = 128;
+
+pub const ADMIN_STOP_SHARE_TOPIC: &str = "admin.stop_share";
+pub const ADMIN_MOVE_TOPIC: &str = "admin.move";
+pub const ADMIN_CHAT_DELETE_TOPIC: &str = "admin.chat_delete";
+pub const ROOMS_CHANGED_TOPIC: &str = "rooms.changed";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TokenRequest {
@@ -30,7 +41,20 @@ pub struct TokenResponse {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RoomSummary {
     pub name: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub title: String,
     pub participants: Vec<String>,
+}
+
+impl RoomSummary {
+    /// Nome exibido da sala, usando o identificador técnico como fallback para payloads antigos.
+    pub fn display_title(&self) -> &str {
+        if self.title.is_empty() {
+            &self.name
+        } else {
+            &self.title
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -77,6 +101,107 @@ pub struct ChatDeleted {
     pub id: String,
 }
 
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AdminLoginRequest {
+    pub password: String,
+    pub client_id: String,
+}
+
+impl fmt::Debug for AdminLoginRequest {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("AdminLoginRequest")
+            .field("client_id", &self.client_id)
+            .field("password", &"<redacted>")
+            .finish()
+    }
+}
+
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AdminLoginResponse {
+    pub token: String,
+    /// Expiração do token em segundos desde a época Unix (igual à claim `exp` do JWT).
+    pub expires_at: u64,
+}
+
+impl fmt::Debug for AdminLoginResponse {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("AdminLoginResponse")
+            .field("expires_at", &self.expires_at)
+            .field("token", &"<redacted>")
+            .finish()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AdminRoom {
+    pub id: String,
+    pub title: String,
+    pub position: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CreateRoomRequest {
+    pub title: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UpdateRoomRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub position: Option<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MoveParticipantRequest {
+    pub to_room: String,
+}
+
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UpdateInviteRequest {
+    pub new_code: String,
+}
+
+impl fmt::Debug for UpdateInviteRequest {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("UpdateInviteRequest")
+            .field("new_code", &"<redacted>")
+            .finish()
+    }
+}
+
+/// Comando do servidor no tópico `admin.stop_share` para o cliente encerrar a captura e transmissão de tela.
+///
+/// Segurança: o cliente só deve aceitar mensagens deste tópico quando vierem do servidor (sem
+/// participante remetente), nunca de outro participante.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AdminStopShare {}
+
+/// Comando do servidor no tópico `admin.move` para o cliente trocar de sala.
+///
+/// Segurança: o cliente só deve aceitar mensagens deste tópico quando vierem do servidor (sem
+/// participante remetente), nunca de outro participante.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AdminMove {
+    pub to_room: String,
+}
+
+/// Comando do servidor no tópico `admin.chat_delete` avisando a sala que uma mensagem salva foi removida.
+///
+/// Segurança: o cliente só deve aceitar mensagens deste tópico quando vierem do servidor (sem
+/// participante remetente), nunca de outro participante.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AdminChatDelete {
+    pub id: String,
+}
+
+/// Aviso do servidor no tópico `rooms.changed` indicando que a lista ou ordem de salas mudou.
+///
+/// Segurança: o cliente só deve aceitar mensagens deste tópico quando vierem do servidor (sem
+/// participante remetente), nunca de outro participante.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RoomsChanged {}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum ValidationError {
     #[error("value is empty")]
@@ -87,12 +212,55 @@ pub enum ValidationError {
     InvalidCharacter,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum InviteCodeError {
+    #[error("invite code is empty")]
+    Empty,
+    #[error("invite code must be at least {min} characters")]
+    TooShort { min: usize },
+    #[error("invite code is longer than {max} characters")]
+    TooLong { max: usize },
+    #[error("invite code contains a character that is not allowed")]
+    InvalidCharacter,
+}
+
 /// Nome de exibição: 1 a 32 caracteres depois de aparar, sem caracteres de controle.
 pub fn validate_display_name(name: &str) -> Result<(), ValidationError> {
-    let name = name.trim();
-    check_len(name, MAX_DISPLAY_NAME_LEN)?;
-    if name.chars().any(char::is_control) {
+    validate_trimmed_text(name, MAX_DISPLAY_NAME_LEN)
+}
+
+/// Título exibido da sala: 1 a 64 caracteres depois de aparar, sem caracteres de controle.
+pub fn validate_room_title(title: &str) -> Result<(), ValidationError> {
+    validate_trimmed_text(title, MAX_ROOM_TITLE_LEN)
+}
+
+fn validate_trimmed_text(value: &str, max: usize) -> Result<(), ValidationError> {
+    let trimmed = value.trim();
+    check_len(trimmed, max)?;
+    if trimmed.chars().any(char::is_control) {
         return Err(ValidationError::InvalidCharacter);
+    }
+    Ok(())
+}
+
+/// Código de convite: 8 a 128 caracteres, não vazio depois de aparar, sem caracteres de controle.
+pub fn validate_invite_code(code: &str) -> Result<(), InviteCodeError> {
+    if code.trim().is_empty() {
+        return Err(InviteCodeError::Empty);
+    }
+    if code.chars().any(char::is_control) {
+        return Err(InviteCodeError::InvalidCharacter);
+    }
+    let len = code.chars().count();
+    if len < MIN_INVITE_CODE_LEN {
+        return Err(InviteCodeError::TooShort {
+            min: MIN_INVITE_CODE_LEN,
+        });
+    }
+    if len > MAX_INVITE_CODE_LEN {
+        return Err(InviteCodeError::TooLong {
+            max: MAX_INVITE_CODE_LEN,
+        });
     }
     Ok(())
 }
@@ -274,6 +442,184 @@ mod tests {
             Err(ValidationError::TooLong {
                 max: MAX_CHAT_MESSAGE_LEN
             })
+        );
+    }
+
+    #[test]
+    fn room_summary_is_backward_compatible_with_missing_title() {
+        let legacy = r#"{"name":"geral","participants":["ana"]}"#;
+        let parsed: RoomSummary = serde_json::from_str(legacy).unwrap();
+        assert_eq!(
+            parsed,
+            RoomSummary {
+                name: "geral".to_owned(),
+                title: String::new(),
+                participants: vec!["ana".to_owned()],
+            }
+        );
+        assert_eq!(parsed.display_title(), "geral");
+        assert!(!serde_json::to_string(&parsed).unwrap().contains("title"));
+
+        let with_title = RoomSummary {
+            name: "geral".to_owned(),
+            title: "Sala Geral".to_owned(),
+            participants: vec!["ana".to_owned()],
+        };
+        assert_eq!(with_title.display_title(), "Sala Geral");
+        let json = serde_json::to_string(&with_title).unwrap();
+        assert_eq!(
+            serde_json::from_str::<RoomSummary>(&json).unwrap(),
+            with_title
+        );
+    }
+
+    #[test]
+    fn admin_http_types_round_trip_through_json_and_redact_secrets() {
+        let login = AdminLoginRequest {
+            password: "secret-password".to_owned(),
+            client_id: "client-admin".to_owned(),
+        };
+        let login_json = serde_json::to_string(&login).unwrap();
+        assert_eq!(
+            serde_json::from_str::<AdminLoginRequest>(&login_json).unwrap(),
+            login
+        );
+        assert!(!format!("{login:?}").contains("secret-password"));
+
+        let login_res = AdminLoginResponse {
+            token: "jwt-token-secret".to_owned(),
+            expires_at: 1_800_000_000,
+        };
+        let login_res_json = serde_json::to_string(&login_res).unwrap();
+        assert_eq!(
+            serde_json::from_str::<AdminLoginResponse>(&login_res_json).unwrap(),
+            login_res
+        );
+        assert!(!format!("{login_res:?}").contains("jwt-token-secret"));
+
+        let admin_room = AdminRoom {
+            id: "geral".to_owned(),
+            title: "Sala Geral".to_owned(),
+            position: 0,
+        };
+        let room_json = serde_json::to_string(&admin_room).unwrap();
+        assert_eq!(
+            serde_json::from_str::<AdminRoom>(&room_json).unwrap(),
+            admin_room
+        );
+
+        let create = CreateRoomRequest {
+            title: "Nova Sala".to_owned(),
+        };
+        let create_json = serde_json::to_string(&create).unwrap();
+        assert_eq!(
+            serde_json::from_str::<CreateRoomRequest>(&create_json).unwrap(),
+            create
+        );
+
+        let patch_empty: UpdateRoomRequest = serde_json::from_str("{}").unwrap();
+        assert_eq!(patch_empty, UpdateRoomRequest::default());
+        let patch_full = UpdateRoomRequest {
+            title: Some("Renomeada".to_owned()),
+            position: Some(2),
+        };
+        let patch_json = serde_json::to_string(&patch_full).unwrap();
+        assert_eq!(
+            serde_json::from_str::<UpdateRoomRequest>(&patch_json).unwrap(),
+            patch_full
+        );
+
+        let mv = MoveParticipantRequest {
+            to_room: "jogos".to_owned(),
+        };
+        let mv_json = serde_json::to_string(&mv).unwrap();
+        assert_eq!(
+            serde_json::from_str::<MoveParticipantRequest>(&mv_json).unwrap(),
+            mv
+        );
+
+        let invite = UpdateInviteRequest {
+            new_code: "novo-convite-seguro".to_owned(),
+        };
+        let invite_json = serde_json::to_string(&invite).unwrap();
+        assert_eq!(
+            serde_json::from_str::<UpdateInviteRequest>(&invite_json).unwrap(),
+            invite
+        );
+        assert!(!format!("{invite:?}").contains("novo-convite-seguro"));
+    }
+
+    #[test]
+    fn admin_data_topics_round_trip_through_json() {
+        let stop = AdminStopShare {};
+        let stop_json = serde_json::to_string(&stop).unwrap();
+        assert_eq!(
+            serde_json::from_str::<AdminStopShare>(&stop_json).unwrap(),
+            stop
+        );
+
+        let mv = AdminMove {
+            to_room: "afk".to_owned(),
+        };
+        let mv_json = serde_json::to_string(&mv).unwrap();
+        assert_eq!(serde_json::from_str::<AdminMove>(&mv_json).unwrap(), mv);
+
+        let del = AdminChatDelete {
+            id: "msg-1".to_owned(),
+        };
+        let del_json = serde_json::to_string(&del).unwrap();
+        assert_eq!(
+            serde_json::from_str::<AdminChatDelete>(&del_json).unwrap(),
+            del
+        );
+
+        let changed = RoomsChanged {};
+        let changed_json = serde_json::to_string(&changed).unwrap();
+        assert_eq!(
+            serde_json::from_str::<RoomsChanged>(&changed_json).unwrap(),
+            changed
+        );
+    }
+
+    #[test]
+    fn room_title_rules() {
+        assert_eq!(validate_room_title("  Sala dos Amigos  "), Ok(()));
+        assert_eq!(validate_room_title("   "), Err(ValidationError::Empty));
+        assert_eq!(
+            validate_room_title(&"a".repeat(MAX_ROOM_TITLE_LEN + 1)),
+            Err(ValidationError::TooLong {
+                max: MAX_ROOM_TITLE_LEN
+            })
+        );
+        assert_eq!(
+            validate_room_title("sala\nnova"),
+            Err(ValidationError::InvalidCharacter)
+        );
+    }
+
+    #[test]
+    fn invite_code_rules() {
+        assert_eq!(validate_invite_code("12345678"), Ok(()));
+        assert_eq!(validate_invite_code(&"a".repeat(128)), Ok(()));
+        assert_eq!(
+            validate_invite_code("        "),
+            Err(InviteCodeError::Empty)
+        );
+        assert_eq!(
+            validate_invite_code("1234567"),
+            Err(InviteCodeError::TooShort {
+                min: MIN_INVITE_CODE_LEN
+            })
+        );
+        assert_eq!(
+            validate_invite_code(&"a".repeat(129)),
+            Err(InviteCodeError::TooLong {
+                max: MAX_INVITE_CODE_LEN
+            })
+        );
+        assert_eq!(
+            validate_invite_code("convite\n123"),
+            Err(InviteCodeError::InvalidCharacter)
         );
     }
 }

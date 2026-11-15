@@ -12,7 +12,7 @@ This guide covers provisioning and operating the Zenha voice/video server (`live
   - `livekit/livekit-server:v1.13.11` — WebRTC SFU listening on `127.0.0.1:7880` (HTTP/WS signaling behind Caddy), `7881/TCP` (ICE/TCP fallback), and `7882/UDP` (single-port UDP media mux).
   - `ghcr.io/<owner>/zenha-token-server:<tag>` — Rust `axum` token server listening on `127.0.0.1:8787`.
   - `caddy:2.11.9-alpine` — Automatic HTTPS reverse proxy listening on `80/TCP` and `443/TCP`, routing `TOKEN_DOMAIN` to `127.0.0.1:8787` and `RTC_DOMAIN` to `127.0.0.1:7880`.
-- **Secrets:** LiveKit API key/secret and the Argon2 invite password hash (`ROOMS_INVITE_CODE_HASH`) exist **only on the VM** in `/opt/zenha/.env` and `/opt/zenha/livekit.yaml` (`chmod 0600`). CI/CD only updates the `ZENHA_IMAGE` tag and restarts the Compose stack.
+- **Secrets:** LiveKit API key/secret, the Argon2 invite password hash (`ROOMS_INVITE_CODE_HASH`), and the optional Argon2 admin password hash (`ROOMS_ADMIN_CODE_HASH`) exist **only on the VM** in `/opt/zenha/.env` and `/opt/zenha/livekit.yaml` (`chmod 0600`). CI/CD only updates the `ZENHA_IMAGE` tag and restarts the Compose stack.
 - **Firewall (NSG inbound rules):**
   - `80/TCP` — ACME HTTP-01 challenge and HTTP-to-HTTPS redirect.
   - `443/TCP` — HTTPS (`rooms-token-server`) and WSS (`livekit-server` signaling).
@@ -114,15 +114,17 @@ nslookup rtc.voice.example.com 1.1.1.1
 `deploy/setup-server.sh` is an idempotent bootstrap script that runs once on the VM. It:
 1. Installs `/opt/zenha/docker-compose.yml` and `/opt/zenha/Caddyfile`.
 2. Generates a fresh LiveKit production API key and secret via `livekit/livekit-server:v1.13.11 generate-keys` (or preserves the existing key pair if `/opt/zenha/.env` already exists).
-3. Accepts a precomputed Argon2id PHC hash (`ROOMS_INVITE_CODE_HASH`) or hashes a plaintext password on the VM using `rooms-token-server hash-password`.
+3. Accepts a precomputed Argon2id PHC hash (`ROOMS_INVITE_CODE_HASH`) or hashes a plaintext password on the VM using `rooms-token-server hash-password`, plus an optional admin hash/password (`ROOMS_ADMIN_CODE_HASH` or `ADMIN_PASSWORD`).
 4. Writes `/opt/zenha/livekit.yaml` and `/opt/zenha/.env` with `0600` (`root:root`) permissions.
 5. Runs `docker compose pull && docker compose up -d` and verifies `http://127.0.0.1:8787/health`.
 
-### Step 5.1 — Generate the Argon2 Invite Code Hash Locally
+### Step 5.1 — Generate the Argon2 Password Hashes Locally
 
-Generate the PHC string (`$argon2id$v=19$...`) on your workstation so the plaintext password never appears in Azure CLI logs:
+Generate the PHC string (`$argon2id$v=19$...`) on your workstation so plaintext passwords never appear in Azure CLI logs:
 ```bash
 echo "your-invite-password" | cargo run --quiet -p rooms-token-server -- hash-password
+# Optional admin password (leave unset to keep /admin/* disabled with 404):
+echo "your-admin-password"  | cargo run --quiet -p rooms-token-server -- hash-password
 ```
 
 ### Step 5.2 — Run `setup-server.sh` via `az vm run-command invoke` (No SSH Required)
@@ -139,6 +141,8 @@ agent runs the script with `sh`, which rejects `set -o pipefail`.
   echo "export ZENHA_IMAGE='ghcr.io/<owner>/zenha-token-server:v0.1.0'"
   echo "export NODE_IP='<publicIpAddress>'"
   echo 'export ROOMS_INVITE_CODE_HASH='\''$argon2id$v=19$m=19456,t=2,p=1$...'\'
+  # Optional: enable /admin/* routes
+  echo 'export ROOMS_ADMIN_CODE_HASH='\''$argon2id$v=19$m=19456,t=2,p=1$...'\'
   tail -n +2 deploy/setup-server.sh
 } > /tmp/zenha-setup.sh
 
@@ -374,10 +378,10 @@ az vm run-command invoke \
 
 ## 12. Saved Chat Messages
 
-When a user marks a chat message to be saved, `rooms-token-server` persists it in SQLite (`WAL` mode) at the path configured by `ROOMS_CHAT_DB`.
+When a user marks a chat message to be saved, `rooms-token-server` persists it in SQLite (`WAL` mode) at the path configured by `ROOMS_CHAT_DB`. The same database also stores dynamic room definitions (`rooms`, seeded once from `ROOMS_ROOM_LIST` when empty) and the runtime invite hash override (`settings`).
 
 - **Storage location:** In production (`deploy/docker-compose.yml`), `ROOMS_CHAT_DB` is set to `/var/lib/zenha/chat.db`, backed by the Docker named volume `zenha_data` (created under `/opt/zenha` as `zenha_zenha_data` by Docker Compose).
-- **Plaintext and retention:** Saved messages are stored in **plaintext** in `chat.db` with **no automatic expiration**. Unsaved messages never reach the token server. Senders can delete their own saved messages via the API (`DELETE /rooms/{room}/chat/{id}`).
+- **Plaintext and retention:** Saved messages and room titles are stored in **plaintext** in `chat.db` with **no automatic expiration**. Unsaved messages never reach the token server. Senders can delete their own saved messages via `DELETE /rooms/{room}/chat/{id}` (and admins can delete any saved message via `DELETE /admin/rooms/{room}/chat/{id}`).
 - **Backup:** Use SQLite's online `.backup` command against the volume (safe while `token-server` is running in WAL mode; `/data` must be mounted read-write so `sqlite3` can coordinate with the WAL/SHM files), or stop `token-server` before copying `/data` directly:
   ```bash
   # Online consistent SQLite backup (adjust volume name if Compose project differs; check `docker volume ls`)
@@ -385,10 +389,38 @@ When a user marks a chat message to be saved, `rooms-token-server` persists it i
   docker run --rm -v zenha_zenha_data:/data -v /opt/zenha/backups:/backup alpine \
     sh -c 'apk add --no-cache sqlite >/dev/null && sqlite3 /data/chat.db ".backup /backup/chat-$(date -u +%Y%m%dT%H%M%SZ).db"'
   ```
-- **Deleting all saved messages:** Stop `token-server`, remove the database files from the volume, and start it again:
+- **Resetting the database:** Removing `chat.db` deletes all saved messages, custom rooms (which re-seed from `ROOMS_ROOM_LIST` on startup), and any admin-rotated invite code override (reverting to `ROOMS_INVITE_CODE_HASH`). Stop `token-server`, remove the database files from the volume, and start it again:
   ```bash
   cd /opt/zenha
   docker compose stop token-server
   docker run --rm -v zenha_zenha_data:/data alpine rm -f /data/chat.db /data/chat.db-wal /data/chat.db-shm
   docker compose up -d token-server
   ```
+
+---
+
+## 13. Admin Account & Moderation (`ROOMS_ADMIN_CODE_HASH`)
+
+Admin routes are **disabled by default**: when `ROOMS_ADMIN_CODE_HASH` is unset, all `/admin/*` endpoints return `404` and the server behaves identically to a non-admin deployment.
+
+### 13.1 Setting or Rotating the Admin Password
+
+1. Generate an Argon2id hash locally or on the VM:
+   ```bash
+   echo "your-strong-admin-password" | cargo run --quiet -p rooms-token-server -- hash-password
+   ```
+   (Or run `docker run --rm -i "$ZENHA_IMAGE" hash-password` directly on the VM.)
+2. Add or update `ROOMS_ADMIN_CODE_HASH='$argon2id$...'` in `/opt/zenha/.env` (keeping single quotes around the `$argon2id$...` value so `$` is not expanded by shell or Compose interpolation), or rerun `deploy/setup-server.sh` with `ADMIN_PASSWORD=...` / `ROOMS_ADMIN_CODE_HASH=...`.
+3. Restart `token-server`:
+   ```bash
+   cd /opt/zenha && docker compose up -d token-server
+   ```
+
+### 13.2 What Admin Access Allows
+
+Logging in via `POST /admin/login` issues a signed admin JWT (`ROOMS_TOKEN_TTL_SECS` lifetime) with **no** LiveKit room-join or room-admin media grants. Failed logins incur a short delay and are rate-limited by both `client_id` and client IP (`X-Forwarded-For` from Caddy). With a valid `Authorization: Bearer <admin_token>`, an admin can:
+
+- **Manage rooms dynamically (`POST /admin/rooms`, `PATCH /admin/rooms/{id}`, `DELETE /admin/rooms/{id}`):** Create up to 50 rooms, rename/reorder rooms, or delete non-last rooms (removing their LiveKit room and saved chat history) and broadcast `rooms.changed` to active rooms.
+- **Moderate connected participants (`POST /admin/rooms/{room}/participants/{identity}/...`):** Mute microphone (`/mute`), mute screen share tracks + send `admin.stop_share` (`/stop-share`), kick from room (`/kick`), or request room move via `admin.move` (`/move` — note LiveKit `MoveParticipant` is LiveKit Cloud-only, so self-hosted servers signal the client via data packet).
+- **Delete any user's saved chat message (`DELETE /admin/rooms/{room}/chat/{id}`):** Deletes the message from `chat.db` and broadcasts `admin.chat_delete` to the room.
+- **Rotate the shared invite code (`POST /admin/invite`):** Hashes the new code (`8..=128` characters) with Argon2id and stores it in `chat.db`, immediately overriding `ROOMS_INVITE_CODE_HASH` across restarts without editing `.env`.

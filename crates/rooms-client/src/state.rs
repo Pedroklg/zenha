@@ -2555,6 +2555,7 @@ mod tests {
         });
         state.apply_event(UiEvent::RoomsUpdated(vec![RoomSummary {
             name: "geral".to_owned(),
+            title: String::new(),
             participants: vec![],
         }]));
         assert_eq!(state.screen, Screen::Onboarding);
@@ -3042,6 +3043,7 @@ mod tests {
         state.handle_action(UserAction::SubmitOnboarding);
         let summary = |name: &str| RoomSummary {
             name: name.to_owned(),
+            title: String::new(),
             participants: vec![],
         };
         state.apply_event(UiEvent::RoomsUpdated(vec![summary("a"), summary("b")]));

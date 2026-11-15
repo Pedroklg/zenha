@@ -1500,6 +1500,7 @@ mod tests {
         let mut h = harness();
         let rooms = vec![RoomSummary {
             name: "geral".to_owned(),
+            title: String::new(),
             participants: vec!["ana".to_owned()],
         }];
         h.tokens.set_rooms(rooms.clone());

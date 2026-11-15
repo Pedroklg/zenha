@@ -570,6 +570,7 @@ impl DemoSession {
                 };
                 RoomSummary {
                     name: name.to_owned(),
+                    title: String::new(),
                     participants,
                 }
             })

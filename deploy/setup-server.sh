@@ -15,6 +15,8 @@ for arg in "$@"; do
     ZENHA_IMAGE=*) ZENHA_IMAGE="${arg#*=}" ;;
     ROOMS_INVITE_CODE_HASH=*) ROOMS_INVITE_CODE_HASH="${arg#*=}" ;;
     INVITE_PASSWORD=*) INVITE_PASSWORD="${arg#*=}" ;;
+    ROOMS_ADMIN_CODE_HASH=*) ROOMS_ADMIN_CODE_HASH="${arg#*=}" ;;
+    ADMIN_PASSWORD=*) ADMIN_PASSWORD="${arg#*=}" ;;
     ROOMS_ROOM_LIST=*) ROOMS_ROOM_LIST="${arg#*=}" ;;
     ROOMS_TOKEN_TTL_SECS=*) ROOMS_TOKEN_TTL_SECS="${arg#*=}" ;;
     NODE_IP=*) NODE_IP="${arg#*=}" ;;
@@ -23,10 +25,12 @@ for arg in "$@"; do
     --image=*) ZENHA_IMAGE="${arg#*=}" ;;
     --invite-hash=*) ROOMS_INVITE_CODE_HASH="${arg#*=}" ;;
     --invite-password=*) INVITE_PASSWORD="${arg#*=}" ;;
+    --admin-hash=*) ROOMS_ADMIN_CODE_HASH="${arg#*=}" ;;
+    --admin-password=*) ADMIN_PASSWORD="${arg#*=}" ;;
     --node-ip=*) NODE_IP="${arg#*=}" ;;
     *)
       echo "Unknown argument: ${arg}" >&2
-      echo "Usage: $0 [TOKEN_DOMAIN=...] [RTC_DOMAIN=...] [ZENHA_IMAGE=...] [ROOMS_INVITE_CODE_HASH=...] [INVITE_PASSWORD=...] [NODE_IP=...]" >&2
+      echo "Usage: $0 [TOKEN_DOMAIN=...] [RTC_DOMAIN=...] [ZENHA_IMAGE=...] [ROOMS_INVITE_CODE_HASH=...] [INVITE_PASSWORD=...] [ROOMS_ADMIN_CODE_HASH=...] [ADMIN_PASSWORD=...] [NODE_IP=...]" >&2
       exit 1
       ;;
   esac
@@ -70,6 +74,10 @@ TOKEN_DOMAIN="${TOKEN_DOMAIN:-$(read_existing_env TOKEN_DOMAIN)}"
 RTC_DOMAIN="${RTC_DOMAIN:-$(read_existing_env RTC_DOMAIN)}"
 ZENHA_IMAGE="${ZENHA_IMAGE:-$(read_existing_env ZENHA_IMAGE)}"
 ROOMS_INVITE_CODE_HASH="${ROOMS_INVITE_CODE_HASH:-$(read_existing_env ROOMS_INVITE_CODE_HASH)}"
+if [[ -z "${ROOMS_ADMIN_CODE_HASH:-}" && -z "${ADMIN_PASSWORD:-}" ]]; then
+  ROOMS_ADMIN_CODE_HASH="$(read_existing_env ROOMS_ADMIN_CODE_HASH)"
+fi
+ROOMS_ADMIN_CODE_HASH="${ROOMS_ADMIN_CODE_HASH:-}"
 LIVEKIT_API_KEY="${LIVEKIT_API_KEY:-$(read_existing_env LIVEKIT_API_KEY)}"
 LIVEKIT_API_SECRET="${LIVEKIT_API_SECRET:-$(read_existing_env LIVEKIT_API_SECRET)}"
 ROOMS_ROOM_LIST="${ROOMS_ROOM_LIST:-$(read_existing_env ROOMS_ROOM_LIST)}"
@@ -109,6 +117,25 @@ fi
 
 if [[ -z "${ROOMS_INVITE_CODE_HASH}" || "${ROOMS_INVITE_CODE_HASH}" != \$argon2* ]]; then
   echo "error: valid ROOMS_INVITE_CODE_HASH (\$argon2id\$...) or INVITE_PASSWORD is required" >&2
+  exit 1
+fi
+
+if [[ -z "${ROOMS_ADMIN_CODE_HASH}" ]]; then
+  if [[ -n "${ADMIN_PASSWORD:-}" ]]; then
+    ROOMS_ADMIN_CODE_HASH="$(printf '%s\n' "${ADMIN_PASSWORD}" | docker run --rm -i "${ZENHA_IMAGE}" hash-password)"
+  elif [[ -t 0 ]]; then
+    read -r -s -p "Optional admin Argon2 PHC hash or plaintext password (Enter to skip): " ADMIN_SECRET
+    echo >&2
+    if [[ "${ADMIN_SECRET}" == \$argon2* ]]; then
+      ROOMS_ADMIN_CODE_HASH="${ADMIN_SECRET}"
+    elif [[ -n "${ADMIN_SECRET}" ]]; then
+      ROOMS_ADMIN_CODE_HASH="$(printf '%s\n' "${ADMIN_SECRET}" | docker run --rm -i "${ZENHA_IMAGE}" hash-password)"
+    fi
+  fi
+fi
+
+if [[ -n "${ROOMS_ADMIN_CODE_HASH}" && "${ROOMS_ADMIN_CODE_HASH}" != \$argon2* ]]; then
+  echo "error: ROOMS_ADMIN_CODE_HASH must be an Argon2 PHC hash (\$argon2id\$...)" >&2
   exit 1
 fi
 
@@ -225,6 +252,9 @@ ROOMS_TOKEN_TTL_SECS=${ROOMS_TOKEN_TTL_SECS}
 ROOMS_ROOM_LIST=${ROOMS_ROOM_LIST}
 RUST_LOG=info
 EOF
+if [[ -n "${ROOMS_ADMIN_CODE_HASH}" ]]; then
+  printf "ROOMS_ADMIN_CODE_HASH='%s'\n" "${ROOMS_ADMIN_CODE_HASH}" >>"${ENV_FILE}"
+fi
 chmod 0600 "${ENV_FILE}"
 chown root:root "${ENV_FILE}"
 
