@@ -26,7 +26,7 @@ jobs:
     if: github.ref == 'refs/heads/main'
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Check version, tag and CI
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
