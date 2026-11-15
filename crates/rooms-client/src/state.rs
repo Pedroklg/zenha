@@ -321,7 +321,8 @@ impl SharePicker {
     }
 
     fn set_thumbnail(&mut self, id: String, width: usize, height: usize, rgba: Vec<u8>) {
-        if width == 0
+        if !self.open
+            || width == 0
             || height == 0
             || width.saturating_mul(height).saturating_mul(4) != rgba.len()
             || !self.targets.iter().any(|t| t.id == id)
@@ -1488,7 +1489,7 @@ impl AppState {
             UserAction::OpenSharePicker => self.open_picker(),
             UserAction::CloseSharePicker => {
                 self.picker.close();
-                Vec::new()
+                vec![UiCommand::CancelCaptureTargets]
             }
             UserAction::RefreshCaptureTargets => {
                 self.picker.reset_loading();
@@ -3534,6 +3535,46 @@ mod tests {
         assert!((w - 533.333).abs() < 0.01 && (h - 300.0).abs() < 0.01);
         assert_eq!(aspect_fit((0.0, 100.0), (1920, 1080)), (0.0, 0.0));
         assert_eq!(aspect_fit((100.0, 100.0), (0, 0)), (0.0, 0.0));
+    }
+
+    #[test]
+    fn closing_picker_frees_thumbnails_cancels_targets_and_ignores_late_thumbnails() {
+        let mut state = state_with_code();
+        in_room(&mut state);
+        state.handle_action(UserAction::OpenSharePicker);
+        state.apply_event(targets_event());
+        state.apply_event(UiEvent::CaptureThumbnail {
+            id: "w1".to_owned(),
+            width: 2,
+            height: 1,
+            rgba: vec![9; 8],
+        });
+        assert_eq!(state.picker.thumbnails.len(), 1);
+
+        let commands = state.handle_action(UserAction::CloseSharePicker);
+        assert_eq!(commands, vec![UiCommand::CancelCaptureTargets]);
+        assert!(!state.picker.open);
+        assert!(state.picker.thumbnails.is_empty());
+
+        state.apply_event(UiEvent::CaptureThumbnail {
+            id: "w1".to_owned(),
+            width: 2,
+            height: 1,
+            rgba: vec![7; 8],
+        });
+        assert!(state.picker.thumbnails.is_empty());
+
+        state.handle_action(UserAction::OpenSharePicker);
+        state.apply_event(targets_event());
+        state.handle_action(UserAction::StartShare);
+        assert!(!state.picker.open);
+        state.apply_event(UiEvent::CaptureThumbnail {
+            id: "s1".to_owned(),
+            width: 2,
+            height: 1,
+            rgba: vec![5; 8],
+        });
+        assert!(state.picker.thumbnails.is_empty());
     }
 
     #[test]

@@ -65,6 +65,8 @@ pub struct App {
     global_keys: Option<GlobalKeys>,
     #[cfg(windows)]
     tray: Option<Tray>,
+    hidden_to_tray: bool,
+    ui_visible: bool,
     quitting: bool,
     fullscreen: bool,
 }
@@ -131,11 +133,42 @@ impl App {
             global_keys,
             #[cfg(windows)]
             tray,
+            hidden_to_tray: false,
+            ui_visible: true,
             quitting: false,
             fullscreen: false,
         };
         app.flush_state_effects();
         app
+    }
+
+    fn is_hidden(&self, ctx: &egui::Context) -> bool {
+        let (minimized, visible) = ctx.input(|i| (i.viewport().minimized, i.viewport().visible()));
+        window_is_hidden(self.hidden_to_tray, minimized, visible)
+    }
+
+    fn sync_ui_visible(&mut self, ctx: &egui::Context) {
+        let visible = !self.is_hidden(ctx);
+        if visible != self.ui_visible {
+            self.ui_visible = visible;
+            self.session.send(UiCommand::SetUiVisible(visible));
+        }
+    }
+
+    fn reset_renderers_outside_room(&mut self) {
+        if !matches!(self.state.screen, Screen::InRoom(_)) {
+            self.renderer.reset();
+            self.preview_renderer.reset();
+        }
+    }
+
+    #[cfg(windows)]
+    fn bring_to_front(&mut self, ctx: &egui::Context) {
+        self.hidden_to_tray = false;
+        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+        ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+        ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+        ctx.request_repaint();
     }
 
     fn has_tray(&self) -> bool {
@@ -183,7 +216,7 @@ impl App {
             .map(|rx| rx.try_iter().collect())
             .unwrap_or_default();
         for raw in links {
-            bring_to_front(ctx);
+            self.bring_to_front(ctx);
             if matches!(
                 self.state.screen,
                 Screen::Connecting { .. } | Screen::InRoom(_)
@@ -421,6 +454,7 @@ impl App {
 impl eframe::App for App {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.pump_session();
+        self.reset_renderers_outside_room();
         self.pump_update();
         #[cfg(windows)]
         self.pump_forwarded_links(ctx);
@@ -457,7 +491,7 @@ impl eframe::App for App {
         if let Some(actions) = self.tray.as_mut().map(Tray::actions) {
             for action in actions {
                 match action {
-                    TrayAction::Open => bring_to_front(ctx),
+                    TrayAction::Open => self.bring_to_front(ctx),
                     TrayAction::ToggleMute => {
                         self.dispatch(ctx, vec![UserAction::ToggleMute]);
                     }
@@ -471,9 +505,14 @@ impl eframe::App for App {
                 tray.sync(self.state.tray_muted());
             }
         }
+        self.sync_ui_visible(ctx);
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let hidden = self.is_hidden(ui.ctx());
+        self.renderer.set_paused(hidden);
+        self.preview_renderer.set_paused(hidden);
+        self.reset_renderers_outside_room();
         self.pump_saves();
         self.pump_image_opens();
         self.pump_pasted_images(ui.ctx());
@@ -589,6 +628,7 @@ impl eframe::App for App {
         let actions = self.resolve_effects(ui.ctx(), actions);
         self.dispatch(ui.ctx(), actions);
         self.prune_images();
+        self.reset_renderers_outside_room();
 
         if ui.ctx().input(|i| i.viewport().close_requested())
             && self.state.close_to_tray
@@ -599,6 +639,10 @@ impl eframe::App for App {
                 .send_viewport_cmd(egui::ViewportCommand::CancelClose);
             ui.ctx()
                 .send_viewport_cmd(egui::ViewportCommand::Visible(false));
+            self.hidden_to_tray = true;
+            self.renderer.set_paused(true);
+            self.preview_renderer.set_paused(true);
+            self.sync_ui_visible(ui.ctx());
         }
 
         let fullscreen = self.state.is_fullscreen();
@@ -607,12 +651,14 @@ impl eframe::App for App {
             ui.ctx()
                 .send_viewport_cmd(egui::ViewportCommand::Fullscreen(fullscreen));
         }
-        let interval = if self.state.is_watching() || self.state.is_sharing_local() {
-            VIDEO_REPAINT_INTERVAL
-        } else {
-            REPAINT_INTERVAL
-        };
-        ui.ctx().request_repaint_after(interval);
+        if !self.is_hidden(ui.ctx()) {
+            let interval = if self.state.is_watching() || self.state.is_sharing_local() {
+                VIDEO_REPAINT_INTERVAL
+            } else {
+                REPAINT_INTERVAL
+            };
+            ui.ctx().request_repaint_after(interval);
+        }
     }
 }
 
@@ -620,11 +666,8 @@ fn prev_text_edit_focus_id() -> egui::Id {
     egui::Id::unique("prev_text_edit_focused")
 }
 
-#[cfg(windows)]
-fn bring_to_front(ctx: &egui::Context) {
-    ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
-    ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
-    ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+fn window_is_hidden(hidden_to_tray: bool, minimized: Option<bool>, visible: Option<bool>) -> bool {
+    hidden_to_tray || minimized == Some(true) || visible == Some(false)
 }
 
 fn open_path_in_os(path: &Path) -> std::io::Result<()> {
@@ -657,7 +700,7 @@ fn open_path_in_os(path: &Path) -> std::io::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::open_path_in_os;
+    use super::{open_path_in_os, window_is_hidden};
 
     #[test]
     fn open_path_in_os_rejects_missing_and_directory_paths() {
@@ -667,5 +710,14 @@ mod tests {
         ));
         assert!(open_path_in_os(&missing).is_err());
         assert!(open_path_in_os(&std::env::temp_dir()).is_err());
+    }
+
+    #[test]
+    fn window_is_hidden_covers_minimized_occluded_and_tray() {
+        assert!(window_is_hidden(true, Some(false), None));
+        assert!(window_is_hidden(false, Some(true), Some(false)));
+        assert!(window_is_hidden(false, None, Some(false)));
+        assert!(!window_is_hidden(false, Some(false), None));
+        assert!(!window_is_hidden(false, Some(false), Some(true)));
     }
 }

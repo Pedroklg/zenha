@@ -60,6 +60,7 @@ pub enum BackendCall {
         identity: String,
     },
     StopWatching,
+    SetUiVisible(bool),
     PlayCue(Cue),
 }
 
@@ -91,6 +92,7 @@ struct BackendState {
     sharing: Option<(String, SharePreset, FrameSlot)>,
     watching: Option<(String, FrameSlot)>,
     participant_volumes: ParticipantVolumes,
+    ui_hidden: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -127,6 +129,7 @@ impl FakeBackend {
                 sharing: None,
                 watching: None,
                 participant_volumes: ParticipantVolumes::default(),
+                ui_hidden: false,
             })),
         }
     }
@@ -187,7 +190,11 @@ impl FakeBackend {
     }
 
     pub fn push_share_preview_frame(&self, frame: VideoFrame) -> bool {
-        match &lock(&self.state).sharing {
+        let state = lock(&self.state);
+        if state.ui_hidden {
+            return false;
+        }
+        match &state.sharing {
             Some((_, _, slot)) => {
                 slot.push(frame);
                 true
@@ -205,7 +212,11 @@ impl FakeBackend {
 
     /// Pushes a synthetic frame into the slot of the current watch; false when not watching.
     pub fn push_frame(&self, frame: VideoFrame) -> bool {
-        match &lock(&self.state).watching {
+        let state = lock(&self.state);
+        if state.ui_hidden {
+            return false;
+        }
+        match &state.watching {
             Some((_, slot)) => {
                 slot.push(frame);
                 true
@@ -449,6 +460,12 @@ impl MediaBackend for FakeBackend {
         state.calls.push(BackendCall::StopWatching);
         state.watching = None;
         Ok(())
+    }
+
+    fn set_ui_visible(&self, visible: bool) {
+        let mut state = lock(&self.state);
+        state.calls.push(BackendCall::SetUiVisible(visible));
+        state.ui_hidden = !visible;
     }
 
     fn play_cue(&self, cue: Cue) {

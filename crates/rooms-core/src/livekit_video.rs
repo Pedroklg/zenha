@@ -337,11 +337,14 @@ pub(crate) struct PublishSink {
     published: (u32, u32),
     preview: FrameSlot,
     preview_gate: PreviewGate,
+    ui_visible: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl PublishSink {
     fn push_preview(&mut self, frame: &BgraFrame<'_>, now: Instant) {
-        if !self.preview_gate.take(now) {
+        if !self.ui_visible.load(std::sync::atomic::Ordering::Relaxed)
+            || !self.preview_gate.take(now)
+        {
             return;
         }
         let (pw, ph) = fit_within(
@@ -414,8 +417,14 @@ impl FrameSink for PublishSink {
 
 pub(crate) struct LocalShare {
     room: Arc<Room>,
-    sid: TrackSid,
+    sid: Arc<std::sync::Mutex<TrackSid>>,
     capture: Box<dyn FrameSource>,
+}
+
+impl LocalShare {
+    pub(crate) fn sid_handle(&self) -> Arc<std::sync::Mutex<TrackSid>> {
+        Arc::clone(&self.sid)
+    }
 }
 
 pub(crate) async fn publish_share(
@@ -425,6 +434,7 @@ pub(crate) async fn publish_share(
     target: &CaptureTarget,
     preset: SharePreset,
     preview: FrameSlot,
+    ui_visible: Arc<std::sync::atomic::AtomicBool>,
 ) -> Result<LocalShare, SessionError> {
     let video_source = Arc::new(OnceLock::new());
     let (size_tx, size_rx) = oneshot::channel();
@@ -437,6 +447,7 @@ pub(crate) async fn publish_share(
         published: (0, 0),
         preview,
         preview_gate: PreviewGate::new(SHARE_PREVIEW_INTERVAL),
+        ui_visible,
     };
     capture.start(target, preset.fps(), Box::new(sink))?;
 
@@ -503,7 +514,7 @@ pub(crate) async fn publish_share(
     );
     Ok(LocalShare {
         room,
-        sid: publication.sid(),
+        sid: Arc::new(std::sync::Mutex::new(publication.sid())),
         capture,
     })
 }
@@ -519,6 +530,10 @@ async fn stop_capture(mut capture: Box<dyn FrameSource>) {
 
 pub(crate) async fn stop_share(share: LocalShare) {
     let LocalShare { room, sid, capture } = share;
+    let sid = sid
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone();
     stop_capture(capture).await;
     match timeout(
         UNPUBLISH_TIMEOUT,
@@ -604,6 +619,7 @@ impl Watch {
         identity: &str,
         track: RtcVideoTrack,
         events: UnboundedSender<BackendEvent>,
+        ui_visible: Arc<std::sync::atomic::AtomicBool>,
     ) {
         let mut guard = self.lock();
         let Some(state) = guard.as_mut().filter(|state| state.identity == identity) else {
@@ -617,6 +633,7 @@ impl Watch {
             state.slot.clone(),
             identity.to_owned(),
             events,
+            ui_visible,
         )));
     }
 }
@@ -626,11 +643,15 @@ async fn read_frames(
     slot: FrameSlot,
     identity: String,
     events: UnboundedSender<BackendEvent>,
+    ui_visible: Arc<std::sync::atomic::AtomicBool>,
 ) {
     let mut stream = NativeVideoStream::new(track);
     let mut meter = ShareMeter::new(Instant::now());
     let mut size = (0u32, 0u32);
     while let Some(frame) = stream.next().await {
+        if !ui_visible.load(std::sync::atomic::Ordering::Relaxed) {
+            continue;
+        }
         let started = Instant::now();
         let buffer = &frame.buffer;
         if buffer.buffer_type() == VideoBufferType::Native {

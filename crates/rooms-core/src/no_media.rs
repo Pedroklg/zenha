@@ -142,6 +142,8 @@ impl MediaBackend for NoMediaBackend {
         Ok(())
     }
 
+    fn set_ui_visible(&self, _visible: bool) {}
+
     fn play_cue(&self, _cue: Cue) {}
 }
 
