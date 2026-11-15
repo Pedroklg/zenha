@@ -637,9 +637,9 @@ impl eframe::App for App {
         {
             actions.push(UserAction::ToggleFullscreen);
         }
-        ui.ctx().data_mut(|d| {
-            d.insert_temp(prev_text_edit_focus_id(), ui.ctx().text_edit_focused());
-        });
+        let text_edit_focused = ui.ctx().text_edit_focused();
+        ui.ctx()
+            .data_mut(|d| d.insert_temp(prev_text_edit_focus_id(), text_edit_focused));
         let actions = self.resolve_effects(ui.ctx(), actions);
         self.dispatch(ui.ctx(), actions);
         self.prune_images();
