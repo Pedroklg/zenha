@@ -48,7 +48,7 @@ pub fn show(
                 renderer.show(ui, watch);
                 let button = egui::Area::new(egui::Id::unique("exit_fullscreen"))
                     .anchor(egui::Align2::RIGHT_TOP, [-12.0, 12.0])
-                    .show(ui.ctx(), |ui| ui.button("Sair da tela cheia"));
+                    .show(ui.ctx(), |ui| ui.button("Sair da tela cheia (Esc)"));
                 if button.inner.clicked() {
                     actions.push(UserAction::ToggleFullscreen);
                 }
@@ -69,7 +69,9 @@ pub fn show(
         SidebarArgs {
             user,
             current_room: Some(&state.room),
+            local_identity: &state.local_identity,
             participants: &state.participants,
+            participant_volumes,
             rooms,
             server_host,
             available_update,
@@ -130,12 +132,15 @@ pub fn show_lobby(
         muted: voice.muted,
         deafened: voice.deafened,
     };
+    let empty_volumes = BTreeMap::new();
     sidebar(
         ui,
         SidebarArgs {
             user,
             current_room: None,
+            local_identity: "",
             participants: &[],
+            participant_volumes: &empty_volumes,
             rooms,
             server_host,
             available_update,
@@ -211,7 +216,9 @@ struct SidebarUser<'a> {
 struct SidebarArgs<'a> {
     user: SidebarUser<'a>,
     current_room: Option<&'a str>,
+    local_identity: &'a str,
     participants: &'a [ParticipantView],
+    participant_volumes: &'a BTreeMap<String, u16>,
     rooms: &'a [RoomSummary],
     server_host: &'a str,
     available_update: Option<&'a AvailableUpdate>,
@@ -285,9 +292,13 @@ fn sidebar(ui: &mut egui::Ui, args: SidebarArgs<'_>, actions: &mut Vec<UserActio
                 .show(ui, |ui| {
                     rooms_list(
                         ui,
-                        args.current_room,
-                        args.participants,
-                        args.rooms,
+                        RoomsListView {
+                            current_room: args.current_room,
+                            local_identity: args.local_identity,
+                            participants: args.participants,
+                            participant_volumes: args.participant_volumes,
+                            rooms: args.rooms,
+                        },
                         actions,
                     );
                 });
@@ -388,13 +399,15 @@ fn user_footer(ui: &mut egui::Ui, user: SidebarUser<'_>, actions: &mut Vec<UserA
     });
 }
 
-fn rooms_list(
-    ui: &mut egui::Ui,
-    current: Option<&str>,
-    current_participants: &[ParticipantView],
-    rooms: &[RoomSummary],
-    actions: &mut Vec<UserAction>,
-) {
+struct RoomsListView<'a> {
+    current_room: Option<&'a str>,
+    local_identity: &'a str,
+    participants: &'a [ParticipantView],
+    participant_volumes: &'a BTreeMap<String, u16>,
+    rooms: &'a [RoomSummary],
+}
+
+fn rooms_list(ui: &mut egui::Ui, view: RoomsListView<'_>, actions: &mut Vec<UserAction>) {
     ui.label(
         RichText::new("SALAS")
             .font(theme::semibold(11.0))
@@ -402,18 +415,18 @@ fn rooms_list(
     );
     ui.add_space(6.0);
 
-    if rooms.is_empty() {
+    if view.rooms.is_empty() {
         ui.weak("Carregando salas...");
     }
 
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            for summary in rooms {
-                let is_current = current == Some(summary.name.as_str());
+            for summary in view.rooms {
+                let is_current = view.current_room == Some(summary.name.as_str());
                 let row_resp = room_row(ui, &summary.name, summary.participants.len(), is_current);
                 if row_resp.clicked() && !is_current {
-                    let action = if current.is_some() {
+                    let action = if view.current_room.is_some() {
                         UserAction::SwitchRoom(summary.name.clone())
                     } else {
                         UserAction::JoinRoom(summary.name.clone())
@@ -422,9 +435,37 @@ fn rooms_list(
                 }
                 if !summary.participants.is_empty() {
                     ui.add_space(2.0);
-                    for name in &summary.participants {
-                        let speaking = is_occupant_speaking(is_current, name, current_participants);
-                        occupant_row(ui, name, speaking);
+                    for (idx, name) in summary.participants.iter().enumerate() {
+                        let speaking = is_occupant_speaking(is_current, name, view.participants);
+                        let volume_target = occupant_volume_target(
+                            is_current,
+                            name,
+                            &summary.participants,
+                            view.participants,
+                            view.local_identity,
+                        )
+                        .map(|participant| {
+                            (
+                                participant,
+                                participant_volume_for(
+                                    view.participant_volumes,
+                                    &participant.identity,
+                                ),
+                            )
+                        });
+                        let row_id = volume_target.map_or_else(
+                            || egui::IdSalt::new(("occupant_row_anon", &summary.name, idx, name)),
+                            |(p, _)| {
+                                egui::IdSalt::new((
+                                    "occupant_row",
+                                    &summary.name,
+                                    p.identity.as_str(),
+                                ))
+                            },
+                        );
+                        ui.push_id(row_id, |ui| {
+                            occupant_row(ui, name, speaking, volume_target, actions);
+                        });
                     }
                     ui.add_space(6.0);
                 } else {
@@ -479,24 +520,73 @@ fn room_row(ui: &mut egui::Ui, name: &str, count: usize, is_current: bool) -> eg
     response
 }
 
-fn occupant_row(ui: &mut egui::Ui, name: &str, speaking: bool) {
-    ui.horizontal(|ui| {
-        ui.add_space(20.0);
-        let (dot_rect, _) = ui.allocate_exact_size(Vec2::splat(8.0), Sense::hover());
-        let dot_color = if speaking {
-            theme::SPEAKING
-        } else {
-            theme::INACTIVE_DOT
-        };
-        ui.painter()
-            .circle_filled(dot_rect.center(), 4.0, dot_color);
-        let text_color = if speaking {
-            theme::TEXT
-        } else {
-            theme::TEXT_WEAK
-        };
-        ui.label(RichText::new(name).size(13.0).color(text_color));
-    });
+fn occupant_row(
+    ui: &mut egui::Ui,
+    name: &str,
+    speaking: bool,
+    volume_target: Option<(&ParticipantView, u16)>,
+    actions: &mut Vec<UserAction>,
+) {
+    let interactive = volume_target.is_some();
+    let sense = if interactive {
+        Sense::click()
+    } else {
+        Sense::hover()
+    };
+    let row_response = ui
+        .scope_builder(
+            egui::UiBuilder::new()
+                .layout(Layout::left_to_right(Align::Center))
+                .sense(sense),
+            |ui| {
+                ui.set_min_width(ui.available_width());
+                ui.add_space(20.0);
+                let (dot_rect, _) = ui.allocate_exact_size(Vec2::splat(8.0), Sense::hover());
+                let dot_color = if speaking {
+                    theme::SPEAKING
+                } else {
+                    theme::INACTIVE_DOT
+                };
+                ui.painter()
+                    .circle_filled(dot_rect.center(), 4.0, dot_color);
+                let text_color = if speaking {
+                    theme::TEXT
+                } else {
+                    theme::TEXT_WEAK
+                };
+                let volume_badge =
+                    volume_target.and_then(|(_, volume)| participant_volume_badge(volume, false));
+                let max_name_width = if volume_badge.is_some() {
+                    (ui.available_width() - 44.0).max(24.0)
+                } else {
+                    ui.available_width().max(24.0)
+                };
+                ui.scope(|ui| {
+                    ui.set_max_width(max_name_width);
+                    let mut label =
+                        egui::Label::new(RichText::new(name).size(13.0).color(text_color))
+                            .truncate();
+                    if interactive {
+                        label = label.selectable(false);
+                    }
+                    ui.add(label);
+                });
+                if let Some(badge) = volume_badge {
+                    ui.label(RichText::new(badge).size(11.0).color(theme::TEXT_WEAK));
+                }
+            },
+        )
+        .response;
+
+    if let Some((participant, volume)) = volume_target {
+        participant_volume_menu(
+            &row_response,
+            VolumeMenuScope::Sidebar,
+            &participant.identity,
+            volume,
+            actions,
+        );
+    }
 }
 
 fn main_center(
@@ -822,7 +912,13 @@ fn compact_participants_strip(
                 })
                 .response;
             if !is_self {
-                participant_volume_menu(&chip_response, &participant.identity, volume, actions);
+                participant_volume_menu(
+                    &chip_response,
+                    VolumeMenuScope::Strip,
+                    &participant.identity,
+                    volume,
+                    actions,
+                );
             }
         }
     });
@@ -1076,8 +1172,25 @@ fn participant_card(
         .response;
 
     if !is_self {
-        participant_volume_menu(&card_response, &participant.identity, volume, actions);
+        participant_volume_menu(
+            &card_response,
+            VolumeMenuScope::Grid,
+            &participant.identity,
+            volume,
+            actions,
+        );
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum VolumeMenuScope {
+    Sidebar,
+    Grid,
+    Strip,
+}
+
+fn participant_volume_popup_id(scope: VolumeMenuScope, identity: &str) -> egui::Id {
+    egui::Id::unique(("participant_volume_popup", scope, identity))
 }
 
 fn participant_volume_badge(volume: u16, is_self: bool) -> Option<String> {
@@ -1090,12 +1203,13 @@ fn participant_volume_badge(volume: u16, is_self: bool) -> Option<String> {
 
 fn participant_volume_menu(
     card_response: &egui::Response,
+    scope: VolumeMenuScope,
     identity: &str,
     current_volume: u16,
     actions: &mut Vec<UserAction>,
 ) {
     let ctx = &card_response.ctx;
-    let popup_id = egui::Id::unique(("participant_volume_popup", identity));
+    let popup_id = participant_volume_popup_id(scope, identity);
     let dirty_id = popup_id.with("dirty");
     let mut needs_save = ctx.data_mut(|d| d.get_temp::<bool>(dirty_id).unwrap_or(false));
 
@@ -1216,6 +1330,33 @@ fn local_display_name<'a>(participants: &'a [ParticipantView], local_identity: &
         )
 }
 
+fn occupant_volume_target<'a>(
+    is_current_room: bool,
+    name: &str,
+    summary_participants: &[String],
+    current_participants: &'a [ParticipantView],
+    local_identity: &str,
+) -> Option<&'a ParticipantView> {
+    if !is_current_room {
+        return None;
+    }
+    if summary_participants
+        .iter()
+        .filter(|candidate| candidate.as_str() == name)
+        .count()
+        != 1
+    {
+        return None;
+    }
+    let mut matches = current_participants.iter().filter(|p| p.name == name);
+    let target = matches.next()?;
+    if matches.next().is_some() {
+        return None;
+    }
+    let is_self = !local_identity.is_empty() && target.identity == local_identity;
+    if is_self { None } else { Some(target) }
+}
+
 fn is_occupant_speaking(
     is_current_room: bool,
     name: &str,
@@ -1231,6 +1372,15 @@ fn is_occupant_speaking(
 mod tests {
     use super::*;
 
+    fn participant(identity: &str, name: &str) -> ParticipantView {
+        ParticipantView {
+            identity: identity.to_owned(),
+            name: name.to_owned(),
+            muted: false,
+            speaking: false,
+        }
+    }
+
     #[test]
     fn formats_people_count_in_portuguese() {
         assert_eq!(people_count_label(0), "0 pessoas na sala");
@@ -1240,12 +1390,7 @@ mod tests {
 
     #[test]
     fn resolves_local_display_name_from_participants_or_fallback() {
-        let list = vec![ParticipantView {
-            identity: "id-1".to_owned(),
-            name: "Lucas".to_owned(),
-            muted: false,
-            speaking: false,
-        }];
+        let list = vec![participant("id-1", "Lucas")];
         assert_eq!(local_display_name(&list, "id-1"), "Lucas");
         assert_eq!(local_display_name(&list, "id-2"), "id-2");
         assert_eq!(local_display_name(&list, ""), "Você");
@@ -1273,5 +1418,75 @@ mod tests {
             Some("165%".to_owned())
         );
         assert_eq!(participant_volume_badge(70, true), None);
+    }
+
+    #[test]
+    fn occupant_volume_target_matches_unique_remote_in_current_room() {
+        let summary = vec!["Lucas".to_owned(), "Ana".to_owned()];
+        let participants = vec![
+            participant("id-self", "Lucas"),
+            participant("id-ana", "Ana"),
+        ];
+
+        let target = occupant_volume_target(true, "Ana", &summary, &participants, "id-self");
+        assert_eq!(target.map(|p| p.identity.as_str()), Some("id-ana"));
+        assert!(
+            occupant_volume_target(true, "Lucas", &summary, &participants, "id-self").is_none()
+        );
+        assert!(occupant_volume_target(false, "Ana", &summary, &participants, "id-self").is_none());
+        assert!(
+            occupant_volume_target(true, "Bruno", &summary, &participants, "id-self").is_none()
+        );
+    }
+
+    #[test]
+    fn occupant_volume_target_skips_duplicate_names_in_participants_or_summary() {
+        let summary = vec!["Ana".to_owned(), "Ana".to_owned(), "Bruno".to_owned()];
+        let two_remotes = vec![
+            participant("id-self", "Lucas"),
+            participant("id-ana-1", "Ana"),
+            participant("id-ana-2", "Ana"),
+            participant("id-bruno", "Bruno"),
+        ];
+        assert!(occupant_volume_target(true, "Ana", &summary, &two_remotes, "id-self").is_none());
+        assert_eq!(
+            occupant_volume_target(true, "Bruno", &summary, &two_remotes, "id-self")
+                .map(|p| p.identity.as_str()),
+            Some("id-bruno")
+        );
+
+        let summary_single_ana = vec!["Ana".to_owned()];
+        let self_and_remote_same_name = vec![
+            participant("id-self", "Ana"),
+            participant("id-remote-ana", "Ana"),
+        ];
+        assert!(
+            occupant_volume_target(
+                true,
+                "Ana",
+                &summary_single_ana,
+                &self_and_remote_same_name,
+                "id-self"
+            )
+            .is_none()
+        );
+
+        let single_remote = vec![participant("id-ana-1", "Ana")];
+        assert!(occupant_volume_target(true, "Ana", &summary, &single_remote, "id-self").is_none());
+    }
+
+    #[test]
+    fn participant_volume_popup_ids_are_stable_and_distinct_per_scope() {
+        let sidebar_a1 = participant_volume_popup_id(VolumeMenuScope::Sidebar, "id-ana");
+        let sidebar_a2 = participant_volume_popup_id(VolumeMenuScope::Sidebar, "id-ana");
+        let grid_a = participant_volume_popup_id(VolumeMenuScope::Grid, "id-ana");
+        let strip_a = participant_volume_popup_id(VolumeMenuScope::Strip, "id-ana");
+        let sidebar_b = participant_volume_popup_id(VolumeMenuScope::Sidebar, "id-bruno");
+
+        assert_eq!(sidebar_a1, sidebar_a2);
+        assert_ne!(sidebar_a1, grid_a);
+        assert_ne!(sidebar_a1, strip_a);
+        assert_ne!(grid_a, strip_a);
+        assert_ne!(sidebar_a1, sidebar_b);
     }
 }

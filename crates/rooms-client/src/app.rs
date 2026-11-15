@@ -430,6 +430,14 @@ impl eframe::App for App {
             views::screens::demo_banner(ui, label);
         }
 
+        let had_popup_before_views =
+            ui.ctx().any_popup_open() || egui::Popup::is_any_open(ui.ctx());
+        let prev_text_edit_focused = ui.ctx().data(|d| {
+            d.get_temp::<bool>(prev_text_edit_focus_id())
+                .unwrap_or(false)
+        });
+        let had_hotkey_capture = self.state.hotkeys.capturing.is_some();
+
         let show_password = self.state.show_password_field();
         let ptt_hint = self.state.push_to_talk_hint();
         let available_update = self.state.visible_update().cloned();
@@ -505,6 +513,28 @@ impl eframe::App for App {
             open_viewer,
             &mut self.viewer_image,
         ));
+        let already_toggled_fullscreen = actions
+            .iter()
+            .any(|action| matches!(action, UserAction::ToggleFullscreen));
+        let blocking_overlay_open = had_popup_before_views
+            || ui.ctx().any_popup_open()
+            || egui::Popup::is_any_open(ui.ctx())
+            || had_hotkey_capture;
+        let text_input_focused = ui.ctx().text_edit_focused() || prev_text_edit_focused;
+        let fullscreen = self.state.is_fullscreen();
+        if fullscreen
+            && !already_toggled_fullscreen
+            && !blocking_overlay_open
+            && !text_input_focused
+            && ui
+                .ctx()
+                .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+        {
+            actions.push(UserAction::ToggleFullscreen);
+        }
+        ui.ctx().data_mut(|d| {
+            d.insert_temp(prev_text_edit_focus_id(), ui.ctx().text_edit_focused());
+        });
         let actions = self.resolve_effects(ui.ctx(), actions);
         self.dispatch(ui.ctx(), actions);
         self.prune_images();
@@ -533,6 +563,10 @@ impl eframe::App for App {
         };
         ui.ctx().request_repaint_after(interval);
     }
+}
+
+fn prev_text_edit_focus_id() -> egui::Id {
+    egui::Id::unique("prev_text_edit_focused")
 }
 
 #[cfg(windows)]
