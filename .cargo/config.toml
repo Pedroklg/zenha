@@ -1,5 +1,6 @@
 [alias]
 ci = "run --quiet --package xtask -- ci"
+review = "run --quiet --package xtask -- review-checks"
 xtask = "run --quiet --package xtask --"
 lint = "clippy --workspace --all-targets -- -D warnings"
 client = "run --package rooms-client"
