@@ -58,10 +58,6 @@ impl SharePreset {
             Self::P1080F60 => 8_000_000,
         }
     }
-
-    pub fn experimental(self) -> bool {
-        self == Self::P1080F60
-    }
 }
 
 /// Size to publish for a source of `src_w` x `src_h`: unchanged when it fits the caps,
@@ -326,8 +322,6 @@ mod tests {
     fn presets_have_consistent_parameters() {
         assert_eq!(SharePreset::P720F30.max_height(), 720);
         assert_eq!(SharePreset::P1080F60.fps(), 60);
-        assert!(SharePreset::P1080F60.experimental());
-        assert!(!SharePreset::P1080F30.experimental());
         assert!(SharePreset::ALL.iter().all(|p| p.max_bitrate_bps() > 0));
     }
 }
