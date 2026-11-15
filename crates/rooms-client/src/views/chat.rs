@@ -1,12 +1,102 @@
 use eframe::egui::{self, CornerRadius, Margin, RichText, Stroke};
 use rooms_protocol::MAX_CHAT_MESSAGE_LEN;
 
-use crate::chat_images::{ChatImages, ThumbState, fit_within};
+use crate::chat_images::{ChatImages, ThumbState, ViewerImage, fit_within};
 use crate::format::{DISPLAY_UTC_OFFSET_MINUTES, format_hhmm, format_size};
 use crate::icons;
-use crate::state::{ChatEntry, ChatState, UserAction};
+use crate::state::{ChatEntry, ChatState, ImageViewer, UserAction};
 use crate::theme;
 use crate::ui_model::{ChatMessageView, FileTransferView, ParticipantView, TransferStateView};
+
+/// Exibe o visualizador modal com a imagem selecionada do chat.
+pub fn viewer(
+    ctx: &egui::Context,
+    viewer: Option<&ImageViewer>,
+    image_cache: &mut ViewerImage,
+) -> Vec<UserAction> {
+    let Some(viewer) = viewer else {
+        return Vec::new();
+    };
+    let mut actions = Vec::new();
+    let mut close = false;
+    let screen = ctx.content_rect().size();
+    let max_width = (screen.x - 96.0).max(160.0);
+    let max_height = (screen.y - 180.0).max(160.0);
+    let frame = egui::Frame::window(&ctx.global_style())
+        .fill(theme::PANEL)
+        .stroke(Stroke::new(1.0, theme::BORDER))
+        .corner_radius(CornerRadius::same(10))
+        .inner_margin(Margin::same(16));
+
+    let modal = egui::Modal::new(egui::Id::unique(("chat_image_viewer", &viewer.id)))
+        .backdrop_color(egui::Color32::from_black_alpha(190))
+        .frame(frame)
+        .show(ctx, |ui| {
+            ui.set_min_width(260.0_f32.min(max_width));
+            ui.set_max_width(max_width);
+            ui.horizontal_wrapped(|ui| {
+                ui.label(RichText::new(&viewer.name).font(theme::semibold(14.0)));
+                ui.weak(format!("· {}", format_size(viewer.size)));
+            });
+            ui.add_space(10.0);
+
+            match image_cache.texture(ctx, &viewer.id, &viewer.path) {
+                ThumbState::Ready(texture) => {
+                    let size = texture.size_vec2();
+                    let (width, height) = fit_within(size.x, size.y, max_width, max_height);
+                    ui.vertical_centered(|ui| {
+                        ui.add(
+                            egui::Image::new(&texture)
+                                .fit_to_exact_size(egui::vec2(width, height))
+                                .corner_radius(CornerRadius::same(6)),
+                        );
+                    });
+                }
+                ThumbState::Loading => {
+                    ui.add_space(24.0);
+                    ui.vertical_centered(|ui| {
+                        ui.spinner();
+                    });
+                    ui.add_space(24.0);
+                }
+                ThumbState::Failed => {
+                    ui.add_space(16.0);
+                    ui.vertical_centered(|ui| {
+                        ui.label(
+                            RichText::new("Não foi possível abrir a imagem.").color(theme::ERROR),
+                        );
+                    });
+                    ui.add_space(16.0);
+                }
+            }
+
+            if let Some(error) = &viewer.error {
+                ui.add_space(8.0);
+                ui.label(RichText::new(error).color(theme::ERROR));
+            }
+
+            ui.add_space(12.0);
+            ui.horizontal_wrapped(|ui| {
+                if ui.button("Abrir no Windows").clicked() {
+                    actions.push(UserAction::OpenImageExternally(viewer.path.clone()));
+                }
+                if !viewer.outgoing && ui.button("Salvar").clicked() {
+                    actions.push(UserAction::SaveReceivedFile {
+                        source: viewer.path.clone(),
+                        name: viewer.name.clone(),
+                    });
+                }
+                if ui.button("Fechar").clicked() {
+                    close = true;
+                }
+            });
+        });
+
+    if close || modal.should_close() {
+        actions.push(UserAction::CloseImageViewer);
+    }
+    actions
+}
 
 const THUMB_MAX: (f32, f32) = (240.0, 180.0);
 const HEADER_HEIGHT: f32 = 64.0;
@@ -263,11 +353,18 @@ fn file_entry(
                             let size = texture.size_vec2();
                             let (width, height) =
                                 fit_within(size.x, size.y, THUMB_MAX.0, THUMB_MAX.1);
-                            ui.add(
-                                egui::Image::new(&texture)
-                                    .fit_to_exact_size(egui::vec2(width, height))
-                                    .corner_radius(CornerRadius::same(6)),
-                            );
+                            let response = ui
+                                .add(
+                                    egui::Image::new(&texture)
+                                        .fit_to_exact_size(egui::vec2(width, height))
+                                        .corner_radius(CornerRadius::same(6))
+                                        .sense(egui::Sense::click()),
+                                )
+                                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                .on_hover_text("Clique para ampliar");
+                            if response.clicked() {
+                                actions.push(UserAction::OpenImageViewer(file.id.clone()));
+                            }
                         }
                         ThumbState::Loading => {
                             ui.spinner();

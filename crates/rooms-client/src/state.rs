@@ -13,7 +13,7 @@ use crate::hotkeys::{HotkeyAction, binding_label};
 use crate::settings::{NoiseMode, Settings, VoiceMode};
 use crate::ui_model::{
     AudioDeviceView, CaptureTargetView, ChatMessageView, Credentials, FeedHandle, FileTransferView,
-    ParticipantView, SharePresetView, TargetKindView, UiCommand, UiEvent,
+    ParticipantView, SharePresetView, TargetKindView, TransferStateView, UiCommand, UiEvent,
 };
 use crate::update::{AvailableUpdate, should_show_update};
 
@@ -434,6 +434,16 @@ pub enum ChatEntry {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImageViewer {
+    pub id: String,
+    pub name: String,
+    pub size: u64,
+    pub path: PathBuf,
+    pub outgoing: bool,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChatState {
     pub messages: VecDeque<ChatEntry>,
     pub unread: usize,
@@ -443,6 +453,7 @@ pub struct ChatState {
     pub history_loading: bool,
     pub open: bool,
     pub notice: Option<String>,
+    pub viewer: Option<ImageViewer>,
     pending_saved_drafts: VecDeque<String>,
 }
 
@@ -457,6 +468,7 @@ impl ChatState {
             history_loading: false,
             open: true,
             notice: None,
+            viewer: None,
             pending_saved_drafts: VecDeque::new(),
         }
     }
@@ -475,6 +487,7 @@ impl ChatState {
         if counts_as_unread && !self.open {
             self.unread += 1;
         }
+        self.prune_viewer();
     }
 
     fn push_message(&mut self, message: ChatMessageView, local_identity: &str) {
@@ -541,7 +554,10 @@ impl ChatState {
             _ => None,
         });
         match existing {
-            Some(file) => file.state = view.state,
+            Some(file) => {
+                file.state = view.state;
+                self.prune_viewer();
+            }
             None => {
                 let counts = !view.outgoing;
                 self.push(ChatEntry::File(view), counts);
@@ -553,6 +569,45 @@ impl ChatState {
         self.notice = Some(text);
     }
 
+    fn open_image(&mut self, id: &str) {
+        let found = self.messages.iter().find_map(|entry| match entry {
+            ChatEntry::File(file) if file.id == id && file.is_image => match &file.state {
+                TransferStateView::Done { path } => Some(ImageViewer {
+                    id: file.id.clone(),
+                    name: file.name.clone(),
+                    size: file.size,
+                    path: path.clone(),
+                    outgoing: file.outgoing,
+                    error: None,
+                }),
+                _ => None,
+            },
+            _ => None,
+        });
+        if let Some(viewer) = found {
+            self.viewer = Some(viewer);
+        }
+    }
+
+    fn close_image(&mut self) {
+        self.viewer = None;
+    }
+
+    fn prune_viewer(&mut self) {
+        let Some(open) = &self.viewer else {
+            return;
+        };
+        let still_present = self.messages.iter().any(|entry| match entry {
+            ChatEntry::File(file) if file.id == open.id && file.is_image => {
+                matches!(&file.state, TransferStateView::Done { path } if *path == open.path)
+            }
+            _ => false,
+        });
+        if !still_present {
+            self.viewer = None;
+        }
+    }
+
     fn clear(&mut self) {
         self.messages.clear();
         self.unread = 0;
@@ -561,6 +616,7 @@ impl ChatState {
         self.has_more = false;
         self.history_loading = false;
         self.notice = None;
+        self.viewer = None;
         self.pending_saved_drafts.clear();
     }
 
@@ -846,6 +902,10 @@ pub enum UserAction {
         source: PathBuf,
         name: String,
     },
+    OpenImageViewer(String),
+    CloseImageViewer,
+    /// Effect handled by the app (spawns OS file viewer); the state does not change.
+    OpenImageExternally(PathBuf),
     DismissChatNotice,
     ToggleChat,
     OpenSettings,
@@ -1014,6 +1074,32 @@ impl AppState {
     pub fn tray_muted(&self) -> Option<bool> {
         match &self.screen {
             Screen::InRoom(room) => Some(room.muted),
+            _ => None,
+        }
+    }
+
+    pub fn open_image_id(&self) -> Option<&str> {
+        match &self.screen {
+            Screen::InRoom(room) => room.chat.viewer.as_ref().map(|viewer| viewer.id.as_str()),
+            _ => None,
+        }
+    }
+
+    pub fn clear_image_viewer_error(&mut self) {
+        if let Some(viewer) = self.open_viewer_mut() {
+            viewer.error = None;
+        }
+    }
+
+    pub fn set_image_viewer_error(&mut self, message: impl Into<String>) {
+        if let Some(viewer) = self.open_viewer_mut() {
+            viewer.error = Some(message.into());
+        }
+    }
+
+    fn open_viewer_mut(&mut self) -> Option<&mut ImageViewer> {
+        match &mut self.screen {
+            Screen::InRoom(room) => room.chat.viewer.as_mut(),
             _ => None,
         }
     }
@@ -1208,7 +1294,17 @@ impl AppState {
             UserAction::LoadOlderChat => self.with_room(RoomState::load_older_chat),
             UserAction::DeleteChat(id) => self.with_room(|room| room.delete_chat(id)),
             UserAction::AttachFile(path) => self.with_room(|_| vec![UiCommand::SendFile { path }]),
-            UserAction::PickFile | UserAction::SaveReceivedFile { .. } => Vec::new(),
+            UserAction::PickFile
+            | UserAction::SaveReceivedFile { .. }
+            | UserAction::OpenImageExternally(_) => Vec::new(),
+            UserAction::OpenImageViewer(id) => self.with_room(|room| {
+                room.chat.open_image(&id);
+                Vec::new()
+            }),
+            UserAction::CloseImageViewer => self.with_room(|room| {
+                room.chat.close_image();
+                Vec::new()
+            }),
             UserAction::DismissChatNotice => self.with_room(|room| {
                 room.chat.notice = None;
                 Vec::new()
@@ -2118,6 +2214,13 @@ mod tests {
         }
     }
 
+    fn room_mut(state: &mut AppState) -> &mut RoomState {
+        match &mut state.screen {
+            Screen::InRoom(room) => room,
+            _ => panic!("not in a room"),
+        }
+    }
+
     fn in_room(state: &mut AppState) {
         if matches!(state.screen, Screen::Onboarding) {
             state.handle_action(UserAction::SubmitOnboarding);
@@ -2526,7 +2629,162 @@ mod tests {
             name: "a.png".to_owned(),
         };
         assert!(state.handle_action(save).is_empty());
+        let open_external = UserAction::OpenImageExternally(PathBuf::from("a.png"));
+        assert!(state.handle_action(open_external).is_empty());
         assert_eq!(*room(&state), before);
+    }
+
+    #[test]
+    fn image_viewer_opens_received_and_sent_images_and_closes() {
+        let mut state = state_with_code();
+        in_room(&mut state);
+        let mut non_image = transfer(
+            "doc-1",
+            false,
+            TransferStateView::Done {
+                path: PathBuf::from("notes.txt"),
+            },
+        );
+        non_image.is_image = false;
+        room_mut(&mut state).chat.apply_transfer(non_image);
+        room_mut(&mut state).chat.apply_transfer(transfer(
+            "img-rx",
+            false,
+            TransferStateView::Done {
+                path: PathBuf::from("rx.png"),
+            },
+        ));
+        room_mut(&mut state).chat.apply_transfer(transfer(
+            "img-tx",
+            true,
+            TransferStateView::Done {
+                path: PathBuf::from("tx.png"),
+            },
+        ));
+
+        state.handle_action(UserAction::OpenImageViewer("missing".to_owned()));
+        assert_eq!(state.open_image_id(), None);
+
+        state.handle_action(UserAction::OpenImageViewer("doc-1".to_owned()));
+        assert_eq!(state.open_image_id(), None);
+
+        state.handle_action(UserAction::OpenImageViewer("img-rx".to_owned()));
+        assert_eq!(
+            room(&state).chat.viewer,
+            Some(ImageViewer {
+                id: "img-rx".to_owned(),
+                name: "foto.png".to_owned(),
+                size: 100,
+                path: PathBuf::from("rx.png"),
+                outgoing: false,
+                error: None,
+            })
+        );
+        assert_eq!(state.open_image_id(), Some("img-rx"));
+
+        state.handle_action(UserAction::OpenImageViewer("img-tx".to_owned()));
+        assert_eq!(state.open_image_id(), Some("img-tx"));
+        assert!(
+            room(&state)
+                .chat
+                .viewer
+                .as_ref()
+                .is_some_and(|v| v.outgoing)
+        );
+
+        state.handle_action(UserAction::CloseImageViewer);
+        assert_eq!(state.open_image_id(), None);
+        assert_eq!(room(&state).chat.viewer, None);
+    }
+
+    #[test]
+    fn image_viewer_closes_on_history_eviction_path_change_and_clear() {
+        let mut state = state_with_code();
+        in_room(&mut state);
+        room_mut(&mut state).chat.apply_transfer(transfer(
+            "img-old",
+            false,
+            TransferStateView::Done {
+                path: PathBuf::from("old.png"),
+            },
+        ));
+        state.handle_action(UserAction::OpenImageViewer("img-old".to_owned()));
+        assert_eq!(state.open_image_id(), Some("img-old"));
+
+        room_mut(&mut state).chat.apply_transfer(transfer(
+            "img-old",
+            false,
+            TransferStateView::Done {
+                path: PathBuf::from("other.png"),
+            },
+        ));
+        assert_eq!(state.open_image_id(), None);
+
+        room_mut(&mut state).chat.apply_transfer(transfer(
+            "img-evict",
+            true,
+            TransferStateView::Done {
+                path: PathBuf::from("evict.png"),
+            },
+        ));
+        state.handle_action(UserAction::OpenImageViewer("img-evict".to_owned()));
+        assert_eq!(state.open_image_id(), Some("img-evict"));
+
+        for i in 0..MAX_CHAT_HISTORY {
+            room_mut(&mut state).chat.apply_transfer(transfer(
+                &format!("fill-{i}"),
+                true,
+                TransferStateView::Done {
+                    path: PathBuf::from(format!("fill-{i}.png")),
+                },
+            ));
+        }
+        assert_eq!(state.open_image_id(), None);
+
+        room_mut(&mut state).chat.apply_transfer(transfer(
+            "img-clear",
+            false,
+            TransferStateView::Done {
+                path: PathBuf::from("clear.png"),
+            },
+        ));
+        state.handle_action(UserAction::OpenImageViewer("img-clear".to_owned()));
+        assert_eq!(state.open_image_id(), Some("img-clear"));
+        room_mut(&mut state).chat.clear();
+        assert_eq!(state.open_image_id(), None);
+    }
+
+    #[test]
+    fn image_viewer_error_updates_only_while_open() {
+        let mut state = state_with_code();
+        in_room(&mut state);
+        state.set_image_viewer_error("ignored");
+        room_mut(&mut state).chat.apply_transfer(transfer(
+            "img-1",
+            false,
+            TransferStateView::Done {
+                path: PathBuf::from("1.png"),
+            },
+        ));
+        state.handle_action(UserAction::OpenImageViewer("img-1".to_owned()));
+        state.set_image_viewer_error("Não foi possível abrir no Windows.");
+        assert_eq!(
+            room(&state)
+                .chat
+                .viewer
+                .as_ref()
+                .and_then(|viewer| viewer.error.as_deref()),
+            Some("Não foi possível abrir no Windows.")
+        );
+        state.clear_image_viewer_error();
+        assert_eq!(
+            room(&state)
+                .chat
+                .viewer
+                .as_ref()
+                .and_then(|viewer| viewer.error.as_deref()),
+            None
+        );
     }
 
     #[test]
