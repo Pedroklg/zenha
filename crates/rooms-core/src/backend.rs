@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::time::Duration;
 
 use async_trait::async_trait;
 use tokio::sync::mpsc::UnboundedReceiver;
@@ -6,7 +7,7 @@ use tokio::sync::mpsc::UnboundedReceiver;
 use crate::api::{AudioDevices, FileTransfer, NoiseSuppression, Participant, SessionError};
 use crate::capture::CaptureEnd;
 use crate::cue::Cue;
-use crate::video::{CaptureTarget, FrameSlot, SharePreset};
+use crate::video::{CaptureTarget, FrameSlot, SharePreset, VideoFrame};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BackendEvent {
@@ -85,10 +86,17 @@ pub trait MediaBackend: Send + Sync + 'static {
     /// Noise gate threshold in dBFS, `None` for off; only used by the enhanced mode.
     async fn set_noise_gate(&self, threshold_db: Option<i8>) -> Result<(), SessionError>;
     async fn capture_targets(&self) -> Result<Vec<CaptureTarget>, SessionError>;
+    async fn capture_thumbnail(
+        &self,
+        target: &CaptureTarget,
+        max_side: u32,
+        timeout: Duration,
+    ) -> Result<VideoFrame, SessionError>;
     async fn start_screen_share(
         &self,
         target_id: &str,
         preset: SharePreset,
+        preview: FrameSlot,
     ) -> Result<(), SessionError>;
     async fn stop_screen_share(&self) -> Result<(), SessionError>;
     async fn watch_screen_share(

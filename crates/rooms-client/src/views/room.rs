@@ -11,10 +11,10 @@ use crate::chat_images::ChatImages;
 use crate::icons;
 use crate::state::{
     ConnectionStatus, DEFAULT_PARTICIPANT_VOLUME, LobbyVoiceState, LocalShare,
-    MAX_PARTICIPANT_VOLUME, RoomState, UserAction, WatchState, participant_volume_for,
+    MAX_PARTICIPANT_VOLUME, RoomState, ShareState, UserAction, WatchState, participant_volume_for,
 };
 use crate::theme;
-use crate::ui_model::ParticipantView;
+use crate::ui_model::{FeedHandle, ParticipantView};
 use crate::update::AvailableUpdate;
 
 const SIDEBAR_WIDTH: f32 = 256.0;
@@ -29,6 +29,7 @@ pub fn show(
     rooms: &[RoomSummary],
     server_host: &str,
     renderer: &mut VideoRenderer,
+    preview_renderer: &mut VideoRenderer,
     images: &mut ChatImages,
     stream_volume: u8,
     participant_volumes: &BTreeMap<String, u16>,
@@ -36,6 +37,9 @@ pub fn show(
     available_update: Option<&AvailableUpdate>,
 ) -> Vec<UserAction> {
     let mut actions = Vec::new();
+    if state.share.preview.is_none() {
+        preview_renderer.reset();
+    }
 
     if let Some(watch) = state.share.watching.as_ref().filter(|w| w.fullscreen) {
         egui::CentralPanel::default()
@@ -88,13 +92,22 @@ pub fn show(
             ui,
             state,
             &watch,
-            renderer,
+            ShareRenderers {
+                watch: renderer,
+                preview: preview_renderer,
+            },
             stream_volume,
             participant_volumes,
             &mut actions,
         );
     } else {
-        main_center(ui, state, participant_volumes, &mut actions);
+        main_center(
+            ui,
+            state,
+            preview_renderer,
+            participant_volumes,
+            &mut actions,
+        );
     }
 
     actions
@@ -489,6 +502,7 @@ fn occupant_row(ui: &mut egui::Ui, name: &str, speaking: bool) {
 fn main_center(
     ui: &mut egui::Ui,
     state: &RoomState,
+    preview_renderer: &mut VideoRenderer,
     participant_volumes: &BTreeMap<String, u16>,
     actions: &mut Vec<UserAction>,
 ) {
@@ -613,15 +627,21 @@ fn main_center(
         )
         .show(ui, |ui| {
             share_error_banner(ui, state.share.error.as_deref(), actions);
+            local_share_preview(ui, &state.share, preview_renderer, false, actions);
             participants_grid(ui, state, participant_volumes, actions);
         });
+}
+
+struct ShareRenderers<'a> {
+    watch: &'a mut VideoRenderer,
+    preview: &'a mut VideoRenderer,
 }
 
 fn watching_center(
     ui: &mut egui::Ui,
     state: &RoomState,
     watch: &WatchState,
-    renderer: &mut VideoRenderer,
+    renderers: ShareRenderers<'_>,
     stream_volume: u8,
     participant_volumes: &BTreeMap<String, u16>,
     actions: &mut Vec<UserAction>,
@@ -687,6 +707,7 @@ fn watching_center(
             share_error_banner(ui, state.share.error.as_deref(), actions);
             stream_volume_box(ui, stream_volume, actions);
             ui.add_space(8.0);
+            local_share_preview(ui, &state.share, renderers.preview, true, actions);
             compact_participants_strip(ui, state, participant_volumes, actions);
             ui.add_space(10.0);
 
@@ -696,7 +717,7 @@ fn watching_center(
                 .corner_radius(CornerRadius::same(12))
                 .inner_margin(Margin::same(4))
                 .show(ui, |ui| {
-                    renderer.show(ui, watch);
+                    renderers.watch.show(ui, watch);
                 });
         });
 }
@@ -825,6 +846,96 @@ fn share_error_banner(ui: &mut egui::Ui, error: Option<&str>, actions: &mut Vec<
             });
         });
     ui.add_space(12.0);
+}
+
+fn local_share_preview(
+    ui: &mut egui::Ui,
+    share: &ShareState,
+    preview_renderer: &mut VideoRenderer,
+    compact: bool,
+    actions: &mut Vec<UserAction>,
+) {
+    let Some(preview) = share
+        .preview
+        .as_ref()
+        .filter(|_| share.local == LocalShare::Active)
+    else {
+        return;
+    };
+    let box_size = if compact {
+        Vec2::new(144.0, 81.0)
+    } else {
+        let max_w = ui.available_width().clamp(160.0, 280.0);
+        Vec2::new(max_w, (max_w * 9.0 / 16.0).round())
+    };
+    egui::Frame::new()
+        .fill(theme::PANEL)
+        .stroke(Stroke::new(1.5, theme::ACCENT))
+        .corner_radius(CornerRadius::same(12))
+        .inner_margin(Margin::same(12))
+        .show(ui, |ui| {
+            if compact {
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 12.0;
+                    preview_box(
+                        ui,
+                        box_size,
+                        preview.serial,
+                        &preview.feed,
+                        preview_renderer,
+                    );
+                    ui.vertical(|ui| {
+                        ui.label(
+                            RichText::new("Você está transmitindo")
+                                .font(theme::semibold(13.5))
+                                .color(theme::TEXT),
+                        );
+                        ui.add_space(6.0);
+                        if ui.button("Parar transmissão").clicked() {
+                            actions.push(UserAction::StopShare);
+                        }
+                    });
+                });
+            } else {
+                ui.horizontal(|ui| {
+                    live_badge(ui);
+                    ui.add_space(6.0);
+                    ui.label(
+                        RichText::new("Você está transmitindo")
+                            .font(theme::semibold(14.0))
+                            .color(theme::TEXT),
+                    );
+                });
+                ui.add_space(8.0);
+                preview_box(
+                    ui,
+                    box_size,
+                    preview.serial,
+                    &preview.feed,
+                    preview_renderer,
+                );
+            }
+        });
+    ui.add_space(if compact { 8.0 } else { 16.0 });
+}
+
+fn preview_box(
+    ui: &mut egui::Ui,
+    size: Vec2,
+    serial: u64,
+    feed: &FeedHandle,
+    renderer: &mut VideoRenderer,
+) {
+    egui::Frame::new()
+        .fill(theme::VIDEO_BG)
+        .stroke(Stroke::new(1.0, theme::BORDER))
+        .corner_radius(CornerRadius::same(8))
+        .inner_margin(Margin::same(2))
+        .show(ui, |ui| {
+            ui.set_min_size(size);
+            ui.set_max_size(size);
+            renderer.show_feed(ui, serial, feed, "Iniciando prévia...");
+        });
 }
 
 fn participants_grid(

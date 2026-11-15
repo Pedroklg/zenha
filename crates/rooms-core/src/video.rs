@@ -6,6 +6,42 @@ pub type Waker = Arc<dyn Fn() + Send + Sync>;
 
 const MIN_WAKE_INTERVAL: Duration = Duration::from_millis(8);
 
+/// Maior lado permitido para a prévia local da própria transmissão, em pixels.
+pub const SHARE_PREVIEW_MAX_SIDE: u32 = 480;
+/// Intervalo mínimo entre quadros da prévia local (~10 fps).
+pub const SHARE_PREVIEW_INTERVAL: Duration = Duration::from_millis(100);
+/// Maior lado permitido para miniaturas na escolha de tela, em pixels.
+pub const CAPTURE_THUMBNAIL_MAX_SIDE: u32 = 320;
+/// Tempo máximo de captura para gerar a miniatura de cada alvo.
+pub const CAPTURE_THUMBNAIL_TIMEOUT: Duration = Duration::from_secs(1);
+
+/// Limita a cadência da prévia sem acumular fila nem bloquear o produtor.
+#[derive(Debug, Clone)]
+pub struct PreviewGate {
+    min_interval: Duration,
+    last_emitted: Option<Instant>,
+}
+
+impl PreviewGate {
+    pub fn new(min_interval: Duration) -> Self {
+        Self {
+            min_interval,
+            last_emitted: None,
+        }
+    }
+
+    /// Retorna `true` quando já passou o intervalo mínimo desde a última emissão.
+    pub fn take(&mut self, now: Instant) -> bool {
+        let due = self
+            .last_emitted
+            .is_none_or(|prev| now.saturating_duration_since(prev) >= self.min_interval);
+        if due {
+            self.last_emitted = Some(now);
+        }
+        due
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CaptureKind {
     Screen,
@@ -323,5 +359,38 @@ mod tests {
         assert_eq!(SharePreset::P720F30.max_height(), 720);
         assert_eq!(SharePreset::P1080F60.fps(), 60);
         assert!(SharePreset::ALL.iter().all(|p| p.max_bitrate_bps() > 0));
+    }
+
+    #[test]
+    fn preview_gate_caps_rate_without_drift() {
+        let mut gate = PreviewGate::new(SHARE_PREVIEW_INTERVAL);
+        let t0 = Instant::now();
+        assert!(gate.take(t0));
+        assert!(!gate.take(t0 + Duration::from_millis(50)));
+        assert!(!gate.take(t0 + Duration::from_millis(99)));
+        assert!(gate.take(t0 + Duration::from_millis(100)));
+        assert!(!gate.take(t0 + Duration::from_millis(150)));
+        assert!(gate.take(t0 + Duration::from_millis(250)));
+    }
+
+    #[test]
+    fn fit_within_respects_preview_and_thumbnail_bounds() {
+        assert_eq!(
+            fit_within(1920, 1080, SHARE_PREVIEW_MAX_SIDE, SHARE_PREVIEW_MAX_SIDE),
+            (480, 270)
+        );
+        assert_eq!(
+            fit_within(
+                1080,
+                1920,
+                CAPTURE_THUMBNAIL_MAX_SIDE,
+                CAPTURE_THUMBNAIL_MAX_SIDE
+            ),
+            (180, 320)
+        );
+        assert_eq!(
+            fit_within(320, 200, SHARE_PREVIEW_MAX_SIDE, SHARE_PREVIEW_MAX_SIDE),
+            (320, 200)
+        );
     }
 }

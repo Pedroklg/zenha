@@ -5,7 +5,7 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use crate::api::SessionError;
-use crate::video::{CaptureKind, CaptureTarget, FrameSlot};
+use crate::video::{CaptureKind, CaptureTarget, FrameSlot, VideoFrame, fit_within};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CaptureEnd {
@@ -57,6 +57,14 @@ pub trait FrameSource: Send + 'static {
         sink: Box<dyn FrameSink>,
     ) -> Result<(), SessionError>;
     fn stop(&mut self);
+
+    /// Captura uma miniatura única de `target` com lado maior de até `max_side` px (RGBA).
+    fn capture_thumbnail(
+        &mut self,
+        target: &CaptureTarget,
+        max_side: u32,
+        timeout: Duration,
+    ) -> Result<VideoFrame, SessionError>;
 }
 
 /// Fixed-rate schedule that skips whole missed slots instead of bursting to catch up.
@@ -240,6 +248,27 @@ impl FrameSource for TestPatternSource {
             worker.stop();
         }
     }
+
+    fn capture_thumbnail(
+        &mut self,
+        target: &CaptureTarget,
+        max_side: u32,
+        _timeout: Duration,
+    ) -> Result<VideoFrame, SessionError> {
+        let index = match target.id.as_str() {
+            TEST_SCREEN_ID => 0,
+            TEST_WINDOW_ID => 15,
+            _ => return Err(SessionError::TargetNotFound(target.id.clone())),
+        };
+        let raw = Self::render(self.width, self.height, index);
+        let frame = BgraFrame {
+            width: self.width,
+            height: self.height,
+            stride: self.width as usize * 4,
+            data: &raw,
+        };
+        bgra_to_video_frame(&frame, max_side)
+    }
 }
 
 pub fn bgra_to_rgba(frame: &BgraFrame<'_>, out: &mut [u8]) {
@@ -254,6 +283,65 @@ pub fn bgra_to_rgba(frame: &BgraFrame<'_>, out: &mut [u8]) {
             d[3] = 255;
         }
     }
+}
+
+/// Redimensiona por vizinho mais próximo e converte apenas os pixels amostrados de BGRA para RGBA.
+///
+/// Mantém o tamanho original quando `dst_w == frame.width && dst_h == frame.height`.
+pub fn bgra_to_rgba_scaled(frame: &BgraFrame<'_>, dst_w: u32, dst_h: u32, out: &mut [u8]) {
+    if !frame.is_consistent() || frame.width == 0 || frame.height == 0 || dst_w == 0 || dst_h == 0 {
+        return;
+    }
+    if dst_w == frame.width && dst_h == frame.height {
+        bgra_to_rgba(frame, out);
+        return;
+    }
+    let (src_w, src_h) = (u64::from(frame.width), u64::from(frame.height));
+    let (dw, dh) = (dst_w as usize, dst_h as usize);
+    let src_row_bytes = frame.width as usize * 4;
+    for dy in 0..dh {
+        let sy = ((dy as u64 * src_h) / dh as u64).min(src_h - 1) as usize;
+        let row_start = sy * frame.stride;
+        let Some(src_row) = frame.data.get(row_start..row_start + src_row_bytes) else {
+            return;
+        };
+        let Some(dst_row) = out.get_mut(dy * dw * 4..(dy + 1) * dw * 4) else {
+            return;
+        };
+        for (dx, d) in dst_row.chunks_exact_mut(4).enumerate() {
+            let sx = (((dx as u64 * src_w) / dw as u64).min(src_w - 1) as usize) * 4;
+            let Some(s) = src_row.get(sx..sx + 4) else {
+                continue;
+            };
+            d[0] = s[2];
+            d[1] = s[1];
+            d[2] = s[0];
+            d[3] = 255;
+        }
+    }
+}
+
+/// Reduz um quadro BGRA para até `max_side` no lado maior e converte para `VideoFrame` RGBA.
+pub fn bgra_to_video_frame(
+    frame: &BgraFrame<'_>,
+    max_side: u32,
+) -> Result<VideoFrame, SessionError> {
+    if !frame.is_consistent() || frame.width == 0 || frame.height == 0 {
+        return Err(SessionError::Video("quadro capturado inválido".to_owned()));
+    }
+    if max_side == 0 {
+        return Err(SessionError::Video(
+            "tamanho máximo inválido para conversão".to_owned(),
+        ));
+    }
+    let (dst_w, dst_h) = fit_within(frame.width, frame.height, max_side, max_side);
+    let mut rgba = vec![0u8; dst_w as usize * dst_h as usize * 4];
+    bgra_to_rgba_scaled(frame, dst_w, dst_h, &mut rgba);
+    Ok(VideoFrame {
+        width: dst_w,
+        height: dst_h,
+        rgba,
+    })
 }
 
 /// Sink that converts BGRA frames to RGBA and publishes them into a [`FrameSlot`].
@@ -423,5 +511,64 @@ mod tests {
         assert_eq!(pacer.finish_slot(start + Duration::from_millis(14)), 0);
         assert_eq!(pacer.finish_slot(start + Duration::from_millis(53)), 2);
         assert_eq!(pacer.finish_slot(start + Duration::from_millis(60)), 0);
+    }
+
+    #[test]
+    fn bgra_to_rgba_scaled_downscales_with_stride_and_keeps_colors() {
+        // 4x2 BGRA with stride padding (20 bytes/row instead of 16).
+        #[rustfmt::skip]
+        let data = vec![
+            // row 0: pixels (B,G,R,A) then 4 padding bytes
+            1, 2, 3, 0,   4, 5, 6, 0,   7, 8, 9, 0,   10, 11, 12, 0,   99, 99, 99, 99,
+            // row 1
+            21, 22, 23, 0,  24, 25, 26, 0,  27, 28, 29, 0,  30, 31, 32, 0,   99, 99, 99, 99,
+        ];
+        let frame = BgraFrame {
+            width: 4,
+            height: 2,
+            stride: 20,
+            data: &data,
+        };
+        let mut out = vec![0u8; 2 * 2 * 4];
+        bgra_to_rgba_scaled(&frame, 2, 2, &mut out);
+        assert_eq!(
+            out,
+            vec![
+                3, 2, 1, 255, 9, 8, 7, 255, // sampled x=0, x=2 on y=0
+                23, 22, 21, 255, 29, 28, 27, 255, // sampled x=0, x=2 on y=1
+            ]
+        );
+    }
+
+    #[test]
+    fn test_pattern_thumbnail_downscales_and_rejects_unknown_target() {
+        let mut source = TestPatternSource::new(1920, 1080);
+        let targets = source.list_targets().unwrap();
+        let thumb = source
+            .capture_thumbnail(&targets[0], 320, Duration::from_secs(1))
+            .unwrap();
+        assert_eq!((thumb.width, thumb.height), (320, 180));
+        assert!(thumb.is_valid());
+
+        let window_thumb = source
+            .capture_thumbnail(&targets[1], 320, Duration::from_secs(1))
+            .unwrap();
+        assert_eq!((window_thumb.width, window_thumb.height), (320, 180));
+        assert_ne!(thumb.rgba, window_thumb.rgba);
+
+        let small_thumb = source
+            .capture_thumbnail(&targets[0], 4000, Duration::from_secs(1))
+            .unwrap();
+        assert_eq!((small_thumb.width, small_thumb.height), (1920, 1080));
+
+        let bogus = CaptureTarget {
+            id: "unknown".to_owned(),
+            name: "unknown".to_owned(),
+            kind: CaptureKind::Window,
+        };
+        assert!(matches!(
+            source.capture_thumbnail(&bogus, 320, Duration::from_secs(1)),
+            Err(SessionError::TargetNotFound(_))
+        ));
     }
 }

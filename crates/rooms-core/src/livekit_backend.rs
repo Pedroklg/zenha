@@ -50,7 +50,7 @@ use crate::participant_volume::{ParticipantVolumes, volume_gain};
 use crate::share_audio::{
     AudioScope, SHARE_AUDIO_CHANNELS, SHARE_AUDIO_SAMPLE_RATE, ShareAudioCapture,
 };
-use crate::video::{CaptureTarget, FrameSlot, SharePreset};
+use crate::video::{CaptureTarget, FrameSlot, SharePreset, VideoFrame};
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 const CLOSE_TIMEOUT: Duration = Duration::from_secs(5);
@@ -742,10 +742,21 @@ impl MediaBackend for LiveKitBackend {
         Ok(targets)
     }
 
+    async fn capture_thumbnail(
+        &self,
+        target: &CaptureTarget,
+        max_side: u32,
+        timeout: Duration,
+    ) -> Result<VideoFrame, SessionError> {
+        let (mut capture, capture_target) = capture_for(target.clone())?;
+        blocking(move || capture.capture_thumbnail(&capture_target, max_side, timeout)).await?
+    }
+
     async fn start_screen_share(
         &self,
         target_id: &str,
         preset: SharePreset,
+        preview: FrameSlot,
     ) -> Result<(), SessionError> {
         let (room, events) = self
             .current_room_and_events()
@@ -758,8 +769,15 @@ impl MediaBackend for LiveKitBackend {
         let target = self.resolve_target(target_id).await?;
         let (capture, capture_target) = capture_for(target.clone())?;
         *slot = Some(
-            livekit_video::publish_share(room.clone(), events, capture, &capture_target, preset)
-                .await?,
+            livekit_video::publish_share(
+                room.clone(),
+                events,
+                capture,
+                &capture_target,
+                preset,
+                preview,
+            )
+            .await?,
         );
         // The picture is what was asked for; the sound is best effort.
         if let Some(scope) = AudioScope::for_target(&target) {

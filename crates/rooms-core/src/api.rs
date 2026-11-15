@@ -185,12 +185,21 @@ pub enum Event {
     RoomsUpdated(Vec<RoomSummary>),
     AudioDevicesUpdated(AudioDevices),
     CaptureTargetsUpdated(Vec<CaptureTarget>),
+    /// Miniatura RGBA de um alvo de captura, emitida assim que ficar pronta.
+    CaptureThumbnail {
+        id: String,
+        width: u32,
+        height: u32,
+        rgba: Vec<u8>,
+    },
     /// Nível do microfone no modo Reforçada, cerca de dez vezes por segundo.
     MicLevel {
         level_db: i8,
         gate_open: bool,
     },
-    ScreenShareStarted,
+    ScreenShareStarted {
+        preview: FrameSlot,
+    },
     ScreenShareStopped,
     RemoteScreenShareStarted {
         identity: String,
