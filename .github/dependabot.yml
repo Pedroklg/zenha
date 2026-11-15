@@ -14,6 +14,9 @@ updates:
       - dependency-name: "livekit"
       - dependency-name: "livekit-api"
       - dependency-name: "libwebrtc"
+      # Must match the ndarray version used by the DeepFilterNet crates.
+      - dependency-name: "ndarray"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
 
   - package-ecosystem: "github-actions"
     directory: "/"
