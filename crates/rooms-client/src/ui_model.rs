@@ -66,7 +66,7 @@ impl SharePresetView {
         match self {
             Self::P720F30 => "720p, 30 fps",
             Self::P1080F30 => "1080p, 30 fps",
-            Self::P1080F60 => "1080p, 60 fps (experimental)",
+            Self::P1080F60 => "1080p, 60 fps",
         }
     }
 }
