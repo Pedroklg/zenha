@@ -294,6 +294,11 @@ impl SharePicker {
             .is_some_and(|id| self.targets.iter().any(|t| t.id == *id))
     }
 
+    fn close(&mut self) {
+        self.open = false;
+        self.thumbnails.clear();
+    }
+
     fn reset_loading(&mut self) {
         self.loaded = false;
         self.thumbnails.clear();
@@ -1358,7 +1363,7 @@ impl AppState {
             }
             UserAction::OpenSharePicker => self.open_picker(),
             UserAction::CloseSharePicker => {
-                self.picker.open = false;
+                self.picker.close();
                 Vec::new()
             }
             UserAction::RefreshCaptureTargets => {
@@ -1579,7 +1584,7 @@ impl AppState {
             self.session_mic_sent = room.mic_sent;
             self.session_deafened = room.deafened;
         }
-        self.picker.open = false;
+        self.picker.close();
         self.audio.open = false;
         self.audio.mic_level = None;
         self.hotkeys.capturing = None;
@@ -1627,7 +1632,7 @@ impl AppState {
             return Vec::new();
         }
         room.share.start();
-        self.picker.open = false;
+        self.picker.close();
         vec![UiCommand::StartScreenShare { target_id, preset }]
     }
 
@@ -1731,7 +1736,7 @@ impl AppState {
     }
 
     fn leave(&mut self) -> Vec<UiCommand> {
-        self.picker.open = false;
+        self.picker.close();
         self.audio.mic_level = None;
         if let Screen::InRoom(room) = &self.screen {
             self.lobby_voice = room.voice_state();
@@ -1795,7 +1800,7 @@ impl AppState {
                 rgba,
             } => self.picker.set_thumbnail(id, width, height, rgba),
             UiEvent::Failed { message } => {
-                self.picker.open = false;
+                self.picker.close();
                 self.audio.mic_level = None;
                 match &self.screen {
                     Screen::Connecting { .. } => {
@@ -1824,7 +1829,7 @@ impl AppState {
                 }
             }
             UiEvent::Left => {
-                self.picker.open = false;
+                self.picker.close();
                 self.audio.mic_level = None;
                 match &self.screen {
                     Screen::InRoom(room) => {
@@ -1848,7 +1853,7 @@ impl AppState {
     }
 
     fn on_invite_rejected(&mut self) {
-        self.picker.open = false;
+        self.picker.close();
         self.audio.open = false;
         self.audio.mic_level = None;
         if matches!(self.screen, Screen::Onboarding) {
