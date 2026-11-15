@@ -140,6 +140,21 @@ pub fn bookmark(painter: &Painter, rect: Rect, color: Color32) {
     painter.line(points, Stroke::new(1.5, color));
 }
 
+pub fn gear(painter: &Painter, rect: Rect, color: Color32, _off: bool) {
+    let stroke = Stroke::new(STROKE_WIDTH, color);
+    let tooth_stroke = Stroke::new(STROKE_WIDTH * 1.15, color);
+    let c = rect.center();
+    let r = rect.width().min(rect.height()) * 0.5;
+
+    for i in 0..8 {
+        let angle = i as f32 * (PI * 0.25);
+        let dir = Vec2::new(angle.cos(), angle.sin());
+        painter.line_segment([c + dir * (r * 0.62), c + dir * (r * 0.96)], tooth_stroke);
+    }
+    painter.circle_stroke(c, r * 0.66, stroke);
+    painter.circle_stroke(c, r * 0.28, stroke);
+}
+
 pub fn icon_button(
     ui: &mut egui::Ui,
     size: f32,

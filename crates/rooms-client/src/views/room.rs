@@ -20,6 +20,8 @@ use crate::update::AvailableUpdate;
 const SIDEBAR_WIDTH: f32 = 256.0;
 const HEADER_HEIGHT: f32 = 64.0;
 const FOOTER_HEIGHT: f32 = 72.0;
+const FOOTER_BUTTON_SIZE: f32 = 36.0;
+const FOOTER_BUTTON_GAP: f32 = 6.0;
 const TWO_COL_BREAKPOINT: f32 = 520.0;
 
 #[allow(clippy::too_many_arguments)]
@@ -147,29 +149,6 @@ pub fn show_lobby(
         },
         &mut actions,
     );
-
-    egui::Panel::top("lobby_header")
-        .exact_size(HEADER_HEIGHT)
-        .show_separator_line(false)
-        .frame(
-            egui::Frame::new()
-                .fill(theme::PANEL)
-                .inner_margin(Margin::symmetric(24, 0)),
-        )
-        .show(ui, |ui| {
-            let rect = ui.max_rect();
-            ui.allocate_ui_with_layout(rect.size(), Layout::right_to_left(Align::Center), |ui| {
-                if ui.button("Configurações").clicked() {
-                    actions.push(UserAction::OpenSettings);
-                }
-            });
-            let full = ui.clip_rect();
-            ui.painter().hline(
-                full.x_range(),
-                rect.bottom(),
-                Stroke::new(1.0, theme::BORDER),
-            );
-        });
 
     egui::CentralPanel::default()
         .frame(
@@ -343,7 +322,8 @@ fn user_footer(ui: &mut egui::Ui, user: SidebarUser<'_>, actions: &mut Vec<UserA
         theme::avatar(ui, 36.0, user.name, avatar_colors);
         ui.add_space(4.0);
 
-        let text_width = (ui.available_width() - 96.0).max(40.0);
+        let buttons_width = FOOTER_BUTTON_SIZE * 3.0 + FOOTER_BUTTON_GAP * 2.0 + 8.0;
+        let text_width = (ui.available_width() - buttons_width).max(40.0);
         ui.allocate_ui_with_layout(
             Vec2::new(text_width, 36.0),
             Layout::top_down(Align::Min),
@@ -374,12 +354,26 @@ fn user_footer(ui: &mut egui::Ui, user: SidebarUser<'_>, actions: &mut Vec<UserA
         );
 
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            ui.spacing_mut().item_spacing.x = FOOTER_BUTTON_GAP;
+            if icons::icon_button(ui, FOOTER_BUTTON_SIZE, icons::gear, false, "Configurações")
+                .clicked()
+            {
+                actions.push(UserAction::OpenSettings);
+            }
+
             let deafen_tip = if user.deafened {
                 "Ligar áudio"
             } else {
                 "Desligar áudio"
             };
-            if icons::icon_button(ui, 44.0, icons::headphones, user.deafened, deafen_tip).clicked()
+            if icons::icon_button(
+                ui,
+                FOOTER_BUTTON_SIZE,
+                icons::headphones,
+                user.deafened,
+                deafen_tip,
+            )
+            .clicked()
             {
                 actions.push(UserAction::ToggleDeafen);
             }
@@ -390,7 +384,7 @@ fn user_footer(ui: &mut egui::Ui, user: SidebarUser<'_>, actions: &mut Vec<UserA
                 "Mutar microfone"
             };
             let mute_resp = ui.add_enabled_ui(!user.deafened, |ui| {
-                icons::icon_button(ui, 44.0, icons::mic, user.muted, mute_tip)
+                icons::icon_button(ui, FOOTER_BUTTON_SIZE, icons::mic, user.muted, mute_tip)
             });
             if mute_resp.inner.clicked() {
                 actions.push(UserAction::ToggleMute);
@@ -607,9 +601,6 @@ fn main_center(
         .show(ui, |ui| {
             let rect = ui.max_rect();
             ui.allocate_ui_with_layout(rect.size(), Layout::right_to_left(Align::Center), |ui| {
-                if ui.button("Configurações").clicked() {
-                    actions.push(UserAction::OpenSettings);
-                }
                 if chat_toggle_button(ui, state.chat.open, state.chat.unread) {
                     actions.push(UserAction::ToggleChat);
                 }
