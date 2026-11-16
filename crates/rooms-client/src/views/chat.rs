@@ -34,9 +34,24 @@ pub fn viewer(
         .show(ctx, |ui| {
             ui.set_min_width(260.0_f32.min(max_width));
             ui.set_max_width(max_width);
-            ui.horizontal_wrapped(|ui| {
-                ui.label(RichText::new(&viewer.name).font(theme::semibold(14.0)));
-                ui.weak(format!("· {}", format_size(viewer.size)));
+            ui.horizontal(|ui| {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let close_button =
+                        egui::Button::new(RichText::new("×").size(20.0).color(theme::TEXT_WEAK))
+                            .frame(false);
+                    if ui.add(close_button).on_hover_text("Fechar").clicked() {
+                        close = true;
+                    }
+                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                        ui.add(
+                            egui::Label::new(
+                                RichText::new(&viewer.name).font(theme::semibold(14.0)),
+                            )
+                            .truncate(),
+                        );
+                        ui.weak(format!("· {}", format_size(viewer.size)));
+                    });
+                });
             });
             ui.add_space(10.0);
 
@@ -656,5 +671,42 @@ mod tests {
             placeholder_width,
             padding_x
         );
+    }
+
+    #[test]
+    fn image_viewer_has_a_close_button_in_the_top_right_corner() {
+        use egui_kittest::Harness;
+        use egui_kittest::kittest::Queryable;
+
+        let image = ImageViewer {
+            id: "img-1".to_owned(),
+            name: "print.png".to_owned(),
+            size: 1024,
+            path: std::path::PathBuf::from("missing-image.png"),
+            outgoing: false,
+            error: None,
+        };
+        let mut harness = Harness::builder()
+            .with_size(egui::Vec2::new(800.0, 600.0))
+            .with_accessibility_check(false)
+            .with_context_setup(theme::install)
+            .build_ui_state(
+                |ui, actions: &mut Vec<UserAction>| {
+                    let mut cache = ViewerImage::default();
+                    actions.extend(viewer(ui.ctx(), Some(&image), &mut cache));
+                },
+                Vec::new(),
+            );
+        harness.run_steps(2);
+
+        let close = harness.get_by_label("×").rect();
+        let title = harness.get_by_label("print.png").rect();
+        let bottom = harness.get_by_label("Fechar").rect();
+        assert!(close.left() > title.right());
+        assert!(close.bottom() < bottom.top());
+
+        harness.get_by_label("×").click();
+        harness.run_steps(2);
+        assert!(harness.state().contains(&UserAction::CloseImageViewer));
     }
 }
