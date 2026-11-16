@@ -23,15 +23,16 @@ pub use chat::{ChatEntry, ChatState, ImageViewer, PendingPastedImage};
 pub use onboarding::{CredentialOp, LoginForm, OnboardingState, display_name_error};
 pub use room::{ConnectionStatus, RoomState, room_display_title};
 pub use share::{LocalShare, SharePicker, ShareState, WatchState, aspect_fit};
+pub use update::{UpdateBanner, UpdateEffect, UpdatePhase};
 
 use crate::cli::{compile_time_default_server, resolve_initial_server};
 use crate::hotkeys::HotkeyAction;
 use crate::settings::{NoiseMode, Settings, VoiceMode};
 use crate::ui_model::{SharePresetView, UiCommand, UiEvent};
-use crate::update::AvailableUpdate;
 use admin::upsert_admin_room;
 use audio::{saved_volume_commands, update_participant_volume};
 use room::apply_room_event;
+use update::UpdateState;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Screen {
@@ -112,6 +113,11 @@ pub enum UserAction {
     Watch(String),
     StopWatching,
     ToggleFullscreen,
+    StartUpdate,
+    ConfirmUpdate,
+    CancelUpdateConfirm,
+    CancelUpdateDownload,
+    RetryUpdate,
     DismissUpdate,
     DismissLobbyNotice,
     AdminLogin,
@@ -170,8 +176,8 @@ pub struct AppState {
     session_deafened: bool,
     last_refresh: Option<Instant>,
     pending_save: Option<Settings>,
-    available_update: Option<AvailableUpdate>,
-    dismissed_update_version: Option<String>,
+    update: UpdateState,
+    pending_update_effects: Vec<UpdateEffect>,
     pending_move_notice: Option<String>,
 }
 
@@ -232,8 +238,8 @@ impl AppState {
             session_deafened: false,
             last_refresh: None,
             pending_save: None,
-            available_update: None,
-            dismissed_update_version: settings.dismissed_update_version.clone(),
+            update: UpdateState::with_dismissed(settings.dismissed_update_version.clone()),
+            pending_update_effects: Vec::new(),
             pending_move_notice: None,
         }
     }
@@ -279,7 +285,7 @@ impl AppState {
             ptt_hotkey: self.hotkeys.ptt.clone(),
             close_to_tray: self.close_to_tray,
             room_sounds: self.room_sounds,
-            dismissed_update_version: self.dismissed_update_version.clone(),
+            dismissed_update_version: self.update.dismissed_version.clone(),
             ..self.form.to_settings()
         }
     }
@@ -516,11 +522,28 @@ impl AppState {
                 }
                 Vec::new()
             }
+            UserAction::StartUpdate => {
+                self.start_update();
+                Vec::new()
+            }
+            UserAction::ConfirmUpdate => {
+                self.confirm_update();
+                Vec::new()
+            }
+            UserAction::CancelUpdateConfirm => {
+                self.cancel_update_confirm();
+                Vec::new()
+            }
+            UserAction::CancelUpdateDownload => {
+                self.cancel_update_download();
+                Vec::new()
+            }
+            UserAction::RetryUpdate => {
+                self.retry_update();
+                Vec::new()
+            }
             UserAction::DismissUpdate => {
-                if let Some(update) = &self.available_update {
-                    self.dismissed_update_version = Some(update.version.clone());
-                    self.pending_save = Some(self.settings_snapshot());
-                }
+                self.dismiss_update();
                 Vec::new()
             }
             UserAction::DismissLobbyNotice => {

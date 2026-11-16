@@ -330,7 +330,11 @@ impl AppState {
     }
 
     pub fn can_paste_chat_image(&self) -> bool {
-        if self.audio.open || self.picker.open || self.admin.dialog.is_some() {
+        if self.audio.open
+            || self.picker.open
+            || self.admin.dialog.is_some()
+            || self.is_update_confirming()
+        {
             return false;
         }
         match &self.screen {

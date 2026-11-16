@@ -221,6 +221,7 @@ impl AppState {
     }
 
     pub(super) fn cancel_connect(&mut self) -> Vec<UiCommand> {
+        self.update.on_left_room();
         if matches!(self.screen, Screen::Connecting { .. }) {
             self.pending_move_notice = None;
             self.screen = Screen::Lobby;
@@ -231,6 +232,7 @@ impl AppState {
     }
 
     pub(super) fn leave(&mut self) -> Vec<UiCommand> {
+        self.update.on_left_room();
         self.picker.close();
         self.audio.mic_level = None;
         self.pending_move_notice = None;
@@ -333,6 +335,7 @@ impl AppState {
     }
 
     pub(super) fn leave_to_lobby(&mut self) {
+        self.update.on_left_room();
         let leave_cue = self.self_left_cue();
         self.picker.close();
         self.audio.mic_level = None;

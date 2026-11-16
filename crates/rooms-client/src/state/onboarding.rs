@@ -147,6 +147,7 @@ impl AppState {
         match link {
             StartupLink::None => {}
             StartupLink::Invite(invite) => {
+                self.update.on_left_room();
                 self.discard_pending_paste();
                 self.screen = Screen::Onboarding;
                 self.active_password.clear();
@@ -309,6 +310,7 @@ impl AppState {
     }
 
     pub(super) fn change_server(&mut self) -> Vec<UiCommand> {
+        self.update.on_left_room();
         let was_in_room = matches!(self.screen, Screen::InRoom(_) | Screen::Connecting { .. });
         let leave_cue = self.self_left_cue();
         if let Screen::InRoom(room) = &self.screen {
@@ -341,6 +343,7 @@ impl AppState {
     }
 
     pub(super) fn on_invite_rejected(&mut self) {
+        self.update.on_left_room();
         self.picker.close();
         self.audio.open = false;
         self.audio.mic_level = None;

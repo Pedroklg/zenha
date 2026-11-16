@@ -17,12 +17,11 @@ use super::sidebar::{SidebarArgs, SidebarUser, sidebar};
 use crate::chat_images::ChatImages;
 use crate::icons;
 use crate::state::{
-    AdminDialog, ConnectionStatus, LobbyVoiceState, LocalShare, RoomState, UserAction,
-    participant_volume_for, room_display_title,
+    AdminDialog, ConnectionStatus, LobbyVoiceState, LocalShare, RoomState, UpdateBanner,
+    UserAction, participant_volume_for, room_display_title,
 };
 use crate::theme;
 use crate::ui_model::ParticipantView;
-use crate::update::AvailableUpdate;
 
 pub(super) const HEADER_HEIGHT: f32 = 64.0;
 const FOOTER_HEIGHT: f32 = 72.0;
@@ -43,7 +42,7 @@ pub fn show(
     stream_volume: u8,
     participant_volumes: &BTreeMap<String, u16>,
     ptt_hint: Option<&str>,
-    available_update: Option<&AvailableUpdate>,
+    update_banner: Option<&UpdateBanner>,
     is_admin: bool,
 ) -> Vec<UserAction> {
     let mut actions = Vec::new();
@@ -88,7 +87,7 @@ pub fn show(
             participant_volumes,
             rooms,
             server_host,
-            available_update,
+            update_banner,
             is_admin,
         },
         &mut actions,
@@ -147,7 +146,7 @@ pub fn show_lobby(
     server_host: &str,
     error: Option<&str>,
     notice: Option<&str>,
-    available_update: Option<&AvailableUpdate>,
+    update_banner: Option<&UpdateBanner>,
     is_admin: bool,
 ) -> Vec<UserAction> {
     let mut actions = Vec::new();
@@ -170,7 +169,7 @@ pub fn show_lobby(
             participant_volumes: &empty_volumes,
             rooms,
             server_host,
-            available_update,
+            update_banner,
             is_admin,
         },
         &mut actions,
@@ -653,6 +652,50 @@ pub fn admin_dialog(ctx: &egui::Context, dialog: &mut Option<AdminDialog>) -> Ve
 
     if modal.should_close() {
         actions.push(UserAction::CancelAdminDialog);
+    }
+    actions
+}
+
+pub fn update_confirm_dialog(ctx: &egui::Context, confirming: bool) -> Vec<UserAction> {
+    if !confirming {
+        return Vec::new();
+    }
+    let mut actions = Vec::new();
+    let frame = egui::Frame::window(&ctx.global_style())
+        .fill(theme::PANEL)
+        .stroke(Stroke::new(1.0, theme::BORDER))
+        .corner_radius(CornerRadius::same(10))
+        .inner_margin(Margin::same(18));
+
+    let modal = egui::Modal::new(egui::Id::unique("update_confirm_dialog"))
+        .backdrop_color(egui::Color32::from_black_alpha(180))
+        .frame(frame)
+        .show(ctx, |ui| {
+            ui.set_min_width(320.0);
+            ui.set_max_width(400.0);
+            ui.label(
+                RichText::new("Atualizar Zenha")
+                    .font(theme::display(18.0))
+                    .color(theme::TEXT),
+            );
+            ui.add_space(8.0);
+            ui.label(
+                RichText::new("Atualizar agora? Você vai sair da sala.")
+                    .color(theme::TEXT_SECONDARY),
+            );
+            ui.add_space(14.0);
+            ui.horizontal(|ui| {
+                if ui.add(theme::accent_button("Atualizar")).clicked() {
+                    actions.push(UserAction::ConfirmUpdate);
+                }
+                if ui.button("Cancelar").clicked() {
+                    actions.push(UserAction::CancelUpdateConfirm);
+                }
+            });
+        });
+
+    if modal.should_close() {
+        actions.push(UserAction::CancelUpdateConfirm);
     }
     actions
 }
