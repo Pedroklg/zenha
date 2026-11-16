@@ -900,4 +900,277 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn settings_window_opens_without_overlapping_widgets_at_1280x720() {
+        let settings = Settings {
+            client_id: demo::SELF_IDENTITY.to_owned(),
+            display_name: demo::SELF_NAME.to_owned(),
+            token_server_url: demo::DEMO_SERVER_URL.to_owned(),
+            noise_suppression: crate::settings::NoiseMode::Enhanced,
+            noise_gate_db: Some(-45),
+            ..Settings::default()
+        };
+        let mut harness = Harness::builder()
+            .with_size(egui::Vec2::new(1280.0, 720.0))
+            .with_accessibility_check(false)
+            .build_eframe(move |cc| {
+                App::new(
+                    &cc.egui_ctx,
+                    &settings,
+                    Some(demo::DEMO_PASSWORD.to_owned()),
+                    None,
+                    true,
+                    StartupLink::None,
+                    #[cfg(windows)]
+                    None,
+                )
+            });
+
+        harness.run_steps(2);
+        harness.get_by_label("Geral").click();
+        harness.run_steps(2);
+        harness
+            .state_mut()
+            .state
+            .apply_event(crate::ui_model::UiEvent::MicLevel {
+                level_db: -35,
+                gate_open: true,
+            });
+        harness.get_by_label("Configurações").click();
+        harness.run_steps(3);
+        assert!(harness.state().state.audio.open);
+
+        let audio_rect = harness.get_by_label("Áudio").rect();
+        let settings_node_rect = |label: &str| {
+            harness
+                .query_all_by_label(label)
+                .map(|node| node.rect())
+                .filter(|rect| rect.left() >= audio_rect.left() - 2.0)
+                .max_by(|a, b| a.top().total_cmp(&b.top()))
+                .unwrap_or_else(|| panic!("missing settings node {label:?}"))
+        };
+
+        let labels = [
+            "Áudio",
+            "Microfone",
+            "Saída de áudio",
+            "Atualizar lista",
+            "Modo de voz",
+            "Supressão de ruído",
+            "Porta de ruído (corta o som abaixo do limiar)",
+            "Sensibilidade",
+            "Nível do microfone",
+            "Atalhos globais",
+            "Ligar/desligar microfone",
+            "Ligar/desligar áudio",
+            "Geral",
+            "Servidor",
+            "Administração",
+        ];
+        let mut rects = Vec::with_capacity(labels.len());
+        for label in labels {
+            let rect = settings_node_rect(label);
+            assert!(
+                rect.height() < 36.0,
+                "label {label:?} wrapped unexpectedly: {rect:?}"
+            );
+            assert!(
+                rect.right() <= 1280.0 && rect.left() >= 0.0,
+                "label {label:?} out of bounds: {rect:?}"
+            );
+            rects.push((label, rect));
+        }
+        for section in [
+            "Áudio",
+            "Atalhos globais",
+            "Geral",
+            "Servidor",
+            "Administração",
+        ] {
+            let rect = settings_node_rect(section);
+            assert!(
+                (rect.left() - audio_rect.left()).abs() < 2.0,
+                "section {section:?} misaligned horizontally: {rect:?} vs {audio_rect:?}"
+            );
+        }
+        let threshold_db = settings_node_rect("-45 dB");
+        let level_db = settings_node_rect("-35 dB");
+        assert!(
+            (threshold_db.right() - level_db.right()).abs() < 2.0,
+            "dB values misaligned: {threshold_db:?} vs {level_db:?}"
+        );
+        for i in 0..rects.len() {
+            for j in (i + 1)..rects.len() {
+                let (la, ra) = rects[i];
+                let (lb, rb) = rects[j];
+                assert!(
+                    !ra.intersects(rb),
+                    "settings widgets overlap: {la:?} ({ra:?}) vs {lb:?} ({rb:?})"
+                );
+            }
+        }
+        for window in rects.windows(2) {
+            let (la, ra) = window[0];
+            let (lb, rb) = window[1];
+            assert!(
+                ra.bottom() <= rb.top(),
+                "expected {la:?} ({ra:?}) above {lb:?} ({rb:?})"
+            );
+        }
+    }
+
+    #[test]
+    fn pasted_image_card_allows_sending_with_enter_and_canceling_with_esc() {
+        let settings = Settings {
+            client_id: demo::SELF_IDENTITY.to_owned(),
+            display_name: demo::SELF_NAME.to_owned(),
+            token_server_url: demo::DEMO_SERVER_URL.to_owned(),
+            ..Settings::default()
+        };
+        let mut harness = Harness::builder()
+            .with_size(egui::Vec2::new(1280.0, 720.0))
+            .with_accessibility_check(false)
+            .build_eframe(move |cc| {
+                App::new(
+                    &cc.egui_ctx,
+                    &settings,
+                    Some(demo::DEMO_PASSWORD.to_owned()),
+                    None,
+                    true,
+                    StartupLink::None,
+                    #[cfg(windows)]
+                    None,
+                )
+            });
+
+        harness.run_steps(2);
+        harness.get_by_label("Geral").click();
+        harness.run_steps(2);
+
+        let dir = std::env::temp_dir().join(format!("zenha-kittest-paste-{}", std::process::id()));
+        let image = egui::ColorImage::new([2, 2], vec![egui::Color32::RED; 4]);
+        let saved = crate::clipboard_image::save_pasted_image(&image, &dir).unwrap();
+        let saved_path = saved.path.clone();
+        let saved_name = saved.name.clone();
+        let ctx = harness.ctx.clone();
+        harness.state_mut().dispatch(
+            &ctx,
+            vec![UserAction::StagePastedImage(
+                crate::state::PendingPastedImage {
+                    path: saved.path,
+                    name: saved.name,
+                    size: saved.size,
+                },
+            )],
+        );
+        harness.run_steps(2);
+
+        assert!(harness.query_by_label(saved_name.as_str()).is_some());
+        assert!(harness.query_by_label("Enviar").is_some());
+        assert!(harness.query_by_label("Cancelar").is_some());
+
+        harness.key_press(egui::Key::Escape);
+        harness.run_steps(2);
+        assert!(!harness.state().state.has_pending_paste());
+        assert!(harness.query_by_label("Enviar").is_none());
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while saved_path.exists() && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(
+            !saved_path.exists(),
+            "canceling pasted image should delete temporary PNG"
+        );
+
+        let saved_enter = crate::clipboard_image::save_pasted_image(&image, &dir).unwrap();
+        let saved_enter_path = saved_enter.path.clone();
+        harness.state_mut().dispatch(
+            &ctx,
+            vec![UserAction::StagePastedImage(
+                crate::state::PendingPastedImage {
+                    path: saved_enter.path,
+                    name: saved_enter.name,
+                    size: saved_enter.size,
+                },
+            )],
+        );
+        harness.run_steps(2);
+        assert!(harness.state().state.has_pending_paste());
+
+        if let Screen::InRoom(room) = &mut harness.state_mut().state.screen {
+            room.chat.draft = "legenda".to_owned();
+        }
+        harness.run_steps(1);
+        harness.key_press(egui::Key::Enter);
+        harness.run_steps(2);
+        assert!(harness.state().state.has_pending_paste());
+
+        if let Screen::InRoom(room) = &mut harness.state_mut().state.screen {
+            room.chat.draft.clear();
+        }
+        harness.run_steps(1);
+        harness.key_press(egui::Key::Enter);
+        harness.run_steps(2);
+        assert!(!harness.state().state.has_pending_paste());
+        assert!(saved_enter_path.exists());
+
+        let _ = std::fs::remove_file(saved_enter_path);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn local_share_preview_collapses_and_expands_in_room_ui() {
+        let settings = Settings {
+            client_id: demo::SELF_IDENTITY.to_owned(),
+            display_name: demo::SELF_NAME.to_owned(),
+            token_server_url: demo::DEMO_SERVER_URL.to_owned(),
+            ..Settings::default()
+        };
+        let mut harness = Harness::builder()
+            .with_size(egui::Vec2::new(1280.0, 720.0))
+            .with_accessibility_check(false)
+            .build_eframe(move |cc| {
+                App::new(
+                    &cc.egui_ctx,
+                    &settings,
+                    Some(demo::DEMO_PASSWORD.to_owned()),
+                    None,
+                    true,
+                    StartupLink::None,
+                    #[cfg(windows)]
+                    None,
+                )
+            });
+
+        harness.run_steps(2);
+        harness.get_by_label("Geral").click();
+        harness.run_steps(2);
+
+        let ctx = harness.ctx.clone();
+        harness
+            .state_mut()
+            .dispatch(&ctx, vec![UserAction::OpenSharePicker]);
+        harness.run_steps(2);
+        harness.get_by_label("Iniciar").click();
+        harness.run_steps(2);
+
+        assert!(harness.state().state.is_sharing_local());
+        assert!(!harness.state().state.is_share_preview_collapsed());
+        assert!(harness.query_by_label("Você está transmitindo").is_some());
+        assert!(harness.query_by_label("Recolher").is_some());
+
+        harness.get_by_label("Recolher").click();
+        harness.run_steps(2);
+        assert!(harness.state().state.is_share_preview_collapsed());
+        assert!(harness.query_by_label("Recolher").is_none());
+        assert!(harness.query_by_label("Você está transmitindo").is_some());
+        assert!(harness.query_by_label("Expandir").is_some());
+
+        harness.get_by_label("Expandir").click();
+        harness.run_steps(2);
+        assert!(!harness.state().state.is_share_preview_collapsed());
+        assert!(harness.query_by_label("Recolher").is_some());
+    }
 }
