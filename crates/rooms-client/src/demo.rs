@@ -26,6 +26,10 @@ const REPLIES: [&str; 4] = [
     "Já estou chegando.",
     "Tá ouvindo bem?",
 ];
+const DEMO_MIC_LEVELS: [i8; 30] = [
+    -63, -61, -59, -62, -60, -58, -61, -59, -56, -49, -38, -28, -22, -26, -31, -24, -21, -27, -34,
+    -25, -29, -37, -43, -48, -53, -57, -60, -62, -59, -61,
+];
 
 #[derive(Debug, Clone, Copy)]
 pub struct DemoDelays {
@@ -33,6 +37,7 @@ pub struct DemoDelays {
     pub late_participant: Duration,
     pub reply: Duration,
     pub remote_share: Duration,
+    pub mic_level: Duration,
 }
 
 impl Default for DemoDelays {
@@ -42,6 +47,7 @@ impl Default for DemoDelays {
             late_participant: Duration::from_secs(4),
             reply: Duration::from_millis(1200),
             remote_share: Duration::from_secs(2),
+            mic_level: Duration::from_millis(100),
         }
     }
 }
@@ -54,8 +60,20 @@ impl DemoDelays {
             late_participant: Duration::ZERO,
             reply: Duration::ZERO,
             remote_share: Duration::ZERO,
+            mic_level: Duration::ZERO,
         }
     }
+}
+
+struct DemoMicMeter {
+    next_due: Instant,
+    step: u64,
+}
+
+fn demo_mic_reading(step: u64, noise_gate: Option<i8>) -> (i8, bool) {
+    let level_db = DEMO_MIC_LEVELS[(step as usize) % DEMO_MIC_LEVELS.len()];
+    let gate_open = noise_gate.is_none_or(|threshold| level_db >= threshold);
+    (level_db, gate_open)
 }
 
 struct Scheduled {
@@ -82,6 +100,8 @@ pub struct DemoSession {
     admin_active: bool,
     participants: Vec<ParticipantView>,
     muted: bool,
+    noise_gate: Option<i8>,
+    mic_meter: Option<DemoMicMeter>,
     chat_counter: u64,
     file_counter: u64,
     input: Option<String>,
@@ -159,6 +179,8 @@ impl DemoSession {
             admin_active: false,
             participants: Vec::new(),
             muted: false,
+            noise_gate: None,
+            mic_meter: None,
             chat_counter: 0,
             file_counter: 0,
             input: None,
@@ -212,6 +234,7 @@ impl DemoSession {
             UiCommand::Leave => {
                 self.scheduled.clear();
                 self.room = None;
+                self.mic_meter = None;
                 self.participants.clear();
                 self.reset_share();
                 self.schedule(Duration::ZERO, UiEvent::Left);
@@ -228,10 +251,12 @@ impl DemoSession {
                 self.input = id;
                 self.publish_audio_devices();
             }
+            UiCommand::SetNoiseGate(threshold) => {
+                self.noise_gate = threshold;
+            }
             UiCommand::SetNoiseSuppression(_)
             | UiCommand::SetStreamVolume(_)
             | UiCommand::SetParticipantVolume { .. }
-            | UiCommand::SetNoiseGate(_)
             | UiCommand::PlayCue(_) => {}
             UiCommand::SetOutputDevice(id) => {
                 self.output = id;
@@ -398,6 +423,7 @@ impl DemoSession {
                 }
                 if self.room.as_deref() == Some(id.as_str()) {
                     self.room = None;
+                    self.mic_meter = None;
                     self.participants.clear();
                     self.share_preview = None;
                     self.watch = None;
@@ -552,6 +578,7 @@ impl DemoSession {
         self.file_counter = 0;
         if room == FAILING_ROOM {
             self.room = None;
+            self.mic_meter = None;
             self.schedule(Duration::ZERO, UiEvent::Connecting);
             self.schedule(
                 self.delays.join,
@@ -567,6 +594,10 @@ impl DemoSession {
         let bruno = Self::participant("demo-bruno", "Bruno");
         self.participants = vec![me.clone(), ana.clone()];
         self.room = Some(room.clone());
+        self.mic_meter = (!self.delays.mic_level.is_zero()).then(|| DemoMicMeter {
+            next_due: Instant::now() + self.delays.join,
+            step: 0,
+        });
 
         let join = self.delays.join;
         let late = join + self.delays.late_participant;
@@ -840,14 +871,30 @@ impl SessionPort for DemoSession {
             self.handle(command);
         }
         let now = Instant::now();
-        let index = self
+        if let Some(index) = self
             .scheduled
             .iter()
             .enumerate()
             .filter(|(_, s)| s.due <= now)
             .min_by_key(|(_, s)| (s.due, s.seq))
-            .map(|(index, _)| index)?;
-        Some(self.scheduled.swap_remove(index).event)
+            .map(|(index, _)| index)
+        {
+            return Some(self.scheduled.swap_remove(index).event);
+        }
+        if self.room.is_some()
+            && !self.delays.mic_level.is_zero()
+            && let Some(meter) = &mut self.mic_meter
+            && now >= meter.next_due
+        {
+            let (level_db, gate_open) = demo_mic_reading(meter.step, self.noise_gate);
+            meter.step = meter.step.wrapping_add(1);
+            meter.next_due = now + self.delays.mic_level;
+            return Some(UiEvent::MicLevel {
+                level_db,
+                gate_open,
+            });
+        }
+        None
     }
 }
 
@@ -1233,5 +1280,62 @@ mod tests {
             drain(&mut session),
             vec![UiEvent::AdminChanged { active: false }]
         );
+    }
+
+    #[test]
+    fn demo_mic_reading_varies_and_toggles_gate_with_threshold() {
+        let off: Vec<_> = (0..DEMO_MIC_LEVELS.len() as u64)
+            .map(|step| demo_mic_reading(step, None))
+            .collect();
+        assert!(off.iter().all(|(_, open)| *open));
+        let min = off.iter().map(|(db, _)| *db).min().unwrap();
+        let max = off.iter().map(|(db, _)| *db).max().unwrap();
+        assert!(min < -45 && max > -45);
+
+        let gated: Vec<_> = (0..DEMO_MIC_LEVELS.len() as u64)
+            .map(|step| demo_mic_reading(step, Some(-45)))
+            .collect();
+        assert!(gated.iter().any(|(_, open)| !*open));
+        assert!(gated.iter().any(|(_, open)| *open));
+    }
+
+    #[test]
+    fn demo_session_emits_mic_levels_while_in_room_and_stops_on_leave() {
+        let mut session = DemoSession::with_delays(DemoDelays {
+            mic_level: Duration::from_millis(1),
+            ..DemoDelays::instant()
+        });
+        session.send(UiCommand::SetNoiseGate(Some(-45)));
+        session.send(UiCommand::Join {
+            room: "geral".to_owned(),
+        });
+        let initial = drain(&mut session);
+        assert!(initial.iter().any(|e| matches!(e, UiEvent::Joined { .. })));
+
+        let mut levels = Vec::new();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while levels.len() < 3 && Instant::now() < deadline {
+            for event in drain(&mut session) {
+                if let UiEvent::MicLevel {
+                    level_db,
+                    gate_open,
+                } = event
+                {
+                    levels.push((level_db, gate_open));
+                }
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert!(levels.len() >= 3);
+        assert!(levels.iter().all(|(db, open)| *open == (*db >= -45)));
+
+        session.send(UiCommand::Leave);
+        assert!(
+            drain(&mut session)
+                .iter()
+                .any(|e| matches!(e, UiEvent::Left))
+        );
+        std::thread::sleep(Duration::from_millis(5));
+        assert!(drain(&mut session).is_empty());
     }
 }

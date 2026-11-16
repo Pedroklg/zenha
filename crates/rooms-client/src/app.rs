@@ -731,6 +731,10 @@ impl eframe::App for App {
             ..
         } = &mut self.state;
         let can_admin = !matches!(screen, Screen::Onboarding);
+        let (in_room, mic_muted) = match &*screen {
+            Screen::InRoom(room) => (true, room.muted),
+            _ => (false, lobby_voice.muted),
+        };
         let is_admin = admin.active;
         let renderer = &mut self.renderer;
         let preview_renderer = &mut self.preview_renderer;
@@ -773,6 +777,8 @@ impl eframe::App for App {
                 name_draft,
                 name_error,
                 can_save_name,
+                in_room,
+                mic_muted,
                 audio,
                 hotkeys,
                 close_to_tray: *close_to_tray,
