@@ -15,7 +15,7 @@ use crate::config::Config;
 use crate::directory::FakeDirectory;
 
 use super::rooms::INVITE_HEADER;
-use super::{AdminLoginLimiter, AppState, ChatRateLimiter, router};
+use super::{AdminLoginLimiter, AppState, AvatarRateLimiter, ChatRateLimiter, router};
 
 pub(super) const INVITE: &str = "s3cret-invite";
 pub(super) const ADMIN_PASSWORD: &str = "admin-pass-1234";
@@ -76,6 +76,7 @@ pub(super) fn state_with(
         moderator: directory,
         chat,
         chat_limiter: Arc::new(ChatRateLimiter::default()),
+        avatar_limiter: Arc::new(AvatarRateLimiter::default()),
         admin_login_limiter: Arc::new(AdminLoginLimiter::default()),
         admin_failure_delay,
     }

@@ -1,6 +1,7 @@
 //! Roteador HTTP, autenticação de convite/JWT, erros de API e estado compartilhado.
 
 mod admin;
+mod avatar;
 mod chat;
 mod rate_limit;
 mod rooms;
@@ -14,11 +15,12 @@ use std::time::Duration;
 use argon2::{Argon2, PasswordHash, PasswordVerifier};
 use axum::Json;
 use axum::Router;
+use axum::extract::DefaultBodyLimit;
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{delete, get, patch, post};
+use axum::routing::{delete, get, patch, post, put};
 use livekit_api::access_token::{Claims, TokenVerifier};
-use rooms_protocol::{ErrorResponse, validate_room_name};
+use rooms_protocol::{ErrorResponse, MAX_AVATAR_UPLOAD_BYTES, validate_room_name};
 use subtle::ConstantTimeEq;
 
 use crate::chat_store::ChatStore;
@@ -26,7 +28,9 @@ use crate::config::Config;
 use crate::directory::{RoomDirectory, RoomModerator};
 
 pub use self::admin::DEFAULT_ADMIN_FAILURE_DELAY;
-pub use self::rate_limit::{AdminLoginLimiter, ChatRateLimiter};
+#[cfg(test)]
+use self::rate_limit::AVATAR_RATE_LIMIT;
+pub use self::rate_limit::{AdminLoginLimiter, AvatarRateLimiter, ChatRateLimiter};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -35,6 +39,7 @@ pub struct AppState {
     pub moderator: Arc<dyn RoomModerator>,
     pub chat: Option<Arc<ChatStore>>,
     pub chat_limiter: Arc<ChatRateLimiter>,
+    pub avatar_limiter: Arc<AvatarRateLimiter>,
     pub admin_login_limiter: Arc<AdminLoginLimiter>,
     pub admin_failure_delay: Duration,
 }
@@ -44,6 +49,13 @@ pub fn router(state: AppState) -> Router {
         .route("/health", get(health))
         .route("/token", post(token::issue_token))
         .route("/rooms", get(rooms::list_rooms))
+        .route(
+            "/avatar",
+            put(avatar::put_avatar)
+                .delete(avatar::delete_avatar)
+                .layer(DefaultBodyLimit::max(MAX_AVATAR_UPLOAD_BYTES)),
+        )
+        .route("/avatar/{identity}", get(avatar::get_avatar))
         .route(
             "/rooms/{room}/chat",
             get(chat::list_chat).post(chat::post_chat),
@@ -103,16 +115,22 @@ enum ApiError {
     TargetNotFound,
     #[error("message not found")]
     MessageNotFound,
+    #[error("avatar not found")]
+    AvatarNotFound,
     #[error("message id already exists")]
     MessageConflict,
     #[error("maximum room limit reached")]
     RoomLimitReached,
     #[error("cannot delete the last room")]
     CannotDeleteLastRoom,
+    #[error("image exceeds upload limit")]
+    PayloadTooLarge,
     #[error("rate limit exceeded")]
     RateLimited,
     #[error("{0}")]
     Invalid(&'static str),
+    #[error("{0}")]
+    InvalidAvatar(String),
     #[error("could not issue token")]
     TokenFailure,
     #[error("room directory unavailable")]
@@ -128,7 +146,9 @@ enum ApiError {
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let status = match self {
-            Self::MalformedBody | Self::Invalid(_) => StatusCode::BAD_REQUEST,
+            Self::MalformedBody | Self::Invalid(_) | Self::InvalidAvatar(_) => {
+                StatusCode::BAD_REQUEST
+            }
             Self::Unauthorized | Self::InvalidAdminPassword | Self::InvalidToken => {
                 StatusCode::UNAUTHORIZED
             }
@@ -138,10 +158,12 @@ impl IntoResponse for ApiError {
             Self::AdminNotConfigured
             | Self::RoomNotFound
             | Self::TargetNotFound
-            | Self::MessageNotFound => StatusCode::NOT_FOUND,
+            | Self::MessageNotFound
+            | Self::AvatarNotFound => StatusCode::NOT_FOUND,
             Self::MessageConflict | Self::RoomLimitReached | Self::CannotDeleteLastRoom => {
                 StatusCode::CONFLICT
             }
+            Self::PayloadTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
             Self::RateLimited => StatusCode::TOO_MANY_REQUESTS,
             Self::TokenFailure | Self::ChatStoreFailure => StatusCode::INTERNAL_SERVER_ERROR,
             Self::DirectoryFailure | Self::ModerationFailure => StatusCode::BAD_GATEWAY,

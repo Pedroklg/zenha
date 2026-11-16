@@ -1,3 +1,4 @@
+mod avatar;
 mod chat_store;
 mod config;
 mod directory;
@@ -14,7 +15,8 @@ use crate::chat_store::ChatStore;
 use crate::config::Config;
 use crate::directory::LiveKitDirectory;
 use crate::routes::{
-    AdminLoginLimiter, AppState, ChatRateLimiter, DEFAULT_ADMIN_FAILURE_DELAY, router,
+    AdminLoginLimiter, AppState, AvatarRateLimiter, ChatRateLimiter, DEFAULT_ADMIN_FAILURE_DELAY,
+    router,
 };
 
 #[tokio::main]
@@ -77,6 +79,7 @@ async fn main() -> anyhow::Result<()> {
         moderator: directory,
         chat,
         chat_limiter: Arc::new(ChatRateLimiter::default()),
+        avatar_limiter: Arc::new(AvatarRateLimiter::default()),
         admin_login_limiter: Arc::new(AdminLoginLimiter::default()),
         admin_failure_delay: DEFAULT_ADMIN_FAILURE_DELAY,
         config: Arc::new(config),
