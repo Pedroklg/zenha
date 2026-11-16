@@ -4,7 +4,13 @@ Zenha is a Windows desktop app for voice rooms, text chat, file sharing and scre
 
 > The public docs are in English. The app UI is in Brazilian Portuguese.
 
-<!-- screenshot -->
+![A voice room with the participant cards and the room chat](docs/images/room.png)
+
+| Watching a screen share | Settings |
+| --- | --- |
+| ![Watching a screen share with the stream volume slider](docs/images/screen-share.png) | ![Audio devices, voice mode, noise suppression and global hotkeys](docs/images/settings.png) |
+
+<sub>Screenshots from `zenha --demo`.</sub>
 
 ## Features
 
