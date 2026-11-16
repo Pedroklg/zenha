@@ -11,6 +11,7 @@ use livekit::webrtc::desktop_capturer::{
     CaptureError, DesktopCaptureSourceType, DesktopCapturer, DesktopCapturerOptions, DesktopFrame,
 };
 use livekit::webrtc::native::yuv_helper;
+use livekit::webrtc::rtp_sender::VideoEncoderBackend;
 use livekit::webrtc::video_frame::{
     I420Buffer, VideoBufferType, VideoFormatType, VideoFrame as RtcFrame, VideoRotation,
 };
@@ -29,6 +30,7 @@ use crate::backend_support::{CaptureHealth, ShareMeter, parse_target_id, target_
 use crate::capture::{
     BgraFrame, CaptureEnd, FrameSink, FrameSource, Pacer, bgra_to_rgba_scaled, bgra_to_video_frame,
 };
+use crate::gpu_share;
 use crate::video::{
     CaptureKind, CaptureTarget, FrameSlot, PreviewGate, SHARE_PREVIEW_INTERVAL,
     SHARE_PREVIEW_MAX_SIDE, SharePreset, VideoFrame, fit_within,
@@ -485,6 +487,28 @@ pub(crate) async fn publish_share(
     preview: FrameSlot,
     ui_visible: Arc<std::sync::atomic::AtomicBool>,
 ) -> Result<LocalShare, SessionError> {
+    if gpu_share::enabled()
+        && let Some(gpu_target) = parse_target_id(&target.id)
+            .and_then(|(kind, source_id)| gpu_share::GpuTarget::new(kind, source_id))
+    {
+        let output = gpu_share::ShareOutput {
+            source: Arc::new(OnceLock::new()),
+            preview: preview.clone(),
+            ui_visible: Arc::clone(&ui_visible),
+            on_end: Box::new({
+                let events = events.clone();
+                move |reason| {
+                    let _ = events.send(BackendEvent::ScreenShareEnded { reason });
+                }
+            }),
+        };
+        match publish_gpu_share(room.clone(), target, preset, gpu_target, output).await {
+            Ok(share) => return Ok(share),
+            Err(err) => {
+                tracing::warn!(%err, "gpu screen share unavailable, using the default path")
+            }
+        }
+    }
     let video_source = Arc::new(OnceLock::new());
     let (size_tx, size_rx) = oneshot::channel();
     let sink = PublishSink {
@@ -558,6 +582,88 @@ pub(crate) async fn publish_share(
         max_bitrate_bps = preset.max_bitrate_bps(),
         codec = publication.publish_options().video_codec.as_str(),
         "screen share started"
+    );
+    Ok(LocalShare {
+        room,
+        sid: Arc::new(std::sync::Mutex::new(publication.sid())),
+        capture,
+    })
+}
+
+async fn publish_gpu_share(
+    room: Arc<Room>,
+    target: &CaptureTarget,
+    preset: SharePreset,
+    gpu_target: gpu_share::GpuTarget,
+    output: gpu_share::ShareOutput,
+) -> Result<LocalShare, SessionError> {
+    let slot = Arc::clone(&output.source);
+    let (size_tx, size_rx) = oneshot::channel();
+    let config = gpu_share::GpuShareConfig {
+        target: gpu_target,
+        max_size: (preset.max_width(), preset.max_height()),
+        fps: preset.fps(),
+        bitrate_bps: preset.max_bitrate_bps(),
+    };
+    let share = gpu_share::GpuShare::start(config, output, size_tx)?;
+    let capture: Box<dyn FrameSource> = Box::new(share);
+    let (width, height) = match timeout(FIRST_FRAME_TIMEOUT, size_rx).await {
+        Ok(Ok(Ok(size))) => size,
+        Ok(Ok(Err(err))) => {
+            stop_capture(capture).await;
+            return Err(SessionError::Video(err));
+        }
+        _ => {
+            stop_capture(capture).await;
+            return Err(SessionError::Video(
+                "the GPU share did not start in time".to_owned(),
+            ));
+        }
+    };
+    let native = NativeVideoSource::new_encoded(VideoResolution { width, height });
+    let _ = slot.set(native.clone());
+    let track =
+        LocalVideoTrack::create_video_track(SHARE_TRACK_NAME, RtcVideoSource::Native(native));
+    let options = TrackPublishOptions {
+        source: TrackSource::Screenshare,
+        video_codec: VideoCodec::H264,
+        video_encoding: Some(VideoEncoding {
+            max_bitrate: preset.max_bitrate_bps(),
+            max_framerate: f64::from(preset.fps()),
+        }),
+        simulcast: false,
+        video_encoder: VideoEncoderBackend::PreEncoded,
+        ..Default::default()
+    };
+    let published = timeout(
+        PUBLISH_TIMEOUT,
+        room.local_participant()
+            .publish_track(LocalTrack::Video(track), options),
+    )
+    .await;
+    let publication = match published {
+        Ok(Ok(publication)) => publication,
+        Ok(Err(err)) => {
+            stop_capture(capture).await;
+            return Err(SessionError::Video(format!(
+                "could not publish the GPU screen share: {err}"
+            )));
+        }
+        Err(_) => {
+            stop_capture(capture).await;
+            return Err(SessionError::Video(
+                "publishing the GPU screen share timed out".to_owned(),
+            ));
+        }
+    };
+    tracing::info!(
+        target_name = %target.name,
+        published_width = width,
+        published_height = height,
+        fps = preset.fps(),
+        max_bitrate_bps = preset.max_bitrate_bps(),
+        codec = publication.publish_options().video_codec.as_str(),
+        "gpu screen share started"
     );
     Ok(LocalShare {
         room,

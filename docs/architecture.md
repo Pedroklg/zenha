@@ -83,9 +83,9 @@ Game audio for a share comes from a per-process or system WASAPI loopback and is
 
 ## Video
 
-1. A `FrameSource` captures a monitor or window.
-2. `rooms-core` converts the frame to I420 and pushes it to the track; the SDK encodes it.
-3. LiveKit forwards it only to participants watching that share.
+1. On Windows the share stays on the GPU (`gpu_share`): Windows Graphics Capture grabs the monitor or window, the D3D11 video processor scales it and converts it to NV12, and a Media Foundation hardware H.264 encoder (AMD, NVIDIA or Intel) produces the stream, published as pre-encoded video. A small BGRA copy feeds the sharer's preview. A window resize rebuilds the pipeline on the same device.
+2. If the GPU path fails to start, or `ZENHA_GPU_SHARE=0` is set, a `FrameSource` captures on the CPU, `rooms-core` converts the frame to I420 and the SDK encodes it with VP9.
+3. LiveKit forwards the track only to participants watching that share.
 4. The receiver keeps only the latest frame (`FrameSlot`) and the UI uploads it to an `egui` texture.
 
 ## Client threads
@@ -94,7 +94,7 @@ Game audio for a share comes from a per-process or system WASAPI loopback and is
 | --- | --- | --- |
 | UI | Draws frames and reads pending events every frame | Never blocks or does I/O |
 | Tokio runtime | Session, networking, chat, file transfers | Talks to the UI only through channels |
-| Capture | Produces video frames | Drops late frames |
+| Capture | Produces video frames (GPU share: captures, converts and encodes) | Drops late frames |
 | WASAPI capture | Microphone (Enhanced/Maximum) and share audio | Fixed 10 ms frames |
 | SDK audio | Microphone and playout in the default modes | Managed by `libwebrtc` |
 
