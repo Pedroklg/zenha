@@ -371,8 +371,8 @@ fn file_entry(
                     match thumb {
                         ThumbState::Ready(texture) => {
                             let size = texture.size_vec2();
-                            let (width, height) =
-                                fit_within(size.x, size.y, THUMB_MAX.0, THUMB_MAX.1);
+                            let max_w = THUMB_MAX.0.min(ui.available_width());
+                            let (width, height) = fit_within(size.x, size.y, max_w, THUMB_MAX.1);
                             let response = ui
                                 .add(
                                     egui::Image::new(&texture)
@@ -394,8 +394,18 @@ fn file_entry(
                         }
                     }
                     ui.add_space(4.0);
-                    ui.horizontal(|ui| {
-                        ui.weak(format!("{} · {}", file.name, format_size(file.size)));
+                    ui.horizontal_wrapped(|ui| {
+                        ui.add(
+                            egui::Label::new(
+                                RichText::new(format!(
+                                    "{} · {}",
+                                    file.name,
+                                    format_size(file.size)
+                                ))
+                                .color(ui.visuals().weak_text_color()),
+                            )
+                            .truncate(),
+                        );
                         if file.outgoing {
                             ui.weak("· enviado");
                         } else if ui.small_button("Salvar").clicked() {
