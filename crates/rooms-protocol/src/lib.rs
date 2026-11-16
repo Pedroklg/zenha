@@ -24,7 +24,7 @@ pub const ADMIN_MOVE_TOPIC: &str = "admin.move";
 pub const ADMIN_CHAT_DELETE_TOPIC: &str = "admin.chat_delete";
 pub const ROOMS_CHANGED_TOPIC: &str = "rooms.changed";
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TokenRequest {
     pub client_id: String,
     pub display_name: String,
@@ -32,10 +32,30 @@ pub struct TokenRequest {
     pub invite_code: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+impl fmt::Debug for TokenRequest {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TokenRequest")
+            .field("client_id", &self.client_id)
+            .field("display_name", &self.display_name)
+            .field("room", &self.room)
+            .field("invite_code", &"<redacted>")
+            .finish()
+    }
+}
+
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TokenResponse {
     pub token: String,
     pub livekit_url: String,
+}
+
+impl fmt::Debug for TokenResponse {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TokenResponse")
+            .field("token", &"<redacted>")
+            .field("livekit_url", &self.livekit_url)
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -621,5 +641,28 @@ mod tests {
             validate_invite_code("convite\n123"),
             Err(InviteCodeError::InvalidCharacter)
         );
+    }
+
+    #[test]
+    fn token_types_debug_redacts_secrets() {
+        let req = TokenRequest {
+            client_id: "c1".to_owned(),
+            display_name: "Ana".to_owned(),
+            room: "geral".to_owned(),
+            invite_code: "secret-invite-123".to_owned(),
+        };
+        let req_dbg = format!("{req:?}");
+        assert!(!req_dbg.contains("secret-invite-123"));
+        assert!(req_dbg.contains("Ana"));
+        assert!(req_dbg.contains("<redacted>"));
+
+        let resp = TokenResponse {
+            token: "jwt-secret-token-xyz".to_owned(),
+            livekit_url: "wss://lk.example".to_owned(),
+        };
+        let resp_dbg = format!("{resp:?}");
+        assert!(!resp_dbg.contains("jwt-secret-token-xyz"));
+        assert!(resp_dbg.contains("wss://lk.example"));
+        assert!(resp_dbg.contains("<redacted>"));
     }
 }

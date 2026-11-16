@@ -340,6 +340,17 @@ pub struct Credentials {
     pub invite_code: String,
 }
 
+impl fmt::Debug for Credentials {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Credentials")
+            .field("token_server_url", &self.token_server_url)
+            .field("client_id", &self.client_id)
+            .field("display_name", &self.display_name)
+            .field("invite_code", &"<redacted>")
+            .finish()
+    }
+}
+
 pub trait SessionPort {
     fn configure(&mut self, _credentials: Credentials) {}
 
@@ -362,5 +373,16 @@ mod tests {
             new_code: "new-secret-invite-123".to_owned(),
         });
         assert!(!format!("{invite:?}").contains("new-secret-invite-123"));
+
+        let creds = Credentials {
+            token_server_url: "https://voz.exemplo".to_owned(),
+            client_id: "c1".to_owned(),
+            display_name: "Ana".to_owned(),
+            invite_code: "invite-secret-456".to_owned(),
+        };
+        let creds_dbg = format!("{creds:?}");
+        assert!(!creds_dbg.contains("invite-secret-456"));
+        assert!(creds_dbg.contains("https://voz.exemplo"));
+        assert!(creds_dbg.contains("<redacted>"));
     }
 }

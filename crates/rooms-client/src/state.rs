@@ -27,11 +27,21 @@ pub const MISSING_DEVICE_LABEL: &str = "(indisponível)";
 pub const LOADING_DEVICE_LABEL: &str = "Carregando...";
 pub const CHAT_COUNTER_THRESHOLD: usize = MAX_CHAT_MESSAGE_LEN * 8 / 10;
 
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Clone, PartialEq, Eq, Default)]
 pub struct LoginForm {
     pub display_name: String,
     pub server_url: String,
     pub invite_code: String,
+}
+
+impl fmt::Debug for LoginForm {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("LoginForm")
+            .field("display_name", &self.display_name)
+            .field("server_url", &self.server_url)
+            .field("invite_code", &"<redacted>")
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -931,7 +941,7 @@ pub enum Screen {
     InRoom(Box<RoomState>),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Clone, PartialEq, Eq, Default)]
 pub struct OnboardingState {
     pub link_open: bool,
     pub link_input: String,
@@ -940,10 +950,35 @@ pub struct OnboardingState {
     link_pasted_server: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+impl fmt::Debug for OnboardingState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("OnboardingState")
+            .field("link_open", &self.link_open)
+            .field("link_input", &"<redacted>")
+            .field("link_error", &self.link_error)
+            .field("password_rejected", &self.password_rejected)
+            .field("link_pasted_server", &self.link_pasted_server)
+            .finish()
+    }
+}
+
+#[derive(Clone, PartialEq, Eq)]
 pub enum CredentialOp {
     Store { server: String, password: String },
     Forget { server: String },
+}
+
+impl fmt::Debug for CredentialOp {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Store { server, .. } => f
+                .debug_struct("Store")
+                .field("server", server)
+                .field("password", &"<redacted>")
+                .finish(),
+            Self::Forget { server } => f.debug_struct("Forget").field("server", server).finish(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1116,7 +1151,6 @@ impl fmt::Debug for AdminState {
     }
 }
 
-#[derive(Debug)]
 pub struct AppState {
     pub screen: Screen,
     pub form: LoginForm,
@@ -5519,7 +5553,7 @@ mod tests {
         state.admin.password_input = "super-secret-admin".to_owned();
         state.admin.new_invite_input = "secret-invite-1234".to_owned();
 
-        let debug_text = format!("{state:?}");
+        let debug_text = format!("{:?}", state.admin);
         assert!(!debug_text.contains("super-secret-admin"));
         assert!(!debug_text.contains("secret-invite-1234"));
 
@@ -5948,5 +5982,37 @@ mod tests {
         });
         assert!(matches!(state.screen, Screen::Lobby));
         assert_eq!(state.lobby_notice.as_deref(), Some("A sala foi apagada"));
+    }
+
+    #[test]
+    fn state_types_debug_redacts_secrets() {
+        let form = LoginForm {
+            display_name: "Ana".to_owned(),
+            server_url: "https://voz.exemplo".to_owned(),
+            invite_code: "form-secret-code".to_owned(),
+        };
+        let form_dbg = format!("{form:?}");
+        assert!(!form_dbg.contains("form-secret-code"));
+        assert!(form_dbg.contains("Ana"));
+        assert!(form_dbg.contains("<redacted>"));
+
+        let onboarding = OnboardingState {
+            link_open: true,
+            link_input: "zenha://entrar?servidor=https://voz.exemplo&senha=link-secret-password"
+                .to_owned(),
+            ..OnboardingState::default()
+        };
+        let onboarding_dbg = format!("{onboarding:?}");
+        assert!(!onboarding_dbg.contains("link-secret-password"));
+        assert!(onboarding_dbg.contains("<redacted>"));
+
+        let op = CredentialOp::Store {
+            server: "https://voz.exemplo".to_owned(),
+            password: "store-secret-password".to_owned(),
+        };
+        let op_dbg = format!("{op:?}");
+        assert!(!op_dbg.contains("store-secret-password"));
+        assert!(op_dbg.contains("https://voz.exemplo"));
+        assert!(op_dbg.contains("<redacted>"));
     }
 }
