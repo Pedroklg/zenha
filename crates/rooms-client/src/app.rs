@@ -787,6 +787,19 @@ mod tests {
                 &harness.state().state.screen,
                 Screen::InRoom(room) if room.room == "geral" && room.chat.open
             ));
+            let sidebar_y = |name: &str| {
+                harness
+                    .query_all_by_label(name)
+                    .map(|node| node.rect())
+                    .min_by(|a, b| a.left().total_cmp(&b.left()))
+                    .map(|rect| rect.center().y)
+            };
+            if let (Some(room), Some(ana)) = (sidebar_y("Geral"), sidebar_y("Ana")) {
+                assert!(
+                    ana - room < 80.0,
+                    "sidebar room at {room}, occupant at {ana}"
+                );
+            }
 
             harness.get_by_label("Configurações").click();
             harness.run_steps(2);
