@@ -9,16 +9,16 @@ Complementa [general.md](general.md). Escopo: `crates/rooms-client/`.
 
 ## UI-02: A thread da UI (`fn ui`) nunca bloqueia nem faz I/O
 
-- Dentro de `App::ui` e de qualquer função em `views/*.rs` ou `state.rs` chamada no ciclo de quadro:
+- Dentro de `App::ui` e de qualquer função em `views/*.rs` ou `state/` chamada no ciclo de quadro:
   - proibido fazer chamadas HTTP (`reqwest`), abrir/salvar arquivos pesados, consultar o Windows Credential Manager (`keyring`) de forma síncrona ou esperar locks disputados;
   - leituras de canais (`session.try_recv()`, `save_results.try_recv()`, `update_rx`, `forwarded_links`, `global_keys.events()`, `tray.actions()`) usam sempre `try_recv()`, nunca `recv()` bloqueante;
   - operações lentas do SO (`keyring`, diálogo `rfd`, checagem de atualização e cópia/download de arquivos) rodam em thread separada devolvendo o resultado via `mpsc` + `ctx.request_repaint()`.
 
-## UI-03: Estado de tela em `enum Screen` e transições concentradas em `state.rs`
+## UI-03: Estado de tela em `enum Screen` e transições concentradas em `state/`
 
-- A tela ativa fica em `enum Screen` (`state.rs`).
+- A tela ativa fica em `enum Screen` (`state/mod.rs`).
 - As views em `crates/rooms-client/src/views/` apenas desenham o estado e emitem `UserAction`, sem mutar estado de sessão nem enviar `UiCommand` diretamente por fora de `AppState`.
-- Transições de tela, reação a `UiEvent` e geração de efeitos (`UiCommand`, `CredentialOp`, persistência de `Settings`) ficam em `state.rs` (testável sem abrir janela `eframe`).
+- Transições de tela, reação a `UiEvent` e geração de efeitos (`UiCommand`, `CredentialOp`, persistência de `Settings`) ficam em `state/` (testável sem abrir janela `eframe`).
 
 ## UI-04: Convenção do `eframe` 0.37 (`fn ui` com `&mut egui::Ui`)
 

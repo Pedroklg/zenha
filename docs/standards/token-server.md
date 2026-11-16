@@ -5,7 +5,7 @@ Complementa [general.md](general.md) e [protocol.md](protocol.md). Escopo: `crat
 ## SRV-01: Segredos nunca aparecem em logs nem em respostas HTTP
 
 - `Config` implementa `fmt::Debug` manualmente (`crates/rooms-token-server/src/config.rs`), omitindo `invite_code`, `invite_code_hash`, `admin_code`, `admin_code_hash`, `livekit_api_key` e `livekit_api_secret`.
-- `ApiError` (`crates/rooms-token-server/src/routes.rs`) retorna apenas mensagens fixas e controladas; erros internos do Argon2, LiveKit ou SQLite ficam só no log (`tracing::error!` / `tracing::warn!`) sem credenciais nem payloads sensíveis.
+- `ApiError` (`crates/rooms-token-server/src/routes/mod.rs`) retorna apenas mensagens fixas e controladas; erros internos do Argon2, LiveKit ou SQLite ficam só no log (`tracing::error!` / `tracing::warn!`) sem credenciais nem payloads sensíveis.
 
 ## SRV-02: Verificação de código de convite/admin com Argon2 ou tempo constante
 
@@ -19,7 +19,7 @@ Complementa [general.md](general.md) e [protocol.md](protocol.md). Escopo: `crat
 
 ## SRV-04: Rotas de chat autenticadas pelo Bearer JWT; autor vem do token, nunca do body
 
-- Rotas em `/rooms/{room}/chat` autenticam via `authenticate_room` (`routes.rs`): exigem `Authorization: Bearer <token>`, validam assinatura/expiração, conferem `claims.video.room_join` e `claims.video.room == room` (`403 Forbidden` se divergir) e extraem `sender_id` (`claims.sub`) e `sender_name` (`claims.name`) do token — nunca do body.
+- Rotas em `/rooms/{room}/chat` autenticam via `authenticate_room` (`routes/mod.rs`): exigem `Authorization: Bearer <token>`, validam assinatura/expiração, conferem `claims.video.room_join` e `claims.video.room == room` (`403 Forbidden` se divergir) e extraem `sender_id` (`claims.sub`) e `sender_name` (`claims.name`) do token — nunca do body.
 - Na exclusão (`DELETE`), `chat_store.rs` exige `sender_id` coincidente com o dono da mensagem antes de apagar (`403`).
 
 ## SRV-05: Acesso ao SQLite via `spawn_blocking`, queries parametrizadas e `Immediate`
@@ -31,7 +31,7 @@ Complementa [general.md](general.md) e [protocol.md](protocol.md). Escopo: `crat
 
 ## SRV-06: Rate limiting com limite de memória
 
-- `ChatRateLimiter` (`routes.rs`) limita mensagens por janela e poda entradas expiradas ao atingir o limite de entradas em memória, evitando crescimento ilimitado.
+- `ChatRateLimiter` (`routes/rate_limit.rs`) limita mensagens por janela e poda entradas expiradas ao atingir o limite de entradas em memória, evitando crescimento ilimitado.
 - Qualquer novo limitador ou cache em memória deve ter teto de chaves e poda determinística testada com tempo injetado (`check_at`).
 
 ## SRV-07: Subcomando `hash-password` isolado

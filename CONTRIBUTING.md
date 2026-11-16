@@ -1,68 +1,67 @@
 # Contributing to Zenha
 
-Thank you for your interest in contributing to Zenha. Please review these guidelines before opening a pull request.
-
 ## Requirements
 
 - Windows 10 or 11 (x64, native `x86_64-pc-windows-msvc` target)
-- [rustup](https://rustup.rs) (automatically selects the toolchain from [rust-toolchain.toml](rust-toolchain.toml))
-- Visual Studio Build Tools with **"Desktop development with C++"**
-- `livekit-server` binary (optional, for local media testing and end-to-end tests)
+- [rustup](https://rustup.rs) (picks the toolchain from [rust-toolchain.toml](rust-toolchain.toml))
+- Visual Studio Build Tools with "Desktop development with C++"
+- [`cargo-deny`](https://github.com/EmbarkStudios/cargo-deny) (`cargo install cargo-deny`)
+- `livekit-server` (optional, for local media and end-to-end tests)
 
-## Verification (`cargo ci`)
+## Checks
 
-Run the full check suite before every commit or pull request:
+Run before every commit or pull request:
 
 ```powershell
 cargo fmt --all
 cargo ci
 ```
 
-`cargo ci` runs the architecture boundary checks, `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace` and `cargo deny check` (install it with `cargo install cargo-deny`). There is no build or test workflow in GitHub Actions, so run it before every push.
+`cargo ci` runs the crate boundary checks, `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace` and `cargo deny check`. GitHub Actions does not build or test the code, so this local run is the only gate.
 
-## Code & Architecture Rules (`CLAUDE.md`)
+## Crate boundaries
 
-The repository includes `CLAUDE.md` files at the root and inside each crate to guide both contributors and AI coding agents. The key rules are summarized below:
+See [docs/architecture.md](docs/architecture.md) for the diagram.
 
-### Crate Boundaries
+- `rooms-protocol`: `serde` types and validation only; no I/O, no async.
+- `rooms-core`: the only crate that may depend on `livekit` and `libwebrtc`. No SDK types in its public API (`Command`, `Event`, `SessionError` and its own types).
+- `rooms-client`: talks to `rooms-core` only through `Command` and `Event` channels; the `egui` UI thread never blocks or does I/O.
+- `rooms-token-server`: `axum` server that checks invite codes, issues short-lived LiveKit tokens and keeps rooms and saved chat in SQLite.
+- Screen capture sits behind the `FrameSource` trait.
 
-- `rooms-protocol`: `serde` types and size/input validation only; no I/O or async code.
-- `rooms-core`: the **only** crate allowed to depend on `livekit` and `libwebrtc`. No SDK types may appear in its public API (`Command`, `Event`, `SessionError`, and domain types).
-- `rooms-client`: communicates with `rooms-core` exclusively over `Command` and `Event` channels; the `egui` UI thread must never block or perform I/O.
-- `rooms-token-server`: stateless HTTP server (`axum`) that validates invite codes and issues short-lived LiveKit tokens.
-- Screen capture sits behind the `FrameSource` trait so capturers can be swapped cleanly.
+## Code rules
 
-### Coding Standards
+- No `unwrap`, `expect`, `panic!`, `todo!` or `dbg!` outside tests (clippy lints).
+- `unsafe` is denied; the only exception is `rooms-core`, with `#[expect(unsafe_code)]` and a `SAFETY:` comment.
+- Errors: `thiserror` in libraries, `anyhow` with `.context(...)` in binaries.
+- Few comments: explain non-obvious invariants, not what the code does.
+- Identifiers and `tracing` logs in English; UI text in Brazilian Portuguese.
+- Never log secrets (`Config` has a manual `Debug` that omits them).
+- New dependencies go in `[workspace.dependencies]` in the root [Cargo.toml](Cargo.toml) and are used with `workspace = true`. `livekit`, `livekit-api` and `libwebrtc` stay pinned to exact versions (`=x.y.z`).
+- Add unit tests for new pure logic (protocol, config, state transitions, DSP).
 
-- No `unwrap`, `expect`, `panic!`, `todo!`, or `dbg!` outside tests (enforced by workspace clippy lints).
-- `unsafe` is denied by workspace lint; exceptions are only permitted inside `rooms-core` with `#[expect(unsafe_code)]` and a `SAFETY:` comment.
-- Error handling: `thiserror` in library crates, `anyhow` with `.context(...)` in binaries.
-- Keep comments minimal: explain *why* for non-obvious invariants, not *what* the code does.
-- Code identifiers and `tracing` logs are in English (lowercase, structured fields); user-facing UI strings are in Brazilian Portuguese.
-- Never log secrets (`Config` uses a manual `Debug` implementation that redacts them).
-- Add new dependencies under `[workspace.dependencies]` in the root [Cargo.toml](Cargo.toml) and reference them with `workspace = true`. Keep `livekit`, `livekit-api`, and `libwebrtc` pinned to exact versions (`=x.y.z`) and update them deliberately.
-- Add unit tests for any new pure logic (protocol, configuration, state transitions, DSP).
+The full rule set used in review is in [docs/standards/](docs/standards/README.md) (Portuguese).
 
-## Git & Conventional Commits
+## Commits
 
-- Keep `main` compiling and passing `cargo ci` at all times; develop on short-lived branches.
-- Use [Conventional Commits](https://www.conventionalcommits.org/): e.g., `feat(core): ...`, `fix(client): ...`, `docs: ...`, `chore: ...`.
+- Keep `main` passing `cargo ci`; work on short-lived branches.
+- Use [Conventional Commits](https://www.conventionalcommits.org/): `feat(core): ...`, `fix(client): ...`, `docs: ...`, `chore: ...`.
 - One logical change per commit.
 
 ## Secrets
 
-- `.env`, `.env.*`, `*.tfvars`, `*.pem`, `*.key`, and `deploy/livekit.prod.yaml` are gitignored and must never be committed.
-- Any new server environment variable must be documented with a placeholder in [.env.example](.env.example).
+- `.env`, `.env.*`, `*.tfvars`, `*.pem`, `*.key` and `deploy/livekit.prod.yaml` are gitignored and must never be committed.
+- Document every new server environment variable with a placeholder in [.env.example](.env.example).
 
-## Architecture Decisions
+## Architecture decisions
 
-Significant architectural decisions are recorded as short ADRs under [docs/adr/](docs/adr/) using [0000-template.md](docs/adr/0000-template.md).
+Record significant decisions as short ADRs in [docs/adr/](docs/adr/), starting from [0000-template.md](docs/adr/0000-template.md).
 
-## Manual Testing on Windows
+## Manual testing on Windows
 
-Automated unit tests cannot cover real audio hardware, GPU rendering, screen capture, global hotkeys in fullscreen games, or Windows Credential Manager behavior. When changing those areas, test manually on Windows:
+Unit tests cannot cover audio hardware, GPU rendering, screen capture, hotkeys in fullscreen games or Credential Manager. When you change those areas, test by hand:
 
-- Use `cargo client -- --demo` to quickly inspect UI layout, chat, and simulated screen sharing without running a server.
-- Run `scripts\dev-up.cmd` and multiple `scripts\dev-client.cmd` instances (or `cargo server` + `cargo client`) for multi-client voice, video, and file-transfer checks.
-- Run `scripts\e2e.cmd` for automated multi-bot verification with WASAPI loopback audio probing (note: plays a low-volume test tone on the Windows output device during execution).
-- Explicitly note in your pull request what was tested manually and what could not be verified automatically.
+- `cargo client -- --demo` shows the UI, chat and a simulated share without a server.
+- `scripts\dev-up.cmd` starts `tools\livekit\livekit-server.exe --dev` and the token server; open several clients with `scripts\dev-client.cmd` (or use `cargo server` and `cargo client`).
+- `scripts\e2e.cmd` runs the multi-bot end-to-end harness. It plays a quiet test tone on the output device.
+- Say in the pull request what you tested by hand and what could not be checked.

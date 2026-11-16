@@ -1,92 +1,92 @@
 # Zenha
 
-Zenha is a lightweight Windows desktop app for voice rooms, text chat, file sharing, and screen sharing, built in Rust for a small group of friends. Media runs through a self-hosted [LiveKit](https://github.com/livekit/livekit) SFU, and all custom code in this repository is written in Rust.
+Zenha is a Windows desktop app for voice rooms, text chat, file sharing and screen sharing among a small group of friends. Media goes through a self-hosted [LiveKit](https://github.com/livekit/livekit) SFU; everything else in this repository is Rust.
 
-> Note: Public documentation is in English, while the desktop UI is currently in Brazilian Portuguese.
+> The public docs are in English. The app UI is in Brazilian Portuguese.
 
 <!-- screenshot -->
 
 ## Features
 
-- **Voice rooms**: fixed rooms with live occupant lists, active-speaker highlight, mute/deafen controls, input/output device selection, and automatic reconnection.
-- **Noise suppression & gate**: choose between Off, WebRTC Default, Enhanced (RNNoise), and Maximum (DeepFilterNet 3), plus an adjustable noise gate with a live microphone level meter.
-- **Global hotkeys & push-to-talk**: system-wide mute, deafen, and push-to-talk keybinds with audio feedback cues.
-- **Screen & game audio sharing**: share a monitor or window (720p30, 1080p30, or experimental 1080p60) with per-app or system audio loopback and an independent viewer volume slider.
-- **Text chat & file sharing**: reliable room chat with unread badge, inline image thumbnails, and file transfers up to 50 MB.
-- **Invite links & tray support**: join via `zenha://` invite links, store server passwords in Windows Credential Manager, and minimize/close to the system tray without leaving the call.
+- **Voice rooms**: live occupant lists, active-speaker highlight, mute and deafen, device selection, automatic reconnection.
+- **Noise suppression**: Off, WebRTC default, Enhanced (RNNoise) or Maximum (DeepFilterNet 3), plus a noise gate with a level meter.
+- **Hotkeys**: global mute, deafen and push-to-talk, with audio cues.
+- **Screen sharing**: a monitor or window at 720p30, 1080p30 or 1080p60 (experimental), with per-app or system audio and a viewer volume slider.
+- **Chat and files**: room chat with unread badge, image thumbnails, saved messages and file transfers up to 50 MB.
+- **Invites and tray**: `zenha://` invite links, passwords in Windows Credential Manager, minimize to tray without leaving the call.
+- **Admin** (optional): manage rooms, mute, stop shares, kick and rotate the invite code.
 
 ## Download
 
-1. Download the latest release from [GitHub Releases](https://github.com/Pedroklg/zenha/releases):
-   - **Installer** (`Zenha-<version>-windows-x64-setup.exe`): installs per-user in `%LOCALAPPDATA%\Programs\Zenha` (no administrator privileges required), adds a Start Menu shortcut, and registers the `zenha://` URL protocol.
-   - **Portable** (`Zenha-<version>-windows-x64.zip`): extract and run `zenha.exe`.
-2. Because release binaries are not code-signed yet, Windows SmartScreen will display **"Windows protected your PC"** on first launch. Click **"More info"** and then **"Run anyway"**.
+Get the latest build from [GitHub Releases](https://github.com/Pedroklg/zenha/releases):
 
-User settings are stored in `%APPDATA%\zenha` and are kept when uninstalling. Server passwords are stored in the Windows Credential Manager.
+- `Zenha-<version>-windows-x64-setup.exe`: per-user install in `%LOCALAPPDATA%\Programs\Zenha` (no admin rights), Start Menu shortcut, `zenha://` protocol.
+- `Zenha-<version>-windows-x64.zip`: portable, extract and run `zenha.exe`.
 
-## Self-Hosting a Server
+The binaries are not code-signed yet, so SmartScreen shows "Windows protected your PC" on first launch. Click **More info**, then **Run anyway**.
 
-To deploy your own `livekit-server` and `rooms-token-server` instance (Docker Compose, Caddy TLS, and firewall setup), see the [deployment guide](docs/deploy.md).
+Settings live in `%APPDATA%\zenha` and survive uninstall. Server passwords live in Windows Credential Manager.
 
-## Building from Source
+## Self-hosting
 
-### Requirements
+The server is `livekit-server` plus `rooms-token-server` behind Caddy, run with Docker Compose. See the [deployment guide](docs/deploy.md).
 
-- Windows 10 or 11 (x64)
-- [rustup](https://rustup.rs) (the toolchain version in [rust-toolchain.toml](rust-toolchain.toml) is installed automatically)
-- Visual Studio Build Tools with the **"Desktop development with C++"** workload
-- A `livekit-server` binary for local media testing
+## Building from source
 
-### Quick Start
+Requirements:
+
+- Windows 10 or 11 (x64); the target is `x86_64-pc-windows-msvc`
+- [rustup](https://rustup.rs) (the toolchain in [rust-toolchain.toml](rust-toolchain.toml) installs itself)
+- Visual Studio Build Tools with "Desktop development with C++"
+- A `livekit-server` binary for local media tests
 
 ```powershell
 Copy-Item .env.example .env
 cargo ci
 livekit-server --dev
 cargo server
-cargo client            # connects to local token server (no media without livekit-server)
-cargo client -- --demo  # simulated rooms and participants, no server required
+cargo client            # uses the local token server; no media without livekit-server
+cargo client -- --demo  # simulated rooms and participants, no server needed
 ```
 
-### Commands
-
-| Command | Description |
+| Command | What it does |
 | --- | --- |
-| `cargo ci` | Runs boundary checks, formatting check, clippy (`-D warnings`), workspace tests and `cargo deny` |
-| `cargo lint` | Runs clippy across all workspace targets |
-| `cargo server` | Starts `rooms-token-server` (`cargo run -p rooms-token-server -- hash-password` generates `ROOMS_INVITE_CODE_HASH`) |
-| `cargo client` | Launches the `zenha` desktop client |
-| `cargo fmt --all` | Formats all workspace code |
+| `cargo ci` | Boundary checks, `fmt --check`, clippy (`-D warnings`), workspace tests and `cargo deny` |
+| `cargo lint` | Clippy on all workspace targets |
+| `cargo server` | Runs `rooms-token-server` |
+| `cargo client` | Runs the `zenha` desktop client |
+| `cargo fmt --all` | Formats the workspace |
 
-To package a release build locally into `dist\`, run `scripts\package.cmd` (compiles the Inno Setup installer automatically if Inno Setup 6 is installed).
+`cargo run -p rooms-token-server -- hash-password` reads a password from stdin and prints the Argon2 hash for `ROOMS_INVITE_CODE_HASH`.
+
+`scripts\package.cmd` builds the release zip into `dist\`, and the installer too when Inno Setup 6 is installed. Releases are published from a PC with `scripts\release.cmd`; see [Releases and updates](docs/deploy.md#6-releases-and-updates).
 
 ## Architecture
 
-Zenha separates its `egui` desktop UI (`rooms-client`) from the LiveKit media engine (`rooms-core`) using non-blocking `Command` and `Event` channels: the UI thread never blocks or performs I/O, while `rooms-core` manages WebRTC/LiveKit sessions, audio processing, and screen capture on a Tokio runtime and dedicated capture threads. A stateless HTTP service (`rooms-token-server`) validates invite codes and issues short-lived, room-scoped LiveKit JWTs.
+The `egui` UI (`rooms-client`) talks to the media engine (`rooms-core`) only through `Command` and `Event` channels, so the UI thread never blocks. `rooms-core` is the only crate that uses the LiveKit SDK. `rooms-token-server` checks the invite code, issues short-lived room tokens and stores rooms and saved chat messages in SQLite.
 
-See [docs/architecture.md](docs/architecture.md) for component diagrams, media flows, and thread boundaries, and [docs/adr/](docs/adr/) for architecture decision records.
-
-### Repository Layout
+See [docs/architecture.md](docs/architecture.md) for diagrams and [docs/adr/](docs/adr/) for decision records.
 
 | Path | Contents |
 | --- | --- |
-| `crates/rooms-protocol` | Shared serde types and validation limits |
-| `crates/rooms-core` | Session, audio, noise suppression, screen capture, and video; the only crate using the LiveKit SDK |
-| `crates/rooms-client` | Desktop UI (`zenha`) built with `eframe`/`egui` |
-| `crates/rooms-token-server` | HTTP server that validates invite codes and issues LiveKit tokens |
-| `crates/rooms-e2e` | End-to-end test harness with scripted bots and WASAPI loopback probe |
-| `xtask` | Workspace automation (`cargo ci`, icon generation) |
-| `deploy` | Production server configuration (Docker Compose, Caddy, LiveKit) |
-| `installer` | Inno Setup script for the Windows installer |
-| `docs` | Architecture documentation and ADRs |
+| [`crates/rooms-protocol`](crates/rooms-protocol/README.md) | Shared `serde` types and size limits |
+| [`crates/rooms-core`](crates/rooms-core/README.md) | Session, audio, noise suppression, capture and video; the only LiveKit SDK user |
+| [`crates/rooms-client`](crates/rooms-client/README.md) | Desktop UI (`zenha.exe`), `eframe`/`egui` |
+| [`crates/rooms-token-server`](crates/rooms-token-server/README.md) | HTTP server: invite check, LiveKit tokens, rooms, saved chat, admin |
+| [`crates/rooms-e2e`](crates/rooms-e2e/README.md) | End-to-end harness with scripted bots and a WASAPI loopback probe |
+| `xtask` | `cargo ci`, review checks, icon generation |
+| [`deploy`](deploy/README.md) | Server config and OpenTofu infrastructure |
+| `installer` | Inno Setup script |
+| `patches` | Patched `libwebrtc` and `webrtc-sys` used via `[patch.crates-io]` |
+| `docs` | Architecture, deployment, standards and ADRs |
 
-`CLAUDE.md` files in the repository root and crate directories serve as concise technical guides for AI coding agents working in the codebase.
+`CLAUDE.md` files at the root and in each crate are short guides for AI coding agents.
 
-## Contributing & Security
+## Contributing and security
 
-- Read [CONTRIBUTING.md](CONTRIBUTING.md) for coding conventions, crate boundaries, commit format, and manual Windows testing guidelines.
-- Read [SECURITY.md](SECURITY.md) for instructions on reporting security vulnerabilities.
+- [CONTRIBUTING.md](CONTRIBUTING.md): conventions, crate boundaries, commits, manual testing.
+- [SECURITY.md](SECURITY.md): how to report a vulnerability.
 
 ## License
 
-Dual-licensed under either [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE) at your option.
+MIT or Apache-2.0, at your option: [LICENSE-MIT](LICENSE-MIT), [LICENSE-APACHE](LICENSE-APACHE).
