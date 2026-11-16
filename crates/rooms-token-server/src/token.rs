@@ -23,6 +23,7 @@ pub fn mint(
             can_publish: Some(true),
             can_subscribe: Some(true),
             can_publish_data: Some(true),
+            can_update_own_metadata: Some(true),
             ..Default::default()
         })
         .to_jwt()
@@ -101,6 +102,7 @@ mod tests {
         assert_eq!(claims.video.can_publish, Some(false));
         assert_eq!(claims.video.can_subscribe, Some(false));
         assert_eq!(claims.video.can_publish_data, Some(false));
+        assert_eq!(claims.video.can_update_own_metadata, None);
     }
 
     #[test]
@@ -111,5 +113,6 @@ mod tests {
             .verify(&jwt)
             .unwrap();
         assert!(!is_admin_claims(&claims));
+        assert_eq!(claims.video.can_update_own_metadata, Some(true));
     }
 }

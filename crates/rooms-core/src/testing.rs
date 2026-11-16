@@ -34,6 +34,7 @@ pub enum BackendCall {
     Disconnect,
     SetMicrophoneMuted(bool),
     SetOutputMuted(bool),
+    SetDisplayName(String),
     SendData {
         topic: String,
         payload: Vec<u8>,
@@ -314,6 +315,13 @@ impl MediaBackend for FakeBackend {
         lock(&self.state)
             .calls
             .push(BackendCall::SetOutputMuted(muted));
+        Ok(())
+    }
+
+    async fn set_display_name(&self, name: &str) -> Result<(), SessionError> {
+        lock(&self.state)
+            .calls
+            .push(BackendCall::SetDisplayName(name.to_owned()));
         Ok(())
     }
 

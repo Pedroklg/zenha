@@ -31,6 +31,17 @@ impl LiveKitBackend {
             })
     }
 
+    pub(super) async fn publish_name(&self, name: &str) -> Result<(), SessionError> {
+        let room = self.current_room().await.ok_or(SessionError::NotInRoom)?;
+        room.local_participant()
+            .set_name(name.to_owned())
+            .await
+            .map_err(|err| {
+                tracing::warn!(%err, "updating participant name failed");
+                SessionError::Connection("could not update the display name".to_owned())
+            })
+    }
+
     pub(super) async fn start_file_send(
         &self,
         transfer: FileTransfer,
