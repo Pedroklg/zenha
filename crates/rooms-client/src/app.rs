@@ -949,6 +949,37 @@ mod tests {
     use crate::settings::Settings;
     use crate::state::{Screen, UserAction};
 
+    fn demo_settings(display_name: &str) -> Settings {
+        Settings {
+            client_id: demo::SELF_IDENTITY.to_owned(),
+            display_name: display_name.to_owned(),
+            token_server_url: demo::DEMO_SERVER_URL.to_owned(),
+            ..Settings::default()
+        }
+    }
+
+    fn demo_harness_with_settings(size: egui::Vec2, settings: Settings) -> Harness<'static, App> {
+        Harness::builder()
+            .with_size(size)
+            .with_accessibility_check(false)
+            .build_eframe(move |cc| {
+                App::new(
+                    &cc.egui_ctx,
+                    &settings,
+                    Some(demo::DEMO_PASSWORD.to_owned()),
+                    None,
+                    true,
+                    StartupLink::None,
+                    #[cfg(windows)]
+                    None,
+                )
+            })
+    }
+
+    fn demo_harness(size: egui::Vec2, display_name: &str) -> Harness<'static, App> {
+        demo_harness_with_settings(size, demo_settings(display_name))
+    }
+
     #[test]
     fn open_path_in_os_rejects_missing_and_directory_paths() {
         let missing = std::env::temp_dir().join(format!(
@@ -972,27 +1003,7 @@ mod tests {
     fn demo_app_renders_lobby_room_settings_and_chat_frames() {
         let (tx, rx) = channel();
         let handle = std::thread::spawn(move || {
-            let settings = Settings {
-                client_id: demo::SELF_IDENTITY.to_owned(),
-                display_name: demo::SELF_NAME.to_owned(),
-                token_server_url: demo::DEMO_SERVER_URL.to_owned(),
-                ..Settings::default()
-            };
-            let mut harness = Harness::builder()
-                .with_size(egui::Vec2::new(960.0, 600.0))
-                .with_accessibility_check(false)
-                .build_eframe(move |cc| {
-                    App::new(
-                        &cc.egui_ctx,
-                        &settings,
-                        Some(demo::DEMO_PASSWORD.to_owned()),
-                        None,
-                        true,
-                        StartupLink::None,
-                        #[cfg(windows)]
-                        None,
-                    )
-                });
+            let mut harness = demo_harness(egui::Vec2::new(960.0, 600.0), demo::SELF_NAME);
 
             harness.run_steps(2);
             assert!(matches!(harness.state().state.screen, Screen::Lobby));
@@ -1070,29 +1081,14 @@ mod tests {
 
     #[test]
     fn settings_window_opens_without_overlapping_widgets_at_1280x720() {
-        let settings = Settings {
-            client_id: demo::SELF_IDENTITY.to_owned(),
-            display_name: demo::SELF_NAME.to_owned(),
-            token_server_url: demo::DEMO_SERVER_URL.to_owned(),
-            noise_suppression: crate::settings::NoiseMode::Enhanced,
-            noise_gate_db: Some(-45),
-            ..Settings::default()
-        };
-        let mut harness = Harness::builder()
-            .with_size(egui::Vec2::new(1280.0, 720.0))
-            .with_accessibility_check(false)
-            .build_eframe(move |cc| {
-                App::new(
-                    &cc.egui_ctx,
-                    &settings,
-                    Some(demo::DEMO_PASSWORD.to_owned()),
-                    None,
-                    true,
-                    StartupLink::None,
-                    #[cfg(windows)]
-                    None,
-                )
-            });
+        let mut harness = demo_harness_with_settings(
+            egui::Vec2::new(1280.0, 720.0),
+            Settings {
+                noise_suppression: crate::settings::NoiseMode::Enhanced,
+                noise_gate_db: Some(-45),
+                ..demo_settings(demo::SELF_NAME)
+            },
+        );
 
         harness.run_steps(2);
         harness.get_by_label("Geral").click();
@@ -1189,27 +1185,7 @@ mod tests {
 
     #[test]
     fn pasted_image_card_allows_sending_with_enter_and_canceling_with_esc() {
-        let settings = Settings {
-            client_id: demo::SELF_IDENTITY.to_owned(),
-            display_name: demo::SELF_NAME.to_owned(),
-            token_server_url: demo::DEMO_SERVER_URL.to_owned(),
-            ..Settings::default()
-        };
-        let mut harness = Harness::builder()
-            .with_size(egui::Vec2::new(1280.0, 720.0))
-            .with_accessibility_check(false)
-            .build_eframe(move |cc| {
-                App::new(
-                    &cc.egui_ctx,
-                    &settings,
-                    Some(demo::DEMO_PASSWORD.to_owned()),
-                    None,
-                    true,
-                    StartupLink::None,
-                    #[cfg(windows)]
-                    None,
-                )
-            });
+        let mut harness = demo_harness(egui::Vec2::new(1280.0, 720.0), demo::SELF_NAME);
 
         harness.run_steps(2);
         harness.get_by_label("Geral").click();
@@ -1289,27 +1265,7 @@ mod tests {
 
     #[test]
     fn local_share_preview_collapses_and_expands_in_room_ui() {
-        let settings = Settings {
-            client_id: demo::SELF_IDENTITY.to_owned(),
-            display_name: demo::SELF_NAME.to_owned(),
-            token_server_url: demo::DEMO_SERVER_URL.to_owned(),
-            ..Settings::default()
-        };
-        let mut harness = Harness::builder()
-            .with_size(egui::Vec2::new(1280.0, 720.0))
-            .with_accessibility_check(false)
-            .build_eframe(move |cc| {
-                App::new(
-                    &cc.egui_ctx,
-                    &settings,
-                    Some(demo::DEMO_PASSWORD.to_owned()),
-                    None,
-                    true,
-                    StartupLink::None,
-                    #[cfg(windows)]
-                    None,
-                )
-            });
+        let mut harness = demo_harness(egui::Vec2::new(1280.0, 720.0), demo::SELF_NAME);
 
         harness.run_steps(2);
         harness.get_by_label("Geral").click();
@@ -1343,27 +1299,7 @@ mod tests {
 
     #[test]
     fn demo_update_footer_prompts_in_room_shows_progress_and_completes() {
-        let settings = Settings {
-            client_id: demo::SELF_IDENTITY.to_owned(),
-            display_name: demo::SELF_NAME.to_owned(),
-            token_server_url: demo::DEMO_SERVER_URL.to_owned(),
-            ..Settings::default()
-        };
-        let mut harness = Harness::builder()
-            .with_size(egui::Vec2::new(960.0, 600.0))
-            .with_accessibility_check(false)
-            .build_eframe(move |cc| {
-                App::new(
-                    &cc.egui_ctx,
-                    &settings,
-                    Some(demo::DEMO_PASSWORD.to_owned()),
-                    None,
-                    true,
-                    StartupLink::None,
-                    #[cfg(windows)]
-                    None,
-                )
-            });
+        let mut harness = demo_harness(egui::Vec2::new(960.0, 600.0), demo::SELF_NAME);
 
         harness.run_steps(2);
         assert!(harness.query_by_label("Atualizar").is_some());
@@ -1418,27 +1354,7 @@ mod tests {
     #[test]
     fn room_ui_footer_chat_and_participant_card_layout_at_1280x720() {
         let long_name = "NomeMuitoLongoParaRodapeDaBarra";
-        let settings = Settings {
-            client_id: demo::SELF_IDENTITY.to_owned(),
-            display_name: long_name.to_owned(),
-            token_server_url: demo::DEMO_SERVER_URL.to_owned(),
-            ..Settings::default()
-        };
-        let mut harness = Harness::builder()
-            .with_size(egui::Vec2::new(1280.0, 720.0))
-            .with_accessibility_check(false)
-            .build_eframe(move |cc| {
-                App::new(
-                    &cc.egui_ctx,
-                    &settings,
-                    Some(demo::DEMO_PASSWORD.to_owned()),
-                    None,
-                    true,
-                    StartupLink::None,
-                    #[cfg(windows)]
-                    None,
-                )
-            });
+        let mut harness = demo_harness(egui::Vec2::new(1280.0, 720.0), long_name);
 
         harness.run_steps(2);
         let assert_footer_fits = |harness: &Harness<'_, App>, status_label: &str| {
@@ -1526,28 +1442,13 @@ mod tests {
 
     #[test]
     fn settings_mic_meter_messages_for_lobby_waiting_and_muted_states() {
-        let settings = Settings {
-            client_id: demo::SELF_IDENTITY.to_owned(),
-            display_name: demo::SELF_NAME.to_owned(),
-            token_server_url: demo::DEMO_SERVER_URL.to_owned(),
-            noise_suppression: crate::settings::NoiseMode::Enhanced,
-            ..Settings::default()
-        };
-        let mut harness = Harness::builder()
-            .with_size(egui::Vec2::new(1280.0, 720.0))
-            .with_accessibility_check(false)
-            .build_eframe(move |cc| {
-                App::new(
-                    &cc.egui_ctx,
-                    &settings,
-                    Some(demo::DEMO_PASSWORD.to_owned()),
-                    None,
-                    true,
-                    StartupLink::None,
-                    #[cfg(windows)]
-                    None,
-                )
-            });
+        let mut harness = demo_harness_with_settings(
+            egui::Vec2::new(1280.0, 720.0),
+            Settings {
+                noise_suppression: crate::settings::NoiseMode::Enhanced,
+                ..demo_settings(demo::SELF_NAME)
+            },
+        );
 
         harness.run_steps(2);
         harness.get_by_label("Configurações").click();
