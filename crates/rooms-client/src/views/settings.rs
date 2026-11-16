@@ -23,6 +23,7 @@ const GROUP_GAP: f32 = 14.0;
 const ROW_GAP: f32 = 8.0;
 const CONTROL_GAP: f32 = 4.0;
 const HOTKEY_LABEL_WIDTH: f32 = 176.0;
+const HOTKEY_BINDING_WIDTH: f32 = 96.0;
 const GATE_LABEL_WIDTH: f32 = 132.0;
 const GATE_CONTROL_WIDTH: f32 = 240.0;
 const GATE_VALUE_WIDTH: f32 = 64.0;
@@ -66,6 +67,7 @@ pub fn show(ctx: &egui::Context, mut view: SettingsView<'_>) -> Vec<UserAction> 
         .show(ctx, |ui| {
             egui::ScrollArea::vertical()
                 .max_height(max_height)
+                .min_scrolled_height(max_height)
                 .show(ui, |ui| {
                     ui.set_min_width(content_width);
                     ui.set_max_width(content_width);
@@ -362,6 +364,7 @@ fn hotkeys_section(
                 egui::vec2(HOTKEY_LABEL_WIDTH, ui.spacing().interact_size.y),
                 egui::Layout::left_to_right(egui::Align::Center),
                 |ui| {
+                    ui.set_min_width(HOTKEY_LABEL_WIDTH);
                     ui.label(action.label());
                 },
             );
@@ -372,7 +375,14 @@ fn hotkeys_section(
                 }
             } else {
                 let current = hotkeys.binding(action).map(binding_label);
-                ui.label(current.as_deref().unwrap_or("Nenhum"));
+                ui.allocate_ui_with_layout(
+                    egui::vec2(HOTKEY_BINDING_WIDTH, ui.spacing().interact_size.y),
+                    egui::Layout::left_to_right(egui::Align::Center),
+                    |ui| {
+                        ui.set_min_width(HOTKEY_BINDING_WIDTH);
+                        ui.label(current.as_deref().unwrap_or("Nenhum"));
+                    },
+                );
                 if ui.button("Alterar").clicked() {
                     actions.push(UserAction::StartHotkeyCapture(action));
                 }

@@ -304,11 +304,6 @@ pub(super) fn local_share_preview(
                             .font(theme::semibold(14.0))
                             .color(theme::TEXT),
                     );
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        if ui.small_button("Recolher").clicked() {
-                            actions.push(UserAction::ToggleSharePreviewCollapsed);
-                        }
-                    });
                 });
                 ui.add_space(8.0);
                 preview_box(
@@ -318,6 +313,10 @@ pub(super) fn local_share_preview(
                     &preview.feed,
                     preview_renderer,
                 );
+                ui.add_space(8.0);
+                if ui.button("Recolher").clicked() {
+                    actions.push(UserAction::ToggleSharePreviewCollapsed);
+                }
             }
         });
     ui.add_space(if compact { 8.0 } else { 16.0 });
