@@ -169,26 +169,41 @@ pub fn picker(
     if !picker.open {
         return actions;
     }
+    let screen = ctx.content_rect().size();
+    let fit = PickerFit {
+        cols: (((screen.x - 64.0) / (THUMBNAIL_CARD_WIDTH + 8.0)) as usize)
+            .clamp(1, THUMBNAIL_GRID_COLS),
+        list_height: (screen.y - 220.0).clamp(120.0, 360.0),
+    };
     let mut open = true;
     egui::Window::new("Transmitir tela")
         .open(&mut open)
         .collapsible(false)
         .resizable(false)
         .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-        .show(ctx, |ui| content(ui, picker, cache, &mut actions));
+        .max_width(screen.x - 32.0)
+        .max_height(screen.y - 32.0)
+        .show(ctx, |ui| content(ui, picker, cache, fit, &mut actions));
     if !open {
         actions.push(UserAction::CloseSharePicker);
     }
     actions
 }
 
+#[derive(Clone, Copy)]
+struct PickerFit {
+    cols: usize,
+    list_height: f32,
+}
+
 fn content(
     ui: &mut egui::Ui,
     picker: &SharePicker,
     cache: &ThumbnailCache,
+    fit: PickerFit,
     actions: &mut Vec<UserAction>,
 ) {
-    let min_width = THUMBNAIL_CARD_WIDTH * THUMBNAIL_GRID_COLS as f32 + 32.0;
+    let min_width = (THUMBNAIL_CARD_WIDTH + 8.0) * fit.cols as f32 + 24.0;
     ui.set_min_width(min_width);
     if !picker.loaded {
         ui.horizontal(|ui| {
@@ -208,7 +223,7 @@ fn content(
         ui.ctx().request_repaint_after(Duration::from_millis(100));
     }
     egui::ScrollArea::vertical()
-        .max_height(360.0)
+        .max_height(fit.list_height)
         .show(ui, |ui| {
             group(
                 ui,
@@ -277,7 +292,9 @@ fn group<'a>(
     }
     ui.strong(title);
     ui.add_space(4.0);
-    for row in targets.chunks(THUMBNAIL_GRID_COLS) {
+    let cols = (((ui.available_width() + 8.0) / (THUMBNAIL_CARD_WIDTH + 8.0)) as usize)
+        .clamp(1, THUMBNAIL_GRID_COLS);
+    for row in targets.chunks(cols) {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing = Vec2::new(8.0, 8.0);
             for target in row {
