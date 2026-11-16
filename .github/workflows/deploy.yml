@@ -52,6 +52,22 @@ jobs:
           tenant-id: ${{ vars.AZURE_TENANT_ID || secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID || secrets.AZURE_SUBSCRIPTION_ID }}
 
+      - name: Start the VM if it is stopped
+        id: power
+        env:
+          AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP || secrets.AZURE_RESOURCE_GROUP }}
+          AZURE_VM_NAME: ${{ vars.AZURE_VM_NAME || secrets.AZURE_VM_NAME || 'zenha-vm' }}
+        run: |
+          set -euo pipefail
+          STATE="$(az vm get-instance-view -g "${AZURE_RESOURCE_GROUP}" -n "${AZURE_VM_NAME}"             --query "instanceView.statuses[?starts_with(code, 'PowerState/')].code | [0]" -o tsv)"
+          echo "power state: ${STATE}"
+          if [[ "${STATE}" == "PowerState/running" ]]; then
+            echo "was_stopped=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "was_stopped=true" >> "$GITHUB_OUTPUT"
+            az vm start -g "${AZURE_RESOURCE_GROUP}" -n "${AZURE_VM_NAME}"
+          fi
+
       - name: Update container stack on Azure VM
         env:
           AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP || secrets.AZURE_RESOURCE_GROUP }}
@@ -98,3 +114,10 @@ jobs:
           echo "${OUTPUT}"
           # run-command runs the script with sh unless it has a shebang, and succeeds even when the script fails.
           grep -q ZENHA_DEPLOY_OK <<<"${OUTPUT}"
+
+      - name: Deallocate the VM again if the deploy started it
+        if: always() && steps.power.outputs.was_stopped == 'true'
+        env:
+          AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP || secrets.AZURE_RESOURCE_GROUP }}
+          AZURE_VM_NAME: ${{ vars.AZURE_VM_NAME || secrets.AZURE_VM_NAME || 'zenha-vm' }}
+        run: az vm deallocate -g "${AZURE_RESOURCE_GROUP}" -n "${AZURE_VM_NAME}" --no-wait

@@ -259,6 +259,8 @@ With `schedule_enabled = true`, [`schedule.tf`](../deploy/infra/azure/schedule.t
 
 Deallocation drops anyone still in a call. For a late session, pause the schedule or start the VM again. To change the times, override `schedules` in `terraform.tfvars` and run `tofu apply`.
 
+The `deploy` workflow starts a deallocated VM, updates it and deallocates it again, so a release outside the schedule still reaches the server.
+
 ```powershell
 scripts\server.cmd start
 scripts\server.cmd stop
