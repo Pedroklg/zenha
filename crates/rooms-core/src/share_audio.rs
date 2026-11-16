@@ -12,7 +12,7 @@ use wasapi::{
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId;
 
-use crate::backend_support::parse_target_id;
+use crate::backend_support::{drain_f32_le_to_i16, parse_target_id};
 use crate::video::{CaptureKind, CaptureTarget};
 
 pub(crate) const SHARE_AUDIO_SAMPLE_RATE: u32 = 48_000;
@@ -142,6 +142,7 @@ fn capture(
     tracing::info!(?scope, "share audio capture started");
 
     let mut bytes: VecDeque<u8> = VecDeque::new();
+    let mut scratch: Vec<u8> = Vec::new();
     let mut frame = [0i16; FRAME_SAMPLES];
     while !stop.load(Ordering::SeqCst) {
         while let Some(frames) = reader.get_next_packet_size()? {
@@ -154,15 +155,7 @@ fn capture(
             let excess = (bytes.len() - MAX_BACKLOG_BYTES).div_ceil(FRAME_BYTES) * FRAME_BYTES;
             bytes.drain(..excess.min(bytes.len()));
         }
-        while bytes.len() >= FRAME_BYTES {
-            for slot in &mut frame {
-                let mut raw = [0u8; BYTES_PER_SAMPLE];
-                for byte in &mut raw {
-                    *byte = bytes.pop_front().unwrap_or(0);
-                }
-                let value = f32::from_le_bytes(raw).clamp(-1.0, 1.0) * 32767.0;
-                *slot = value.round() as i16;
-            }
+        while drain_f32_le_to_i16(&mut bytes, &mut frame, &mut scratch) {
             sink(&frame);
         }
         let _ = event.wait_for_event(EVENT_TIMEOUT_MS);

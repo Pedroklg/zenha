@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 use std::time::{Duration, Instant};
 
 use crate::api::AudioDevice;
@@ -8,6 +8,39 @@ use crate::video::CaptureKind;
 
 const MAX_ERROR_LEN: usize = 160;
 const SILENCE_DB: f32 = -100.0;
+const PCM_F32_BYTES: usize = std::mem::size_of::<f32>();
+
+/// Drains one frame of `out.len()` little-endian `f32` PCM samples from `bytes` into `out` (`i16`).
+///
+/// Uses direct slice iteration when contiguous and copies only the single wrapped frame via `scratch`
+/// when the ring buffer wraps mid-frame, avoiding byte-by-byte `pop_front` overhead.
+pub(crate) fn drain_f32_le_to_i16(
+    bytes: &mut VecDeque<u8>,
+    out: &mut [i16],
+    scratch: &mut Vec<u8>,
+) -> bool {
+    let needed = out.len() * PCM_F32_BYTES;
+    if bytes.len() < needed {
+        return false;
+    }
+    let (front, back) = bytes.as_slices();
+    let src: &[u8] = if front.len() >= needed {
+        &front[..needed]
+    } else {
+        scratch.resize(needed, 0);
+        let first = front.len();
+        scratch[..first].copy_from_slice(front);
+        scratch[first..needed].copy_from_slice(&back[..needed - first]);
+        &scratch[..needed]
+    };
+    for (chunk, slot) in src.chunks_exact(PCM_F32_BYTES).zip(out.iter_mut()) {
+        let value =
+            f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]).clamp(-1.0, 1.0) * 32767.0;
+        *slot = value.round() as i16;
+    }
+    bytes.drain(..needed);
+    true
+}
 
 /// Stored threshold meaning "gate off"; never inside the valid -70..=-20 range.
 pub(crate) const GATE_OFF: i8 = 0;
@@ -359,5 +392,88 @@ mod tests {
             unique_devices(devices),
             vec![audio_device("a", "First"), audio_device("b", "Other")]
         );
+    }
+
+    fn naive_pop_front_f32_le_to_i16(bytes: &mut VecDeque<u8>, out: &mut [i16]) {
+        for slot in out.iter_mut() {
+            let mut raw = [0u8; PCM_F32_BYTES];
+            for byte in &mut raw {
+                *byte = bytes.pop_front().unwrap_or(0);
+            }
+            let value = f32::from_le_bytes(raw).clamp(-1.0, 1.0) * 32767.0;
+            *slot = value.round() as i16;
+        }
+    }
+
+    fn sample_bytes(count: usize) -> Vec<u8> {
+        (0..count)
+            .flat_map(|i| ((i as f32 * 0.13).sin() * 1.15).to_le_bytes())
+            .collect()
+    }
+
+    #[test]
+    fn drain_f32_le_to_i16_matches_pop_front_for_contiguous_deque() {
+        let payload = sample_bytes(24);
+        let mut expected_deque = VecDeque::from(payload.clone());
+        let mut actual_deque = VecDeque::from(payload);
+        let mut expected = [0i16; 10];
+        let mut actual = [0i16; 10];
+        let mut scratch = Vec::new();
+
+        naive_pop_front_f32_le_to_i16(&mut expected_deque, &mut expected);
+        assert!(drain_f32_le_to_i16(
+            &mut actual_deque,
+            &mut actual,
+            &mut scratch
+        ));
+        assert_eq!(actual, expected);
+        assert_eq!(actual_deque, expected_deque);
+        assert!(scratch.is_empty());
+    }
+
+    #[test]
+    fn drain_f32_le_to_i16_matches_pop_front_when_wrapped_mid_sample() {
+        let payload = sample_bytes(24);
+        // Reserve capacity that forces a mid-frame and mid-sample wrap after push/pop.
+        let mut actual_deque = VecDeque::with_capacity(63);
+        for _ in 0..33 {
+            actual_deque.push_back(0);
+            actual_deque.pop_front();
+        }
+        actual_deque.extend(&payload);
+        assert!(!actual_deque.as_slices().1.is_empty());
+
+        let mut expected_deque = VecDeque::from(payload);
+        let mut expected = [0i16; 10];
+        let mut actual = [0i16; 10];
+        let mut scratch = Vec::new();
+
+        naive_pop_front_f32_le_to_i16(&mut expected_deque, &mut expected);
+        assert!(drain_f32_le_to_i16(
+            &mut actual_deque,
+            &mut actual,
+            &mut scratch
+        ));
+        assert_eq!(actual, expected);
+        assert_eq!(actual_deque, expected_deque);
+
+        // Drain a second frame to check tail alignment and scratch reuse.
+        naive_pop_front_f32_le_to_i16(&mut expected_deque, &mut expected);
+        assert!(drain_f32_le_to_i16(
+            &mut actual_deque,
+            &mut actual,
+            &mut scratch
+        ));
+        assert_eq!(actual, expected);
+        assert_eq!(actual_deque, expected_deque);
+
+        // Fewer than `out.len() * 4` bytes remaining must leave deque untouched.
+        let remaining = actual_deque.clone();
+        assert!(!drain_f32_le_to_i16(
+            &mut actual_deque,
+            &mut actual,
+            &mut scratch
+        ));
+        assert_eq!(actual_deque, remaining);
     }
 }
