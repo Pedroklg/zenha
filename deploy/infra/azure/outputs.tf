@@ -12,8 +12,3 @@ output "vm_name" {
   description = "Name of the provisioned Azure Linux virtual machine."
   value       = azurerm_linux_virtual_machine.main.name
 }
-
-output "schedule_workflow_names" {
-  description = "Names of the provisioned start/deallocate Logic App workflows."
-  value       = [for k in sort(keys(azurerm_logic_app_workflow.schedule)) : azurerm_logic_app_workflow.schedule[k].name]
-}
