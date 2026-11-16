@@ -4,8 +4,8 @@ Server configuration and infrastructure. The step-by-step guide is [docs/deploy.
 
 | Path | Contents |
 | --- | --- |
-| [`infra/azure/`](infra/azure/README.md) | OpenTofu stack for Azure: network, NSG, static IP, `Standard_B2ats_v2` VM, optional start/stop schedule. Also explains adopting an old Bicep deployment. |
-| [`infra/hetzner/`](infra/hetzner/) | OpenTofu stack for Hetzner Cloud: server, firewall, static IPv4, SSH key. No schedule. |
+| [`infra/azure/`](infra/azure/README.md) | OpenTofu stack for Azure: network, NSG, static IP, `Standard_B2ats_v2` VM. Also explains adopting an old Bicep deployment. |
+| [`infra/hetzner/`](infra/hetzner/) | OpenTofu stack for Hetzner Cloud: server, firewall, static IPv4, SSH key. |
 | [`infra/modules/host/`](infra/modules/host/) | Shared inbound port list and [`cloud-init.yaml`](infra/modules/host/cloud-init.yaml) (Docker Engine, Compose plugin, `/opt/zenha`, unattended upgrades). |
 | [`Dockerfile`](Dockerfile) | Multi-stage build of `rooms-token-server`, runs as the non-root `zenha` user. |
 | [`docker-compose.yml`](docker-compose.yml) | Production stack in `/opt/zenha`: `livekit-server`, the token server image from `ZENHA_IMAGE`, Caddy. |

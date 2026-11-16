@@ -1,6 +1,6 @@
 # Deploying the server
 
-This guide runs `livekit-server`, `rooms-token-server` and Caddy on one Azure Linux VM, provisioned with OpenTofu, with DNS on Cloudflare and updates through GitHub Actions. A Hetzner Cloud stack without the start/stop schedule is in [`deploy/infra/hetzner/`](../deploy/infra/hetzner/).
+This guide runs `livekit-server`, `rooms-token-server` and Caddy on one Azure Linux VM, provisioned with OpenTofu, with DNS on Cloudflare and updates through GitHub Actions. A Hetzner Cloud stack is in [`deploy/infra/hetzner/`](../deploy/infra/hetzner/).
 
 Commands are bash (Git Bash or WSL on Windows) unless marked PowerShell. In Git Bash, set `MSYS_NO_PATHCONV=1` so Azure resource IDs such as `/subscriptions/...` are not rewritten as Windows paths. Replace `voice.example.com`, `rtc.voice.example.com`, `<owner>` and `<public-ip>` with your values.
 
@@ -31,7 +31,7 @@ flowchart LR
   img -- "on success" --> dep
   dep -- "set ZENHA_IMAGE, compose up" --> ts
   ghcr -. pull .-> ts
-  tofu -- "VM, NSG, IP, schedule" --> VM
+  tofu -- "VM, NSG, IP" --> VM
   users -- "HTTPS, WSS" --> caddy
   caddy --> ts
   caddy --> lk
@@ -81,7 +81,6 @@ The stack lives in [`deploy/infra/azure`](../deploy/infra/azure/README.md). It a
    - `ssh_public_key`: the contents of `~/.ssh/zenha_azure.pub`
    - `dns_label_prefix`: a globally unique label (`<label>.chilecentral.cloudapp.azure.com`)
    - `ssh_allowed_cidr`: `""` keeps SSH closed, or `"<your-ip>/32"`
-   - `schedule_enabled`: `true` (default) creates the start/stop schedule, `false` skips it
 4. Apply and read the outputs (`public_ip_address`, `fqdn`, `vm_name`):
    ```bash
    cd deploy/infra/azure
@@ -246,31 +245,17 @@ To redeploy or roll back, run **Actions > deploy > Run workflow** with a tag (`v
 
 To update LiveKit or Caddy, change the pinned tags in `deploy/docker-compose.yml` and `deploy/setup-server.sh`, then rerun `setup-server.sh`; it keeps the keys and hashes in `/opt/zenha/.env`.
 
-## 7. Start/stop schedule
+## 7. Start and stop
 
-With `schedule_enabled = true`, [`schedule.tf`](../deploy/infra/azure/schedule.tf) creates four Logic Apps (Consumption) workflows. Each has a managed identity with `Virtual Machine Contributor` on the VM only. Times are `America/Sao_Paulo`:
-
-| Action | Days | Time | Workflow |
-| --- | --- | --- | --- |
-| Start | Mon-Fri | 18:00 | `zenha-schedule-start-mon-fri` |
-| Start | Sat, Sun | 11:00 | `zenha-schedule-start-sat-sun` |
-| Deallocate | Tue-Sat | 01:00 | `zenha-schedule-deallocate-tue-sat` |
-| Deallocate | Sun, Mon | 02:00 | `zenha-schedule-deallocate-sun-mon` |
-
-Deallocation drops anyone still in a call. For a late session, pause the schedule or start the VM again. To change the times, override `schedules` in `terraform.tfvars` and run `tofu apply`.
-
-The `deploy` workflow starts a deallocated VM, updates it and deallocates it again, so a release outside the schedule still reaches the server.
+The VM stays on all month: Azure for Students covers 750 h/month of `Standard_B2ats_v2`, and a month has at most 744 h. To stop it anyway, or to check it:
 
 ```powershell
 scripts\server.cmd start
 scripts\server.cmd stop
 scripts\server.cmd status
-scripts\server.cmd schedule status
-scripts\server.cmd schedule off
-scripts\server.cmd schedule on
 ```
 
-Cost is negligible: the first 4,000 built-in actions per month are free ($0.000025 each after), and the schedule uses about 60. A deallocated VM stops compute billing but keeps the disk and static IP, so DNS keeps working.
+`stop` deallocates the VM: compute billing stops, the disk and static IP stay, so DNS keeps working. The `deploy` workflow starts a deallocated VM, updates it and deallocates it again.
 
 ## 8. Operations
 
