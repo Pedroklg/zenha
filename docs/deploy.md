@@ -1,6 +1,6 @@
 # Deploying Zenha to Azure
 
-This guide covers provisioning and operating the Zenha voice/video server (`livekit-server`, `rooms-token-server`, and Caddy 2) on a single Azure Linux virtual machine using Bicep, Cloudflare DNS, and GitHub Actions.
+This guide covers provisioning and operating the Zenha voice/video server (`livekit-server`, `rooms-token-server`, and Caddy 2) on a single Azure Linux virtual machine using OpenTofu, Cloudflare DNS, and GitHub Actions. (An alternative Hetzner Cloud OpenTofu stack without start/stop scheduling is also available in `deploy/infra/hetzner/`.)
 
 ---
 
@@ -18,18 +18,17 @@ This guide covers provisioning and operating the Zenha voice/video server (`live
   - `443/TCP` — HTTPS (`rooms-token-server`) and WSS (`livekit-server` signaling).
   - `7881/TCP` — WebRTC ICE over TCP fallback.
   - `7882/UDP` — WebRTC multiplexed UDP media.
-  - `22/TCP` (SSH) — **Closed by default**; optionally restricted to a single operator IP/CIDR via the `sshAllowedCidr` Bicep parameter.
+  - `22/TCP` (SSH) — **Closed by default**; optionally restricted to a single operator IP/CIDR via the `ssh_allowed_cidr` OpenTofu variable.
 
 ---
 
 ## 2. Prerequisites
 
 1. **Azure Subscription** (for example, Azure for Students) with permission to deploy in `chilecentral`.
-2. **Azure CLI (`az`)** v2.60+ with the Bicep CLI installed:
+2. **Azure CLI (`az`)** v2.60+ and **[OpenTofu](https://opentofu.org/) (`tofu`)** v1.6+:
    ```bash
    az version
-   az bicep install
-   az bicep version
+   tofu version
    ```
 3. **Cloudflare DNS Zone** for your domain (referred to below as `voice.example.com` for the token server and `rtc.voice.example.com` for LiveKit).
 4. **SSH Key Pair** for the VM administrator account:
@@ -42,47 +41,48 @@ This guide covers provisioning and operating the Zenha voice/video server (`live
 
 ---
 
-## 3. Provisioning the VM with Bicep (`az deployment group create`)
+## 3. Provisioning the VM with OpenTofu (`deploy/infra/azure`)
 
-1. Log in to Azure and select your subscription:
+> **Legacy Bicep migration note:** The legacy `deploy/azure/*.bicep` templates remain temporarily in the repository and will be removed after `tofu import` of the existing deployment is validated. To adopt an existing Bicep environment instead of creating a fresh VM, follow [`deploy/infra/azure/README.md`](../deploy/infra/azure/README.md#adotar-a-vm-existente).
+
+1. Log in to Azure, select your subscription, and export `ARM_SUBSCRIPTION_ID`:
    ```bash
    az login
    az account set --subscription "<SUBSCRIPTION_ID>"
+   export ARM_SUBSCRIPTION_ID="<SUBSCRIPTION_ID>"
    ```
+   *(In PowerShell on Windows: `$env:ARM_SUBSCRIPTION_ID = "<SUBSCRIPTION_ID>"`.)*
 
 2. Create a resource group in `chilecentral`:
    ```bash
    az group create \
-     --name rg-zenha-prod \
+     --name zenha-rg \
      --location chilecentral
    ```
 
-3. Edit `deploy/azure/main.bicepparam` (or pass parameters on the command line) with your SSH public key and a globally unique DNS label for the public IP:
-   - `sshPublicKey`: contents of `~/.ssh/zenha_azure.pub`
-   - `dnsLabelPrefix`: unique label (produces `<dnsLabelPrefix>.chilecentral.cloudapp.azure.com`)
-   - `sshAllowedCidr`: leave `''` to keep SSH port 22 closed, or set `'<YOUR_PUBLIC_IP>/32'` if you need direct SSH access
+3. Copy `deploy/infra/azure/terraform.tfvars.example` to `deploy/infra/azure/terraform.tfvars` (git-ignored) and fill in your SSH public key and a globally unique DNS label for the public IP:
+   - `ssh_public_key`: contents of `~/.ssh/zenha_azure.pub`
+   - `dns_label_prefix`: unique label (produces `<dns_label_prefix>.chilecentral.cloudapp.azure.com`)
+   - `ssh_allowed_cidr`: leave `""` to keep SSH port 22 closed, or set `"<YOUR_PUBLIC_IP>/32"` if you need direct SSH access
+   - `schedule_enabled`: `true` (default) to provision the automatic start/stop Logic App workflows, or `false` to omit them
 
-4. Validate and deploy the Bicep template:
+4. Initialize OpenTofu, review the plan, and apply:
    ```bash
-   az deployment group create \
-     --resource-group rg-zenha-prod \
-     --template-file deploy/azure/main.bicep \
-     --parameters deploy/azure/main.bicepparam
+   cd deploy/infra/azure
+   tofu init
+   tofu plan
+   tofu apply
    ```
 
-5. Read the deployment outputs (`publicIpAddress`, `fqdn`, `vmName`):
+5. Read the deployment outputs (`public_ip_address`, `fqdn`, `vm_name`):
    ```bash
-   az deployment group show \
-     --resource-group rg-zenha-prod \
-     --name main \
-     --query properties.outputs \
-     --output table
+   tofu output
    ```
 
-6. `deploy/azure/cloud-init.yaml` runs automatically on first boot to install Docker Engine, the Docker Compose plugin, and `unattended-upgrades`, and to create `/opt/zenha`. You can verify `cloud-init` finished using `run-command`:
+6. `deploy/infra/modules/host/cloud-init.yaml` runs automatically on first boot to install Docker Engine, the Docker Compose plugin, and `unattended-upgrades`, and to create `/opt/zenha`. You can verify `cloud-init` finished using `run-command`:
    ```bash
    az vm run-command invoke \
-     --resource-group rg-zenha-prod \
+     --resource-group zenha-rg \
      --name zenha-vm \
      --command-id RunShellScript \
      --scripts "cloud-init status --wait"
@@ -92,7 +92,7 @@ This guide covers provisioning and operating the Zenha voice/video server (`live
 
 ## 4. Cloudflare DNS Records
 
-In the Cloudflare dashboard for your zone, create two **A** records pointing to the `publicIpAddress` output from Bicep:
+In the Cloudflare dashboard for your zone, create two **A** records pointing to the `public_ip_address` output from OpenTofu:
 
 | Type | Name | Content (IPv4) | Proxy status | TTL |
 | :--- | :--- | :--- | :--- | :--- |
@@ -246,7 +246,7 @@ az vm run-command invoke \
 
 ### Alternative B — Deploy over SSH
 
-1. Set `sshAllowedCidr = '<YOUR_PUBLIC_IP>/32'` in `deploy/azure/main.bicepparam` and re-run `az deployment group create`.
+1. Set `ssh_allowed_cidr = "<YOUR_PUBLIC_IP>/32"` in `deploy/infra/azure/terraform.tfvars` and run `tofu apply` in `deploy/infra/azure`.
 2. Update the server directly over SSH:
    ```bash
    ssh -i ~/.ssh/zenha_azure azureuser@<publicIpAddress> '
@@ -427,9 +427,9 @@ Logging in via `POST /admin/login` issues a signed admin JWT (`ROOMS_TOKEN_TTL_S
 
 ---
 
-## 14. Automatic Start/Stop Schedule (`deploy/azure/schedule.bicep`)
+## 14. Automatic Start/Stop Schedule (`deploy/infra/azure/schedule.tf`)
 
-`deploy/azure/schedule.bicep` deploys four Azure Logic Apps Consumption workflows (`zenha-schedule-*`) with system-assigned managed identities granted `Virtual Machine Contributor` solely on the VM (`zenha-vm`). They automatically start and deallocate the VM in the `America/Sao_Paulo` (`E. South America Standard Time`) time zone:
+When `schedule_enabled = true` (the default), `deploy/infra/azure/schedule.tf` deploys four Azure Logic Apps Consumption workflows (`zenha-schedule-*`) with system-assigned managed identities granted `Virtual Machine Contributor` solely on the VM (`zenha-vm`). They automatically start and deallocate the VM in the `America/Sao_Paulo` (`E. South America Standard Time`) time zone (legacy `deploy/azure/*.bicep` templates remain until OpenTofu import validation completes):
 
 | Action | Days | Time (`America/Sao_Paulo`) | Workflow Name |
 | :--- | :--- | :--- | :--- |
@@ -442,15 +442,13 @@ Manual control via `scripts\server.cmd start|stop|status` remains available at a
 
 > **Warning:** Scheduled deallocation immediately shuts down the VM and disconnects anyone currently in a call. If a session runs past 01:00 (Tue–Sat) or 02:00 (Sun–Mon), pause the schedule beforehand with `scripts\server.cmd schedule off` or start the VM again with `scripts\server.cmd start`.
 
-### Deploying the Schedule
+### Provisioning the Schedule
 
-```bash
-az deployment group create -g zenha-rg -f deploy/azure/schedule.bicep
-```
+The workflows and role assignments are provisioned automatically when `tofu apply` runs in `deploy/infra/azure` with `schedule_enabled = true`.
 
 ### Changing Schedule Times
 
-Edit the `schedules` parameter array in `deploy/azure/schedule.bicep` (or pass `--parameters schedules=...`) and re-run `az deployment group create -g zenha-rg -f deploy/azure/schedule.bicep`.
+Override the `schedules` variable in `deploy/infra/azure/terraform.tfvars` (or adjust its default in `deploy/infra/azure/variables.tf`) and re-run `tofu apply` in `deploy/infra/azure`.
 
 ### Checking Status and Pausing
 
