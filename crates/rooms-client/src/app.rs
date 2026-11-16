@@ -23,7 +23,9 @@ use crate::settings::VoiceMode;
 use crate::settings::{self, Settings};
 #[cfg(windows)]
 use crate::single_instance::Listener;
-use crate::state::{AppState, ChatEntry, CredentialOp, Screen, UserAction, room_display_title};
+use crate::state::{
+    AppState, ChatEntry, CredentialOp, Screen, UserAction, display_name_error, room_display_title,
+};
 use crate::theme;
 #[cfg(windows)]
 use crate::tray::{Tray, TrayAction};
@@ -536,9 +538,12 @@ impl eframe::App for App {
         let ptt_hint = self.state.push_to_talk_hint();
         let available_update = self.state.visible_update().cloned();
         let had_admin_dialog = self.state.admin.dialog.is_some();
+        let can_save_name = self.state.can_save_name();
+        let name_error = display_name_error(&self.state.name_draft);
         let AppState {
             screen,
             form,
+            name_draft,
             onboarding,
             lobby_voice,
             lobby_error,
@@ -594,7 +599,9 @@ impl eframe::App for App {
             ui.ctx(),
             views::settings::SettingsView {
                 server_url: &form.server_url,
-                display_name: &form.display_name,
+                name_draft,
+                name_error,
+                can_save_name,
                 audio,
                 hotkeys,
                 close_to_tray: *close_to_tray,

@@ -110,6 +110,7 @@ fn to_core(command: UiCommand) -> Command {
         UiCommand::Leave => Command::Leave,
         UiCommand::SetMuted(muted) => Command::SetMuted(muted),
         UiCommand::SetDeafened(deafened) => Command::SetDeafened(deafened),
+        UiCommand::SetDisplayName { name } => Command::SetDisplayName { name },
         UiCommand::SendChat { text, save } => Command::SendChat { text, save },
         UiCommand::LoadChatHistory { before } => Command::LoadChatHistory { before },
         UiCommand::DeleteChat { id } => Command::DeleteChat { id },
@@ -431,6 +432,9 @@ impl Translator {
             Event::ParticipantSpeakingChanged { identity, speaking } => {
                 self.update(&identity, |p| p.speaking = speaking)
             }
+            Event::ParticipantNameChanged { identity, name } => {
+                self.update(&identity, |p| p.name = name)
+            }
             Event::ChatReceived(message) => {
                 vec![UiEvent::ChatReceived(self.chat_message_view(message))]
             }
@@ -630,6 +634,20 @@ mod tests {
             speaking: true,
         });
         assert!(matches!(&events[..], [UiEvent::ParticipantUpdated(p)] if p.muted && p.speaking));
+    }
+
+    #[test]
+    fn name_change_becomes_a_full_participant_update() {
+        let mut translator = Translator::default();
+        joined(&mut translator);
+        let events = translator.translate(Event::ParticipantNameChanged {
+            identity: "ana".to_owned(),
+            name: "Ana Paula".to_owned(),
+        });
+        assert!(matches!(
+            &events[..],
+            [UiEvent::ParticipantUpdated(p)] if p.identity == "ana" && p.name == "Ana Paula"
+        ));
     }
 
     #[test]

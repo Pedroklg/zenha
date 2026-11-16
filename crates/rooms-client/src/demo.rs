@@ -218,6 +218,7 @@ impl DemoSession {
             }
             UiCommand::SetMuted(muted) => self.set_muted(muted),
             UiCommand::SetDeafened(_) => {}
+            UiCommand::SetDisplayName { name } => self.set_display_name(name),
             UiCommand::SendChat { text, save } => self.chat(text, save),
             UiCommand::LoadChatHistory { before } => self.load_chat_history(before),
             UiCommand::DeleteChat { id } => self.delete_chat(id),
@@ -632,6 +633,18 @@ impl DemoSession {
         }
     }
 
+    fn set_display_name(&mut self, name: String) {
+        if let Some(me) = self
+            .participants
+            .iter_mut()
+            .find(|p| p.identity == SELF_IDENTITY)
+        {
+            me.name = name;
+            let update = UiEvent::ParticipantUpdated(me.clone());
+            self.schedule(Duration::ZERO, update);
+        }
+    }
+
     fn chat(&mut self, text: String, save: bool) {
         if self.room.is_none() {
             return;
@@ -975,6 +988,20 @@ mod tests {
         assert!(matches!(
             events.as_slice(),
             [UiEvent::ParticipantUpdated(p)] if p.identity == SELF_IDENTITY && p.muted
+        ));
+    }
+
+    #[test]
+    fn set_display_name_updates_own_participant() {
+        let mut session = DemoSession::with_delays(DemoDelays::instant());
+        joined(&mut session);
+        session.send(UiCommand::SetDisplayName {
+            name: "Lia".to_owned(),
+        });
+        let events = drain(&mut session);
+        assert!(matches!(
+            events.as_slice(),
+            [UiEvent::ParticipantUpdated(p)] if p.identity == SELF_IDENTITY && p.name == "Lia"
         ));
     }
 

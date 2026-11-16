@@ -58,9 +58,7 @@ impl LoginForm {
 
     pub fn errors(&self) -> LoginErrors {
         LoginErrors {
-            display_name: validate_display_name(&self.display_name)
-                .err()
-                .map(display_name_message),
+            display_name: display_name_error(&self.display_name),
             server_url: server_url_error(&self.server_url),
         }
     }
@@ -68,6 +66,10 @@ impl LoginForm {
     pub fn is_valid(&self) -> bool {
         self.errors().is_empty()
     }
+}
+
+pub fn display_name_error(name: &str) -> Option<String> {
+    validate_display_name(name).err().map(display_name_message)
 }
 
 fn display_name_message(err: ValidationError) -> String {
@@ -216,6 +218,35 @@ impl AppState {
         }
     }
 
+    pub fn can_save_name(&self) -> bool {
+        self.name_draft.trim() != self.form.display_name.trim()
+            && display_name_error(&self.name_draft).is_none()
+    }
+
+    pub(super) fn save_display_name(&mut self) -> Vec<UiCommand> {
+        if !self.can_save_name() {
+            return Vec::new();
+        }
+        let name = self.name_draft.trim().to_owned();
+        self.name_draft.clone_from(&name);
+        self.form.display_name.clone_from(&name);
+        self.pending_save = Some(self.settings_snapshot());
+        match &mut self.screen {
+            Screen::Onboarding => return Vec::new(),
+            Screen::InRoom(room) => {
+                if let Some(me) = room
+                    .participants
+                    .iter_mut()
+                    .find(|p| p.identity == room.local_identity)
+                {
+                    me.name.clone_from(&name);
+                }
+            }
+            Screen::Lobby | Screen::Connecting { .. } => {}
+        }
+        vec![UiCommand::SetDisplayName { name }]
+    }
+
     pub fn can_submit_onboarding(&self) -> bool {
         matches!(self.screen, Screen::Onboarding) && self.form.is_valid()
     }
@@ -346,7 +377,7 @@ mod tests {
 
     use super::*;
     use crate::state::UserAction;
-    use crate::state::test_support::{in_room, state_with_code, valid_settings};
+    use crate::state::test_support::{in_room, person, room, state_with_code, valid_settings};
     use crate::ui_model::UiEvent;
 
     #[test]
@@ -636,5 +667,65 @@ mod tests {
         assert!(!op_dbg.contains("store-secret-password"));
         assert!(op_dbg.contains("https://voz.exemplo"));
         assert!(op_dbg.contains("<redacted>"));
+    }
+
+    #[test]
+    fn save_name_button_needs_a_changed_valid_name() {
+        let mut state = AppState::new(&valid_settings(), Some("segredo".to_owned()));
+        state.handle_action(UserAction::OpenSettings);
+        assert_eq!(state.name_draft, "Pedro");
+        assert!(!state.can_save_name());
+        state.name_draft = "  Pedro ".to_owned();
+        assert!(!state.can_save_name());
+        state.name_draft = "   ".to_owned();
+        assert!(!state.can_save_name());
+        assert!(display_name_error(&state.name_draft).is_some());
+        state.name_draft = "a".repeat(MAX_DISPLAY_NAME_LEN + 1);
+        assert!(!state.can_save_name());
+        assert!(state.handle_action(UserAction::SaveDisplayName).is_empty());
+        assert!(state.take_pending_save().is_none());
+        state.name_draft = " Pedrão ".to_owned();
+        assert!(state.can_save_name());
+    }
+
+    #[test]
+    fn saving_name_in_room_persists_renames_self_and_tells_the_core() {
+        let mut state = state_with_code();
+        state.handle_action(UserAction::SubmitOnboarding);
+        state.handle_action(UserAction::JoinRoom("geral".to_owned()));
+        state.apply_event(UiEvent::Joined {
+            room: "geral".to_owned(),
+            local_identity: "pedro".to_owned(),
+            participants: vec![person("pedro"), person("ana")],
+        });
+        state.take_pending_save();
+        state.name_draft = " Pedrão ".to_owned();
+        assert_eq!(
+            state.handle_action(UserAction::SaveDisplayName),
+            vec![UiCommand::SetDisplayName {
+                name: "Pedrão".to_owned()
+            }]
+        );
+        assert_eq!(state.form.display_name, "Pedrão");
+        assert_eq!(state.name_draft, "Pedrão");
+        assert_eq!(state.take_pending_save().unwrap().display_name, "Pedrão");
+        assert!(!state.can_save_name());
+        let me = room(&state)
+            .participants
+            .iter()
+            .find(|p| p.identity == "pedro")
+            .unwrap();
+        assert_eq!(me.name, "Pedrão");
+        assert_eq!(state.credentials().display_name, "Pedrão");
+
+        let mut renamed = person("ana");
+        renamed.name = "Ana Paula".to_owned();
+        state.apply_event(UiEvent::ParticipantUpdated(renamed));
+        assert!(
+            room(&state)
+                .participants
+                .iter()
+                .any(|p| p.identity == "ana" && p.name == "Ana Paula")
+        );
     }
 }
