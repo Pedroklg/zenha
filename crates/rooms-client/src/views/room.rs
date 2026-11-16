@@ -644,9 +644,14 @@ fn occupant_row(
     } else {
         Sense::hover()
     };
+    let row_rect = egui::Rect::from_min_size(
+        ui.cursor().min,
+        Vec2::new(ui.available_width(), ui.spacing().interact_size.y),
+    );
     let row_response = ui
         .scope_builder(
             egui::UiBuilder::new()
+                .max_rect(row_rect)
                 .layout(Layout::left_to_right(Align::Center))
                 .sense(sense),
             |ui| {
