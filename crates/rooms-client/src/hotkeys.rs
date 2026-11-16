@@ -14,8 +14,8 @@ impl HotkeyAction {
 
     pub fn label(self) -> &'static str {
         match self {
-            Self::ToggleMute => "Mutar microfone",
-            Self::ToggleDeafen => "Ensurdecer",
+            Self::ToggleMute => "Ligar/desligar microfone",
+            Self::ToggleDeafen => "Ligar/desligar áudio",
             Self::PushToTalk => "Push-to-talk",
         }
     }
@@ -519,8 +519,8 @@ mod tests {
         assert_eq!(binding_label("control+ArrowRight"), "Ctrl+Direita");
         assert_eq!(binding_label("control+Space"), "Ctrl+Espaço");
         assert_eq!(binding_label("alt+BracketLeft"), "Alt+BracketLeft");
-        assert_eq!(HotkeyAction::ToggleMute.label(), "Mutar microfone");
-        assert_eq!(HotkeyAction::ToggleDeafen.label(), "Ensurdecer");
+        assert_eq!(HotkeyAction::ToggleMute.label(), "Ligar/desligar microfone");
+        assert_eq!(HotkeyAction::ToggleDeafen.label(), "Ligar/desligar áudio");
         assert_eq!(HotkeyAction::PushToTalk.label(), "Push-to-talk");
         assert_eq!(
             HotkeyAction::ALL,

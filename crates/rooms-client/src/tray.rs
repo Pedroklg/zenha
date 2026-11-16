@@ -46,7 +46,7 @@ impl Tray {
             }
         };
         let open = MenuItem::new("Abrir", true, None);
-        let mute = CheckMenuItem::new("Microfone mutado", false, false, None);
+        let mute = CheckMenuItem::new("Microfone desligado", false, false, None);
         let quit = MenuItem::new("Sair", true, None);
         let menu = Menu::new();
         if let Err(err) =

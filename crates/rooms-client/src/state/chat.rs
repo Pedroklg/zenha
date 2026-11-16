@@ -30,11 +30,19 @@ pub struct ImageViewer {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingPastedImage {
+    pub path: PathBuf,
+    pub name: String,
+    pub size: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChatState {
     pub messages: VecDeque<ChatEntry>,
     pub unread: usize,
     pub draft: String,
     pub save: bool,
+    pub pending_paste: Option<PendingPastedImage>,
     pub has_more: bool,
     pub history_loading: bool,
     pub open: bool,
@@ -50,6 +58,7 @@ impl ChatState {
             unread: 0,
             draft: String::new(),
             save: false,
+            pending_paste: None,
             has_more: false,
             history_loading: false,
             open: true,
@@ -196,16 +205,18 @@ impl ChatState {
         }
     }
 
-    pub(super) fn clear(&mut self) {
+    pub(super) fn clear(&mut self) -> Option<PathBuf> {
         self.messages.clear();
         self.unread = 0;
         self.draft.clear();
         self.save = false;
+        let discarded_paste = self.pending_paste.take().map(|pending| pending.path);
         self.has_more = false;
         self.history_loading = false;
         self.notice = None;
         self.viewer = None;
         self.pending_saved_drafts.clear();
+        discarded_paste
     }
 
     pub fn draft_len(&self) -> usize {
@@ -300,6 +311,22 @@ impl AppState {
         if let Screen::InRoom(room) = &mut self.screen {
             room.chat.set_notice(text);
         }
+    }
+
+    pub(super) fn discard_pending_paste(&mut self) {
+        if let Screen::InRoom(room) = &mut self.screen
+            && let Some(pending) = room.chat.pending_paste.take()
+        {
+            self.pending_paste_deletes.push(pending.path);
+        }
+    }
+
+    pub fn has_pending_paste(&self) -> bool {
+        matches!(&self.screen, Screen::InRoom(room) if room.chat.pending_paste.is_some())
+    }
+
+    pub fn chat_draft_is_empty(&self) -> bool {
+        matches!(&self.screen, Screen::InRoom(room) if room.chat.draft.is_empty())
     }
 
     pub fn can_paste_chat_image(&self) -> bool {
@@ -892,5 +919,83 @@ mod tests {
         });
         assert!(!room(&state).chat.history_loading);
         assert!(room(&state).chat.draft.is_empty());
+    }
+
+    fn pasted_image(name: &str) -> PendingPastedImage {
+        PendingPastedImage {
+            path: PathBuf::from(name),
+            name: name.to_owned(),
+            size: 2048,
+        }
+    }
+
+    #[test]
+    fn pasting_image_creates_pending_without_command_and_send_emits_send_file() {
+        let mut state = state_with_code();
+        let outside = pasted_image("fora.png");
+        assert!(
+            state
+                .handle_action(UserAction::StagePastedImage(outside.clone()))
+                .is_empty()
+        );
+        assert_eq!(state.take_pending_paste_deletes(), vec![outside.path]);
+
+        in_room(&mut state);
+        let first = pasted_image("print-1.png");
+        assert!(
+            state
+                .handle_action(UserAction::StagePastedImage(first.clone()))
+                .is_empty()
+        );
+        assert_eq!(room(&state).chat.pending_paste.as_ref(), Some(&first));
+        assert!(state.take_pending_paste_deletes().is_empty());
+
+        let expected = state.handle_action(UserAction::AttachFile(first.path.clone()));
+        assert_eq!(state.handle_action(UserAction::SendPastedImage), expected);
+        assert_eq!(room(&state).chat.pending_paste, None);
+        assert!(state.take_pending_paste_deletes().is_empty());
+        assert!(state.handle_action(UserAction::SendPastedImage).is_empty());
+    }
+
+    #[test]
+    fn replacing_canceling_switching_or_leaving_clears_pending_paste_and_queues_delete() {
+        let mut state = state_with_code();
+        in_room(&mut state);
+
+        let first = pasted_image("print-1.png");
+        let second = pasted_image("print-2.png");
+        state.handle_action(UserAction::StagePastedImage(first.clone()));
+        assert!(
+            state
+                .handle_action(UserAction::StagePastedImage(second.clone()))
+                .is_empty()
+        );
+        assert_eq!(room(&state).chat.pending_paste.as_ref(), Some(&second));
+        assert_eq!(state.take_pending_paste_deletes(), vec![first.path]);
+
+        assert!(
+            state
+                .handle_action(UserAction::CancelPastedImage)
+                .is_empty()
+        );
+        assert_eq!(room(&state).chat.pending_paste, None);
+        assert_eq!(state.take_pending_paste_deletes(), vec![second.path]);
+
+        let third = pasted_image("print-3.png");
+        state.handle_action(UserAction::StagePastedImage(third.clone()));
+        state.handle_action(UserAction::SwitchRoom("jogos".to_owned()));
+        assert_eq!(room(&state).chat.pending_paste, None);
+        assert_eq!(state.take_pending_paste_deletes(), vec![third.path]);
+
+        let fourth = pasted_image("print-4.png");
+        state.handle_action(UserAction::StagePastedImage(fourth.clone()));
+        state.handle_action(UserAction::Leave);
+        assert_eq!(state.take_pending_paste_deletes(), vec![fourth.path]);
+
+        in_room(&mut state);
+        let fifth = pasted_image("print-5.png");
+        state.handle_action(UserAction::StagePastedImage(fifth.clone()));
+        state.apply_event(UiEvent::Left);
+        assert_eq!(state.take_pending_paste_deletes(), vec![fifth.path]);
     }
 }

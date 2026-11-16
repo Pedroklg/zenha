@@ -249,10 +249,15 @@ pub(super) fn local_share_preview(
     else {
         return;
     };
+    if share.preview_collapsed {
+        collapsed_share_bar(ui, compact, actions);
+        ui.add_space(if compact { 8.0 } else { 16.0 });
+        return;
+    }
     let box_size = if compact {
         Vec2::new(144.0, 81.0)
     } else {
-        let max_w = ui.available_width().clamp(160.0, 280.0);
+        let max_w = (ui.available_width() - 28.0).clamp(160.0, 304.0);
         Vec2::new(max_w, (max_w * 9.0 / 16.0).round())
     };
     egui::Frame::new()
@@ -278,20 +283,32 @@ pub(super) fn local_share_preview(
                                 .color(theme::TEXT),
                         );
                         ui.add_space(6.0);
-                        if ui.button("Parar transmissão").clicked() {
-                            actions.push(UserAction::StopShare);
-                        }
+                        ui.horizontal_wrapped(|ui| {
+                            ui.spacing_mut().item_spacing.x = 6.0;
+                            if ui.button("Recolher").clicked() {
+                                actions.push(UserAction::ToggleSharePreviewCollapsed);
+                            }
+                            if ui.button("Parar transmissão").clicked() {
+                                actions.push(UserAction::StopShare);
+                            }
+                        });
                     });
                 });
             } else {
-                ui.horizontal(|ui| {
+                ui.set_width(box_size.x);
+                ui.horizontal_wrapped(|ui| {
+                    ui.spacing_mut().item_spacing.x = 6.0;
                     live_badge(ui);
-                    ui.add_space(6.0);
                     ui.label(
                         RichText::new("Você está transmitindo")
                             .font(theme::semibold(14.0))
                             .color(theme::TEXT),
                     );
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        if ui.small_button("Recolher").clicked() {
+                            actions.push(UserAction::ToggleSharePreviewCollapsed);
+                        }
+                    });
                 });
                 ui.add_space(8.0);
                 preview_box(
@@ -304,6 +321,36 @@ pub(super) fn local_share_preview(
             }
         });
     ui.add_space(if compact { 8.0 } else { 16.0 });
+}
+
+fn collapsed_share_bar(ui: &mut egui::Ui, compact: bool, actions: &mut Vec<UserAction>) {
+    let padding = if compact {
+        Margin::symmetric(12, 8)
+    } else {
+        Margin::symmetric(12, 10)
+    };
+    egui::Frame::new()
+        .fill(theme::PANEL)
+        .stroke(Stroke::new(1.5, theme::ACCENT))
+        .corner_radius(CornerRadius::same(10))
+        .inner_margin(padding)
+        .show(ui, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing.x = 8.0;
+                live_badge(ui);
+                ui.label(
+                    RichText::new("Você está transmitindo")
+                        .font(theme::semibold(13.5))
+                        .color(theme::TEXT),
+                );
+                if ui.button("Expandir").clicked() {
+                    actions.push(UserAction::ToggleSharePreviewCollapsed);
+                }
+                if ui.button("Parar transmissão").clicked() {
+                    actions.push(UserAction::StopShare);
+                }
+            });
+        });
 }
 
 fn preview_box(
@@ -323,4 +370,48 @@ fn preview_box(
             ui.set_max_size(size);
             renderer.show_feed(ui, serial, feed, "Iniciando prévia...");
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use eframe::egui;
+
+    use super::*;
+    use crate::ui_model::{FrameFeed, UiFrame};
+
+    struct CountingFeed(AtomicUsize);
+
+    impl FrameFeed for CountingFeed {
+        fn take_newer(&self, _last_seen: &mut u64) -> Option<UiFrame> {
+            self.0.fetch_add(1, Ordering::Relaxed);
+            None
+        }
+    }
+
+    #[test]
+    fn collapsed_preview_stops_pulling_frames_from_feed() {
+        let counter = Arc::new(CountingFeed(AtomicUsize::new(0)));
+        let feed = FeedHandle(Arc::clone(&counter) as Arc<dyn FrameFeed>);
+        let mut share = ShareState::with_test_preview(feed, true);
+        let mut renderer = VideoRenderer::default();
+        let ctx = egui::Context::default();
+        let mut actions = Vec::new();
+
+        let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+            local_share_preview(ui, &share, &mut renderer, false, &mut actions);
+            local_share_preview(ui, &share, &mut renderer, true, &mut actions);
+        });
+        out.textures_delta.clear();
+        assert_eq!(counter.0.load(Ordering::Relaxed), 0);
+
+        share.preview_collapsed = false;
+        let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+            local_share_preview(ui, &share, &mut renderer, false, &mut actions);
+        });
+        out.textures_delta.clear();
+        assert_eq!(counter.0.load(Ordering::Relaxed), 1);
+    }
 }

@@ -19,7 +19,7 @@ pub use audio::{
     AudioState, DEFAULT_DEVICE_LABEL, DEFAULT_PARTICIPANT_VOLUME, FULL_VOLUME, HotkeyState,
     LobbyVoiceState, MAX_PARTICIPANT_VOLUME, MicLevelView, participant_volume_for,
 };
-pub use chat::{ChatEntry, ChatState, ImageViewer};
+pub use chat::{ChatEntry, ChatState, ImageViewer, PendingPastedImage};
 pub use onboarding::{CredentialOp, LoginForm, OnboardingState, display_name_error};
 pub use room::{ConnectionStatus, RoomState, room_display_title};
 pub use share::{LocalShare, SharePicker, ShareState, WatchState, aspect_fit};
@@ -59,6 +59,9 @@ pub enum UserAction {
     LoadOlderChat,
     DeleteChat(String),
     AttachFile(PathBuf),
+    StagePastedImage(PendingPastedImage),
+    SendPastedImage,
+    CancelPastedImage,
     /// Effect handled by the app (file dialog); the state does not change.
     PickFile,
     /// Effect handled by the app (save dialog and copy); the state does not change.
@@ -104,6 +107,7 @@ pub enum UserAction {
     SelectSharePreset(SharePresetView),
     StartShare,
     StopShare,
+    ToggleSharePreviewCollapsed,
     DismissShareError,
     Watch(String),
     StopWatching,
@@ -160,6 +164,7 @@ pub struct AppState {
     pending_password_save: Option<(String, String)>,
     pending_credential_ops: Vec<CredentialOp>,
     pending_commands: Vec<UiCommand>,
+    pending_paste_deletes: Vec<PathBuf>,
     audio_configured: bool,
     session_mic_sent: bool,
     session_deafened: bool,
@@ -221,6 +226,7 @@ impl AppState {
             pending_password_save: None,
             pending_credential_ops: Vec::new(),
             pending_commands,
+            pending_paste_deletes: Vec::new(),
             audio_configured: false,
             session_mic_sent: false,
             session_deafened: false,
@@ -245,6 +251,10 @@ impl AppState {
 
     pub fn take_pending_commands(&mut self) -> Vec<UiCommand> {
         std::mem::take(&mut self.pending_commands)
+    }
+
+    pub fn take_pending_paste_deletes(&mut self) -> Vec<PathBuf> {
+        std::mem::take(&mut self.pending_paste_deletes)
     }
 
     pub fn take_pending_save(&mut self) -> Option<Settings> {
@@ -305,6 +315,34 @@ impl AppState {
                 self.with_room(|room| room.delete_chat(id, is_admin))
             }
             UserAction::AttachFile(path) => self.with_room(|_| vec![UiCommand::SendFile { path }]),
+            UserAction::StagePastedImage(image) => {
+                if let Screen::InRoom(room) = &mut self.screen {
+                    if let Some(previous) = room.chat.pending_paste.replace(image)
+                        && room
+                            .chat
+                            .pending_paste
+                            .as_ref()
+                            .is_some_and(|current| current.path != previous.path)
+                    {
+                        self.pending_paste_deletes.push(previous.path);
+                    }
+                } else {
+                    self.pending_paste_deletes.push(image.path);
+                }
+                Vec::new()
+            }
+            UserAction::SendPastedImage => self.with_room(|room| {
+                room.chat
+                    .pending_paste
+                    .take()
+                    .map_or_else(Vec::new, |pending| {
+                        vec![UiCommand::SendFile { path: pending.path }]
+                    })
+            }),
+            UserAction::CancelPastedImage => {
+                self.discard_pending_paste();
+                Vec::new()
+            }
             UserAction::PickFile
             | UserAction::SaveReceivedFile { .. }
             | UserAction::OpenImageExternally(_) => Vec::new(),
@@ -446,6 +484,13 @@ impl AppState {
                     Vec::new()
                 }
             }),
+            UserAction::ToggleSharePreviewCollapsed => {
+                self.with_room(|room| {
+                    room.share.toggle_preview_collapsed();
+                    Vec::new()
+                });
+                Vec::new()
+            }
             UserAction::DismissShareError => {
                 self.with_room(|room| {
                     room.share.error = None;

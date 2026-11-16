@@ -116,6 +116,7 @@ pub struct WatchState {
 pub struct ShareState {
     pub local: LocalShare,
     pub preview: Option<PreviewState>,
+    pub preview_collapsed: bool,
     pub error: Option<String>,
     pub remote: Vec<String>,
     pub watching: Option<WatchState>,
@@ -145,6 +146,7 @@ impl ShareState {
             UiEvent::ScreenShareStarted { preview } => {
                 self.serial += 1;
                 self.local = LocalShare::Active;
+                self.preview_collapsed = false;
                 self.preview = Some(PreviewState {
                     feed: preview,
                     serial: self.serial,
@@ -153,12 +155,14 @@ impl ShareState {
             UiEvent::ScreenShareStopped => {
                 self.local = LocalShare::Idle;
                 self.preview = None;
+                self.preview_collapsed = false;
             }
             UiEvent::ShareFailed { message } => {
                 self.error = Some(message);
                 if self.local == LocalShare::Starting {
                     self.local = LocalShare::Idle;
                     self.preview = None;
+                    self.preview_collapsed = false;
                 }
             }
             UiEvent::RemoteScreenShareStarted { identity } => {
@@ -185,6 +189,24 @@ impl ShareState {
     pub(super) fn start(&mut self) {
         self.error = None;
         self.local = LocalShare::Starting;
+        self.preview_collapsed = false;
+    }
+
+    pub(super) fn toggle_preview_collapsed(&mut self) {
+        if self.local == LocalShare::Active && self.preview.is_some() {
+            self.preview_collapsed = !self.preview_collapsed;
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_test_preview(feed: FeedHandle, preview_collapsed: bool) -> Self {
+        Self {
+            local: LocalShare::Active,
+            preview: Some(PreviewState { feed, serial: 1 }),
+            preview_collapsed,
+            serial: 1,
+            ..Self::default()
+        }
     }
 
     pub(super) fn watch(&mut self, identity: String) -> Vec<UiCommand> {
@@ -262,6 +284,13 @@ impl AppState {
     pub fn is_sharing_local(&self) -> bool {
         match &self.screen {
             Screen::InRoom(room) => room.share.local == LocalShare::Active,
+            _ => false,
+        }
+    }
+
+    pub fn is_share_preview_collapsed(&self) -> bool {
+        match &self.screen {
+            Screen::InRoom(room) => room.share.preview_collapsed,
             _ => false,
         }
     }
@@ -567,5 +596,46 @@ mod tests {
 
         state.apply_event(targets_event());
         assert!(state.picker.thumbnails.is_empty());
+    }
+
+    #[test]
+    fn local_share_preview_toggles_collapse_and_restarts_expanded() {
+        let mut state = state_with_code();
+        in_room(&mut state);
+
+        assert!(
+            state
+                .handle_action(UserAction::ToggleSharePreviewCollapsed)
+                .is_empty()
+        );
+        assert!(!room(&state).share.preview_collapsed);
+
+        state.apply_event(UiEvent::ScreenShareStarted { preview: feed() });
+        assert!(!room(&state).share.preview_collapsed);
+        assert!(!state.is_share_preview_collapsed());
+
+        assert!(
+            state
+                .handle_action(UserAction::ToggleSharePreviewCollapsed)
+                .is_empty()
+        );
+        assert!(room(&state).share.preview_collapsed);
+        assert!(state.is_share_preview_collapsed());
+
+        assert!(
+            state
+                .handle_action(UserAction::ToggleSharePreviewCollapsed)
+                .is_empty()
+        );
+        assert!(!room(&state).share.preview_collapsed);
+
+        state.handle_action(UserAction::ToggleSharePreviewCollapsed);
+        assert!(room(&state).share.preview_collapsed);
+
+        state.apply_event(UiEvent::ScreenShareStopped);
+        assert!(!room(&state).share.preview_collapsed);
+
+        state.apply_event(UiEvent::ScreenShareStarted { preview: feed() });
+        assert!(!room(&state).share.preview_collapsed);
     }
 }

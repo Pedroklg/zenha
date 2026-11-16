@@ -97,7 +97,7 @@ pub(super) fn participant_volume_menu(
 
             if menu.is_admin {
                 ui.separator();
-                if ui.button("Mutar microfone").clicked() {
+                if ui.button("Desligar microfone dele").clicked() {
                     actions.push(UserAction::AdminMuteParticipant {
                         identity: menu.identity.to_owned(),
                     });

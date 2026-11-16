@@ -133,11 +133,11 @@ impl RoomState {
         )
     }
 
-    fn reset_for_room(&mut self, room: String) {
+    fn reset_for_room(&mut self, room: String) -> Option<std::path::PathBuf> {
         self.room = room;
         self.participants.clear();
-        self.chat.clear();
         self.share = ShareState::default();
+        self.chat.clear()
     }
 }
 
@@ -245,6 +245,7 @@ impl AppState {
             self.lobby_voice = room.voice_state();
             self.session_mic_sent = room.mic_sent;
             self.session_deafened = room.deafened;
+            self.discard_pending_paste();
             self.screen = Screen::Lobby;
             leave_cue.into_iter().chain([UiCommand::Leave]).collect()
         } else {
@@ -264,9 +265,14 @@ impl AppState {
             self.admin.dialog = None;
         }
         let leave_cue = self.self_left_cue();
-        if let Screen::InRoom(state) = &mut self.screen {
-            state.reset_for_room(room.clone());
+        let discarded = if let Screen::InRoom(state) = &mut self.screen {
             state.status = ConnectionStatus::Connecting;
+            state.reset_for_room(room.clone())
+        } else {
+            None
+        };
+        if let Some(path) = discarded {
+            self.pending_paste_deletes.push(path);
         }
         leave_cue
             .into_iter()
@@ -303,15 +309,20 @@ impl AppState {
             Screen::InRoom(state) => {
                 let is_new_room =
                     state.room != room || state.status == ConnectionStatus::Connecting;
-                if state.room != room {
-                    state.reset_for_room(room);
-                }
+                let discarded = if state.room != room {
+                    state.reset_for_room(room)
+                } else {
+                    None
+                };
                 state.local_identity = local_identity;
                 state.participants = participants;
                 state.status = ConnectionStatus::Connected;
                 state.share = ShareState::default();
                 if let Some(notice) = self.pending_move_notice.take() {
                     state.chat.set_notice(notice);
+                }
+                if let Some(path) = discarded {
+                    self.pending_paste_deletes.push(path);
                 }
                 if is_new_room {
                     self.pending_commands.extend(self.room_cue(Cue::SelfJoined));
@@ -336,6 +347,7 @@ impl AppState {
                 self.lobby_voice = room.voice_state();
                 self.session_mic_sent = room.mic_sent;
                 self.session_deafened = room.deafened;
+                self.discard_pending_paste();
                 self.screen = Screen::Lobby;
                 self.pending_commands.extend(leave_cue);
             }
