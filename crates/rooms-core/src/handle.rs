@@ -82,6 +82,8 @@ impl SessionHandle {
             client_id: String::new(),
             display_name: String::new(),
             invite_code: String::new(),
+            avatar_version: None,
+            avatar_cache_dir: None,
         };
         Self::spawn(config, backend, UnavailableTokenClient)
     }

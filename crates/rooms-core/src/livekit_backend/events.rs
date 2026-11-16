@@ -9,6 +9,7 @@ use livekit::prelude::{
     RoomEvent, TrackPublication, TrackSource,
 };
 use livekit::webrtc::audio_stream::native::NativeAudioStream;
+use rooms_protocol::{AVATAR_ATTR, parse_avatar_attribute};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 use crate::api::RemovalReason;
@@ -84,6 +85,19 @@ fn translate(
                 name: display_name(name, &identity),
                 identity,
             }]
+        }
+        RoomEvent::ParticipantAttributesChanged {
+            participant,
+            changed_attributes,
+        } => {
+            if let Some(raw) = changed_attributes.get(AVATAR_ATTR) {
+                vec![BackendEvent::AvatarChanged {
+                    identity: String::from(participant.identity()),
+                    version: parse_avatar_attribute(raw),
+                }]
+            } else {
+                Vec::new()
+            }
         }
         RoomEvent::TrackMuted {
             participant,

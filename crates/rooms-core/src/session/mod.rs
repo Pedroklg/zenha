@@ -2,6 +2,7 @@
 
 mod admin;
 mod audio;
+mod avatar;
 mod chat;
 mod connection;
 mod files;
@@ -10,6 +11,7 @@ mod share;
 #[cfg(test)]
 mod test_support;
 
+use std::collections::HashSet;
 use std::pin::Pin;
 use std::sync::Arc;
 
@@ -25,6 +27,7 @@ use crate::participant_volume::ParticipantVolumes;
 use crate::token::TokenClient;
 
 use self::admin::{AdminSession, is_server_admin_topic};
+use self::avatar::AvatarTaskEvent;
 use self::connection::Phase;
 use self::rooms::wait_optional;
 use self::share::{ThumbnailJob, ThumbnailReady};
@@ -46,6 +49,9 @@ struct Session {
     capture_targets_seq: u64,
     thumbnail_tx: UnboundedSender<ThumbnailReady>,
     thumbnail_job: Option<ThumbnailJob>,
+    avatar_op_seq: u64,
+    avatar_tx: UnboundedSender<AvatarTaskEvent>,
+    avatar_downloads: HashSet<(String, String)>,
 }
 
 pub(crate) async fn run(
@@ -57,6 +63,7 @@ pub(crate) async fn run(
     policy: ReconnectPolicy,
 ) {
     let (thumbnail_tx, mut thumbnail_rx) = mpsc::unbounded_channel();
+    let (avatar_tx, mut avatar_rx) = mpsc::unbounded_channel();
     let mut session = Session {
         config,
         backend,
@@ -74,6 +81,9 @@ pub(crate) async fn run(
         capture_targets_seq: 0,
         thumbnail_tx,
         thumbnail_job: None,
+        avatar_op_seq: 0,
+        avatar_tx,
+        avatar_downloads: HashSet::new(),
     };
     loop {
         tokio::select! {
@@ -83,6 +93,7 @@ pub(crate) async fn run(
             },
             input = session.phase.wait() => session.on_input(input).await,
             Some(thumb) = thumbnail_rx.recv() => session.on_thumbnail(thumb),
+            Some(avatar_event) = avatar_rx.recv() => session.on_avatar_task_event(avatar_event).await,
             _ = wait_optional(&mut session.rooms_refresh_sleep) => {
                 session.rooms_refresh_sleep = None;
                 session.refresh_rooms();
@@ -112,6 +123,8 @@ impl Session {
             Command::SetMuted(muted) => self.set_muted(muted).await,
             Command::SetDeafened(deafened) => self.set_deafened(deafened).await,
             Command::SetDisplayName { name } => self.set_display_name(name).await,
+            Command::SetAvatar { path } => self.set_avatar(path),
+            Command::ClearAvatar => self.clear_avatar(),
             Command::SendChat { text, save } => self.send_chat(&text, save).await,
             Command::LoadChatHistory { before } => self.load_chat_history(before).await,
             Command::DeleteChat { id } => self.delete_chat(&id).await,
@@ -147,7 +160,12 @@ impl Session {
             return;
         }
         match event {
-            Some(BackendEvent::ParticipantJoined(p)) => self.emit(Event::ParticipantJoined(p)),
+            Some(BackendEvent::ParticipantJoined(p)) => {
+                if let Some(version) = p.avatar_version.as_deref() {
+                    self.queue_avatar_download(&p.identity, version);
+                }
+                self.emit(Event::ParticipantJoined(p));
+            }
             Some(BackendEvent::ParticipantLeft { identity }) => {
                 let was_watched = self.watching.as_deref() == Some(identity.as_str());
                 self.emit(Event::ParticipantLeft { identity });
@@ -168,6 +186,12 @@ impl Session {
             }
             Some(BackendEvent::NameChanged { identity, name }) => {
                 self.emit(Event::ParticipantNameChanged { identity, name });
+            }
+            Some(BackendEvent::AvatarChanged { identity, version }) => {
+                if let Some(ver) = version.as_deref() {
+                    self.queue_avatar_download(&identity, ver);
+                }
+                self.emit(Event::ParticipantAvatarChanged { identity, version });
             }
             Some(BackendEvent::DataReceived {
                 sender,

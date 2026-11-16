@@ -150,7 +150,7 @@ impl Session {
             room:
                 ConnectedRoom {
                     local_identity,
-                    participants,
+                    mut participants,
                     events,
                 },
         } = connected;
@@ -159,6 +159,16 @@ impl Session {
         }
         if let Err(err) = self.backend.set_output_muted(self.deafened).await {
             tracing::warn!(%err, "could not apply output state");
+        }
+        if let Some(version) = self.config.avatar_version.clone() {
+            if let Err(err) = self.backend.set_avatar_attribute(Some(&version)).await {
+                tracing::warn!(%err, "could not publish initial avatar attribute");
+            }
+            for participant in &mut participants {
+                if participant.identity == local_identity {
+                    participant.avatar_version = Some(version.clone());
+                }
+            }
         }
         let volumes: Vec<(String, u16)> = self
             .participant_volumes
@@ -181,6 +191,7 @@ impl Session {
             events,
             reconnecting: false,
         };
+        let avatar_targets = participants.clone();
         if retry.is_some() {
             self.emit(Event::Reconnected);
             self.emit(Event::ParticipantList(participants));
@@ -201,6 +212,7 @@ impl Session {
                 }
             }
         }
+        self.ensure_participant_avatars(&avatar_targets);
     }
 
     fn schedule_retry(&mut self, room: String, attempt: u32) {

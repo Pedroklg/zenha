@@ -5,9 +5,9 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use rooms_protocol::{
-    AdminLoginRequest, AdminLoginResponse, AdminRoom, ChatHistoryResponse, ChatMessage,
-    CreateRoomRequest, MoveParticipantRequest, RoomSummary, SaveChatRequest, TokenRequest,
-    TokenResponse, UpdateInviteRequest, UpdateRoomRequest,
+    AdminLoginRequest, AdminLoginResponse, AdminRoom, AvatarUploadResponse, ChatHistoryResponse,
+    ChatMessage, CreateRoomRequest, MoveParticipantRequest, RoomSummary, SaveChatRequest,
+    TokenRequest, TokenResponse, UpdateInviteRequest, UpdateRoomRequest,
 };
 use tokio::sync::mpsc::{self, UnboundedSender};
 use tokio::time::Instant;
@@ -35,6 +35,7 @@ pub enum BackendCall {
     SetMicrophoneMuted(bool),
     SetOutputMuted(bool),
     SetDisplayName(String),
+    SetAvatarAttribute(Option<String>),
     SendData {
         topic: String,
         payload: Vec<u8>,
@@ -325,6 +326,13 @@ impl MediaBackend for FakeBackend {
         Ok(())
     }
 
+    async fn set_avatar_attribute(&self, version: Option<&str>) -> Result<(), SessionError> {
+        lock(&self.state)
+            .calls
+            .push(BackendCall::SetAvatarAttribute(version.map(str::to_owned)));
+        Ok(())
+    }
+
     async fn send_data(&self, topic: &str, payload: Vec<u8>) -> Result<(), SessionError> {
         lock(&self.state).calls.push(BackendCall::SendData {
             topic: topic.to_owned(),
@@ -557,6 +565,12 @@ struct TokenState {
     admin_login_results: VecDeque<Result<AdminLoginResponse, SessionError>>,
     admin_room_results: VecDeque<Result<AdminRoom, SessionError>>,
     admin_unit_results: VecDeque<Result<(), SessionError>>,
+    avatars: HashMap<(String, String), Vec<u8>>,
+    upload_avatar_calls: Vec<(String, Vec<u8>)>,
+    delete_avatar_calls: Vec<String>,
+    download_avatar_calls: Vec<(String, String, Option<String>)>,
+    upload_avatar_results: VecDeque<Result<AvatarUploadResponse, SessionError>>,
+    delete_avatar_results: VecDeque<Result<(), SessionError>>,
 }
 
 #[derive(Debug, Clone)]
@@ -590,6 +604,12 @@ impl FakeTokenClient {
                 admin_login_results: VecDeque::new(),
                 admin_room_results: VecDeque::new(),
                 admin_unit_results: VecDeque::new(),
+                avatars: HashMap::new(),
+                upload_avatar_calls: Vec::new(),
+                delete_avatar_calls: Vec::new(),
+                download_avatar_calls: Vec::new(),
+                upload_avatar_results: VecDeque::new(),
+                delete_avatar_results: VecDeque::new(),
             })),
         }
     }
@@ -656,6 +676,32 @@ impl FakeTokenClient {
 
     pub fn push_admin_unit_result(&self, result: Result<(), SessionError>) {
         lock(&self.state).admin_unit_results.push_back(result);
+    }
+
+    pub fn set_avatar_bytes(&self, identity: &str, version: &str, bytes: Vec<u8>) {
+        lock(&self.state)
+            .avatars
+            .insert((identity.to_owned(), version.to_owned()), bytes);
+    }
+
+    pub fn push_upload_avatar_result(&self, result: Result<AvatarUploadResponse, SessionError>) {
+        lock(&self.state).upload_avatar_results.push_back(result);
+    }
+
+    pub fn push_delete_avatar_result(&self, result: Result<(), SessionError>) {
+        lock(&self.state).delete_avatar_results.push_back(result);
+    }
+
+    pub fn upload_avatar_calls(&self) -> Vec<(String, Vec<u8>)> {
+        lock(&self.state).upload_avatar_calls.clone()
+    }
+
+    pub fn delete_avatar_calls(&self) -> Vec<String> {
+        lock(&self.state).delete_avatar_calls.clone()
+    }
+
+    pub fn download_avatar_calls(&self) -> Vec<(String, String, Option<String>)> {
+        lock(&self.state).download_avatar_calls.clone()
     }
 }
 
@@ -900,5 +946,54 @@ impl TokenClient for FakeTokenClient {
             request,
         });
         state.admin_unit_results.pop_front().unwrap_or(Ok(()))
+    }
+
+    async fn upload_avatar(
+        &self,
+        jwt: &str,
+        bytes: Vec<u8>,
+    ) -> Result<AvatarUploadResponse, SessionError> {
+        let mut state = lock(&self.state);
+        state
+            .upload_avatar_calls
+            .push((jwt.to_owned(), bytes.clone()));
+        if let Some(result) = state.upload_avatar_results.pop_front() {
+            return result;
+        }
+        let version = "0123456789abcdef".to_owned();
+        if let Some(client_id) = state.requests.last().map(|r| r.client_id.clone()) {
+            state.avatars.insert((client_id, version.clone()), bytes);
+        }
+        Ok(AvatarUploadResponse { version })
+    }
+
+    async fn delete_avatar(&self, jwt: &str) -> Result<(), SessionError> {
+        let mut state = lock(&self.state);
+        state.delete_avatar_calls.push(jwt.to_owned());
+        state.delete_avatar_results.pop_front().unwrap_or(Ok(()))
+    }
+
+    async fn download_avatar(
+        &self,
+        jwt: &str,
+        identity: &str,
+        version: Option<&str>,
+    ) -> Result<Option<Vec<u8>>, SessionError> {
+        let mut state = lock(&self.state);
+        state.download_avatar_calls.push((
+            jwt.to_owned(),
+            identity.to_owned(),
+            version.map(str::to_owned),
+        ));
+        let key = version.map(|v| (identity.to_owned(), v.to_owned()));
+        let found = match key {
+            Some(pair) => state.avatars.get(&pair).cloned(),
+            None => state
+                .avatars
+                .iter()
+                .find(|((id, _), _)| id == identity)
+                .map(|(_, data)| data.clone()),
+        };
+        Ok(found)
     }
 }
