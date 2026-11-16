@@ -420,8 +420,6 @@ fn file_entry(
         });
 }
 
-const TEMPORARY_BUTTON_SIZE: f32 = 24.0;
-
 fn pending_paste_card(
     ui: &mut egui::Ui,
     pending: &PendingPastedImage,
@@ -507,11 +505,11 @@ fn temporary_toggle_state(save: bool) -> TemporaryToggleState {
 
 fn input(ui: &mut egui::Ui, chat: &mut ChatState, actions: &mut Vec<UserAction>) -> bool {
     let mut submitted = false;
+    let button_size = ui.spacing().interact_size.y;
     ui.horizontal(|ui| {
-        let attach = ui
-            .small_button("Anexar")
-            .on_hover_text("Enviar imagem ou arquivo, até 50 MB");
-        if attach.clicked() {
+        ui.spacing_mut().item_spacing.x = 6.0;
+        if icons::icon_button(ui, button_size, icons::paperclip, false, "Anexar arquivo").clicked()
+        {
             actions.push(UserAction::PickFile);
         }
         submitted = ui
@@ -519,7 +517,7 @@ fn input(ui: &mut egui::Ui, chat: &mut ChatState, actions: &mut Vec<UserAction>)
                 let toggle = temporary_toggle_state(chat.save);
                 if icons::accent_icon_button(
                     ui,
-                    TEMPORARY_BUTTON_SIZE,
+                    button_size,
                     icons::temporary_clock,
                     toggle.active,
                     toggle.tooltip,
@@ -531,7 +529,7 @@ fn input(ui: &mut egui::Ui, chat: &mut ChatState, actions: &mut Vec<UserAction>)
                 ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                     let response = ui.add(
                         egui::TextEdit::singleline(&mut chat.draft)
-                            .hint_text("Escreva uma mensagem…")
+                            .hint_text("Mensagem")
                             .char_limit(MAX_CHAT_MESSAGE_LEN)
                             .desired_width(f32::INFINITY),
                     );
@@ -596,6 +594,67 @@ mod tests {
         assert_eq!(
             author_color("Ana", false, &participants, "id-self"),
             theme::name_color("id-ana", false)
+        );
+    }
+
+    #[test]
+    fn chat_input_placeholder_fits_and_attach_matches_height_at_minimum_panel_width() {
+        use egui_kittest::Harness;
+        use egui_kittest::kittest::Queryable;
+
+        struct ChatHarness {
+            chat: ChatState,
+            images: ChatImages,
+        }
+
+        let chat = ChatState::new();
+        let mut harness = Harness::builder()
+            .with_size(egui::Vec2::new(240.0, 400.0))
+            .with_accessibility_check(false)
+            .with_context_setup(theme::install)
+            .build_ui_state(
+                |ui, state| {
+                    let _ = show(
+                        ui,
+                        &mut state.chat,
+                        &[],
+                        "id-self",
+                        false,
+                        &mut state.images,
+                    );
+                },
+                ChatHarness {
+                    chat,
+                    images: ChatImages::default(),
+                },
+            );
+        harness.run_steps(2);
+
+        let attach = harness.get_by_label("Anexar arquivo").rect();
+        let input = harness.get_by_role(egui::accesskit::Role::TextInput).rect();
+        let temp = harness
+            .get_by_label("Mensagem temporária (clique para salvar)")
+            .rect();
+
+        assert!((attach.height() - input.height()).abs() <= 1.0);
+        assert!(attach.right() < input.left());
+        assert!(input.right() < temp.left());
+
+        let style = harness.ctx.global_style();
+        let font_id = egui::TextStyle::Body.resolve(&style);
+        let padding_x = style.spacing.button_padding.x * 2.0;
+        let placeholder_width = harness.ctx.fonts_mut(|fonts| {
+            fonts
+                .layout_no_wrap("Mensagem".to_owned(), font_id, theme::TEXT_WEAK)
+                .size()
+                .x
+        });
+        assert!(
+            input.width() >= placeholder_width + padding_x,
+            "input width {} too narrow for placeholder {} + padding {}",
+            input.width(),
+            placeholder_width,
+            padding_x
         );
     }
 }

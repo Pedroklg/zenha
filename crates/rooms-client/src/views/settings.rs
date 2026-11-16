@@ -37,6 +37,8 @@ pub struct SettingsView<'a> {
     pub name_draft: &'a mut String,
     pub name_error: Option<String>,
     pub can_save_name: bool,
+    pub in_room: bool,
+    pub mic_muted: bool,
     pub audio: &'a AudioState,
     pub hotkeys: &'a HotkeyState,
     pub close_to_tray: bool,
@@ -167,7 +169,7 @@ fn content(ui: &mut egui::Ui, view: &mut SettingsView<'_>, actions: &mut Vec<Use
             _ => "Reforçada: melhor contra teclado e ventilador. Sem cancelamento de eco, use fone.",
         });
         ui.add_space(ROW_GAP);
-        noise_gate(ui, audio, actions);
+        noise_gate(ui, audio, view.in_room, view.mic_muted, actions);
     }
 
     section_heading(ui, "Atalhos globais", true);
@@ -424,7 +426,31 @@ fn hotkeys_section(
     }
 }
 
-fn noise_gate(ui: &mut egui::Ui, audio: &AudioState, actions: &mut Vec<UserAction>) {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MicMeterView {
+    Level(MicLevelView),
+    Message(&'static str),
+}
+
+fn mic_meter_view(in_room: bool, mic_muted: bool, mic_level: Option<MicLevelView>) -> MicMeterView {
+    if !in_room {
+        MicMeterView::Message("Entre em uma sala para ver o nível do microfone.")
+    } else if mic_muted {
+        MicMeterView::Message("Microfone desligado.")
+    } else if let Some(level) = mic_level {
+        MicMeterView::Level(level)
+    } else {
+        MicMeterView::Message("Aguardando sinal do microfone…")
+    }
+}
+
+fn noise_gate(
+    ui: &mut egui::Ui,
+    audio: &AudioState,
+    in_room: bool,
+    mic_muted: bool,
+    actions: &mut Vec<UserAction>,
+) {
     let mut enabled = audio.noise_gate.is_some();
     if ui
         .checkbox(
@@ -440,6 +466,7 @@ fn noise_gate(ui: &mut egui::Ui, audio: &AudioState, actions: &mut Vec<UserActio
 
     let current = audio.noise_gate.unwrap_or(GATE_DEFAULT_DB);
     let mut value = current;
+    let meter = mic_meter_view(in_room, mic_muted, audio.mic_level);
     egui::Grid::new("noise_gate_grid")
         .num_columns(3)
         .spacing([ROW_GAP, ROW_GAP])
@@ -469,10 +496,10 @@ fn noise_gate(ui: &mut egui::Ui, audio: &AudioState, actions: &mut Vec<UserActio
             db_value_cell(ui, value, enabled);
             ui.end_row();
 
-            if let Some(MicLevelView {
+            if let MicMeterView::Level(MicLevelView {
                 level_db,
                 gate_open,
-            }) = audio.mic_level
+            }) = meter
             {
                 ui.allocate_ui_with_layout(
                     egui::vec2(GATE_LABEL_WIDTH, ui.spacing().interact_size.y),
@@ -497,9 +524,9 @@ fn noise_gate(ui: &mut egui::Ui, audio: &AudioState, actions: &mut Vec<UserActio
         });
     ui.add_space(CONTROL_GAP);
     ui.small("Mais para a direita corta mais ruído, mas pode cortar fala baixa.");
-    if audio.mic_level.is_none() {
+    if let MicMeterView::Message(message) = meter {
         ui.add_space(CONTROL_GAP);
-        ui.small("Entre em uma sala para ver o nível do microfone.");
+        ui.small(message);
     }
 }
 
@@ -563,5 +590,37 @@ mod tests {
         assert_eq!(meter_fraction(-70), 0.0);
         assert!((meter_fraction(-35) - 0.5).abs() < 1e-6);
         assert_eq!(meter_fraction(0), 1.0);
+    }
+
+    #[test]
+    fn mic_meter_view_selects_message_or_level_by_room_and_mute_state() {
+        let level = MicLevelView {
+            level_db: -35,
+            gate_open: true,
+        };
+        assert_eq!(
+            mic_meter_view(false, false, None),
+            MicMeterView::Message("Entre em uma sala para ver o nível do microfone.")
+        );
+        assert_eq!(
+            mic_meter_view(false, true, Some(level)),
+            MicMeterView::Message("Entre em uma sala para ver o nível do microfone.")
+        );
+        assert_eq!(
+            mic_meter_view(true, true, None),
+            MicMeterView::Message("Microfone desligado.")
+        );
+        assert_eq!(
+            mic_meter_view(true, true, Some(level)),
+            MicMeterView::Message("Microfone desligado.")
+        );
+        assert_eq!(
+            mic_meter_view(true, false, None),
+            MicMeterView::Message("Aguardando sinal do microfone…")
+        );
+        assert_eq!(
+            mic_meter_view(true, false, Some(level)),
+            MicMeterView::Level(level)
+        );
     }
 }

@@ -731,6 +731,10 @@ impl eframe::App for App {
             ..
         } = &mut self.state;
         let can_admin = !matches!(screen, Screen::Onboarding);
+        let (in_room, mic_muted) = match &*screen {
+            Screen::InRoom(room) => (true, room.muted),
+            _ => (false, lobby_voice.muted),
+        };
         let is_admin = admin.active;
         let renderer = &mut self.renderer;
         let preview_renderer = &mut self.preview_renderer;
@@ -773,6 +777,8 @@ impl eframe::App for App {
                 name_draft,
                 name_error,
                 can_save_name,
+                in_room,
+                mic_muted,
                 audio,
                 hotkeys,
                 close_to_tray: *close_to_tray,
@@ -1407,5 +1413,186 @@ mod tests {
         harness.run_steps(2);
         assert!(matches!(harness.state().state.screen, Screen::Lobby));
         assert!(harness.query_by_label("Pronto para instalar").is_some());
+    }
+
+    #[test]
+    fn room_ui_footer_chat_and_participant_card_layout_at_1280x720() {
+        let long_name = "NomeMuitoLongoParaRodapeDaBarra";
+        let settings = Settings {
+            client_id: demo::SELF_IDENTITY.to_owned(),
+            display_name: long_name.to_owned(),
+            token_server_url: demo::DEMO_SERVER_URL.to_owned(),
+            ..Settings::default()
+        };
+        let mut harness = Harness::builder()
+            .with_size(egui::Vec2::new(1280.0, 720.0))
+            .with_accessibility_check(false)
+            .build_eframe(move |cc| {
+                App::new(
+                    &cc.egui_ctx,
+                    &settings,
+                    Some(demo::DEMO_PASSWORD.to_owned()),
+                    None,
+                    true,
+                    StartupLink::None,
+                    #[cfg(windows)]
+                    None,
+                )
+            });
+
+        harness.run_steps(2);
+        let assert_footer_fits = |harness: &Harness<'_, App>, status_label: &str| {
+            let dot = harness.get_by_label(status_label).rect();
+            let name = harness
+                .query_all_by_label(long_name)
+                .map(|node| node.rect())
+                .find(|rect| rect.left() < 256.0 && (rect.center().y - dot.center().y).abs() < 20.0)
+                .unwrap_or_else(|| panic!("missing footer name {long_name:?} next to {dot:?}"));
+            let mic = harness.get_by_label("Desligar microfone").rect();
+            let deafen = harness.get_by_label("Desligar áudio").rect();
+            let gear = harness.get_by_label("Configurações").rect();
+
+            assert!(
+                name.height() < 24.0,
+                "footer name wrapped unexpectedly: {name:?}"
+            );
+            assert!(dot.right() <= name.left() + 1.0, "{dot:?} vs {name:?}");
+            assert!(name.right() <= mic.left() + 1.0, "{name:?} vs {mic:?}");
+            assert!(mic.right() <= deafen.left() + 1.0, "{mic:?} vs {deafen:?}");
+            assert!(
+                deafen.right() <= gear.left() + 1.0,
+                "{deafen:?} vs {gear:?}"
+            );
+            assert!(gear.right() <= 256.0, "footer button pushed out: {gear:?}");
+            assert!(!name.intersects(mic));
+            assert!(!dot.intersects(name));
+        };
+
+        assert_footer_fits(&harness, "Fora de sala");
+
+        harness.get_by_label("Geral").click();
+        harness.run_steps(2);
+        harness
+            .state_mut()
+            .state
+            .apply_event(crate::ui_model::UiEvent::ParticipantUpdated(
+                crate::ui_model::ParticipantView {
+                    identity: demo::SELF_IDENTITY.to_owned(),
+                    name: long_name.to_owned(),
+                    muted: false,
+                    speaking: false,
+                },
+            ));
+        harness.run_steps(2);
+
+        assert_footer_fits(&harness, "Conectado");
+
+        let attach = harness.get_by_label("Anexar arquivo").rect();
+        let chat_input = harness.get_by_role(egui::accesskit::Role::TextInput).rect();
+        let temp_toggle = harness
+            .get_by_label("Mensagem temporária (clique para salvar)")
+            .rect();
+        assert!(harness.query_by_label("Anexar").is_none());
+        assert!(
+            (attach.height() - chat_input.height()).abs() <= 1.0,
+            "attach {attach:?} height differs from chat input {chat_input:?}"
+        );
+        assert!(
+            attach.right() < chat_input.left(),
+            "{attach:?} vs {chat_input:?}"
+        );
+        assert!(
+            chat_input.right() < temp_toggle.left(),
+            "{chat_input:?} vs {temp_toggle:?}"
+        );
+
+        let status = harness.get_by_label("Transmitindo").rect();
+        let watch = harness.get_by_label("Assistir").rect();
+        assert!(harness.query_by_label("Transmitindo a tela").is_none());
+        assert!(
+            status.height() < 24.0,
+            "card status wrapped to multiple lines: {status:?}"
+        );
+        assert!(
+            status.right() <= watch.left(),
+            "status {status:?} overlaps watch {watch:?}"
+        );
+        assert!(
+            watch.right() <= 1280.0 - 320.0,
+            "watch button out of room panel bounds: {watch:?}"
+        );
+        assert!(!status.intersects(watch));
+    }
+
+    #[test]
+    fn settings_mic_meter_messages_for_lobby_waiting_and_muted_states() {
+        let settings = Settings {
+            client_id: demo::SELF_IDENTITY.to_owned(),
+            display_name: demo::SELF_NAME.to_owned(),
+            token_server_url: demo::DEMO_SERVER_URL.to_owned(),
+            noise_suppression: crate::settings::NoiseMode::Enhanced,
+            ..Settings::default()
+        };
+        let mut harness = Harness::builder()
+            .with_size(egui::Vec2::new(1280.0, 720.0))
+            .with_accessibility_check(false)
+            .build_eframe(move |cc| {
+                App::new(
+                    &cc.egui_ctx,
+                    &settings,
+                    Some(demo::DEMO_PASSWORD.to_owned()),
+                    None,
+                    true,
+                    StartupLink::None,
+                    #[cfg(windows)]
+                    None,
+                )
+            });
+
+        harness.run_steps(2);
+        harness.get_by_label("Configurações").click();
+        harness.run_steps(3);
+        assert!(
+            harness
+                .query_by_label("Entre em uma sala para ver o nível do microfone.")
+                .is_some()
+        );
+
+        let ctx = harness.ctx.clone();
+        harness
+            .state_mut()
+            .dispatch(&ctx, vec![UserAction::CloseSettings]);
+        harness.run_steps(2);
+        harness.get_by_label("Geral").click();
+        harness.run_steps(2);
+        harness.get_by_label("Configurações").click();
+        harness.run_steps(3);
+        assert!(
+            harness
+                .query_by_label("Aguardando sinal do microfone…")
+                .is_some()
+        );
+
+        harness
+            .state_mut()
+            .dispatch(&ctx, vec![UserAction::ToggleMute]);
+        harness
+            .state_mut()
+            .state
+            .apply_event(crate::ui_model::UiEvent::MicLevel {
+                level_db: -38,
+                gate_open: true,
+            });
+        harness.run_steps(2);
+        assert!(harness.query_by_label("Microfone desligado.").is_some());
+        assert!(harness.query_by_label("Nível do microfone").is_none());
+
+        harness
+            .state_mut()
+            .dispatch(&ctx, vec![UserAction::ToggleMute]);
+        harness.run_steps(2);
+        assert!(harness.query_by_label("Microfone desligado.").is_none());
+        assert!(harness.query_by_label("Nível do microfone").is_some());
+        assert!(harness.query_by_label("-38 dB").is_some());
     }
 }

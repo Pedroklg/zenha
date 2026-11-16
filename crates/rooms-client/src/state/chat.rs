@@ -52,7 +52,7 @@ pub struct ChatState {
 }
 
 impl ChatState {
-    pub(super) fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             messages: VecDeque::new(),
             unread: 0,

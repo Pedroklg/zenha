@@ -29,6 +29,7 @@ pub const ON_ACCENT: Color32 = Color32::from_rgb(0x06, 0x21, 0x0F);
 pub const ACCENT_TEXT: Color32 = Color32::from_rgb(0x8E, 0xF0, 0xBF);
 pub const ACTIVE_ROOM_BG: Color32 = Color32::from_rgb(0x14, 0x29, 0x1F);
 pub const SPEAKING: Color32 = Color32::from_rgb(0x5C, 0xC8, 0xFF);
+pub const STATUS_PENDING: Color32 = Color32::from_rgb(0xF5, 0xC4, 0x51);
 pub const ERROR: Color32 = Color32::from_rgb(0xFF, 0x9B, 0x9B);
 pub const ERROR_BG: Color32 = Color32::from_rgb(0x2A, 0x17, 0x17);
 pub const ERROR_BORDER: Color32 = Color32::from_rgb(0x5A, 0x2A, 0x2A);

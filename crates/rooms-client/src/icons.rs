@@ -173,6 +173,49 @@ pub fn temporary_clock(painter: &Painter, rect: Rect, color: Color32) {
     );
 }
 
+pub fn paperclip(painter: &Painter, rect: Rect, color: Color32, _off: bool) {
+    let s = rect.width().min(rect.height());
+    let c = rect.center();
+    let stroke = Stroke::new(1.6, color);
+
+    let r_outer = s * 0.285;
+    let r_top = s * 0.19;
+    let r_inner = s * 0.095;
+    let x_outer_right = c.x + r_outer;
+    let x_inner_left = c.x - r_inner;
+
+    let top_y = rect.top() + r_top + s * 0.06;
+    let bottom_y = rect.bottom() - r_outer - s * 0.06;
+    let inner_bottom_y = rect.bottom() - r_outer - s * 0.12;
+
+    let mut points = Vec::with_capacity(ARC_SEGMENTS * 3 + 5);
+    points.push(Pos2::new(x_outer_right, top_y + s * 0.14));
+    for i in 0..=ARC_SEGMENTS {
+        let angle = (i as f32 / ARC_SEGMENTS as f32) * PI;
+        points.push(Pos2::new(
+            c.x + r_outer * angle.cos(),
+            bottom_y + r_outer * angle.sin(),
+        ));
+    }
+    let top_center = Pos2::new(c.x - r_inner, top_y);
+    for i in 0..=ARC_SEGMENTS {
+        let angle = PI + (i as f32 / ARC_SEGMENTS as f32) * PI;
+        points.push(Pos2::new(
+            top_center.x + r_top * angle.cos(),
+            top_center.y + r_top * angle.sin(),
+        ));
+    }
+    for i in 0..=ARC_SEGMENTS {
+        let angle = (i as f32 / ARC_SEGMENTS as f32) * PI;
+        points.push(Pos2::new(
+            c.x + r_inner * angle.cos(),
+            inner_bottom_y + r_inner * angle.sin(),
+        ));
+    }
+    points.push(Pos2::new(x_inner_left, top_y + s * 0.16));
+    painter.line(points, stroke);
+}
+
 pub fn accent_icon_button(
     ui: &mut egui::Ui,
     size: f32,
