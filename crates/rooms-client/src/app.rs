@@ -517,7 +517,8 @@ impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let hidden = self.is_hidden(ui.ctx());
         self.renderer.set_paused(hidden);
-        self.preview_renderer.set_paused(hidden);
+        self.preview_renderer
+            .set_paused(hidden || self.state.is_share_preview_collapsed());
         self.reset_renderers_outside_room();
         self.pump_saves();
         self.pump_image_opens();
@@ -678,7 +679,9 @@ impl eframe::App for App {
                 .send_viewport_cmd(egui::ViewportCommand::Fullscreen(fullscreen));
         }
         if !self.is_hidden(ui.ctx()) {
-            let interval = if self.state.is_watching() || self.state.is_sharing_local() {
+            let interval = if self.state.is_watching()
+                || (self.state.is_sharing_local() && !self.state.is_share_preview_collapsed())
+            {
                 VIDEO_REPAINT_INTERVAL
             } else {
                 REPAINT_INTERVAL

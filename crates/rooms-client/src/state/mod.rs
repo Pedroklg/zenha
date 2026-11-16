@@ -104,6 +104,7 @@ pub enum UserAction {
     SelectSharePreset(SharePresetView),
     StartShare,
     StopShare,
+    ToggleSharePreviewCollapsed,
     DismissShareError,
     Watch(String),
     StopWatching,
@@ -446,6 +447,13 @@ impl AppState {
                     Vec::new()
                 }
             }),
+            UserAction::ToggleSharePreviewCollapsed => {
+                self.with_room(|room| {
+                    room.share.toggle_preview_collapsed();
+                    Vec::new()
+                });
+                Vec::new()
+            }
             UserAction::DismissShareError => {
                 self.with_room(|room| {
                     room.share.error = None;
