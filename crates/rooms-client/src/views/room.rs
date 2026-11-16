@@ -439,7 +439,7 @@ fn participants_grid(
             };
 
             for pair in state.participants.chunks(cols) {
-                ui.horizontal(|ui| {
+                ui.with_layout(Layout::left_to_right(Align::Min), |ui| {
                     ui.spacing_mut().item_spacing.x = gap;
                     for participant in pair {
                         let volume =
@@ -524,6 +524,7 @@ fn participant_card(
                                 |ui| {
                                     ui.set_max_width(text_col_w);
                                     ui.spacing_mut().item_spacing.y = 4.0;
+                                    ui.spacing_mut().interact_size.y = 0.0;
                                     participant_name_row(ui, participant, is_self, volume);
                                     participant_status_row(
                                         ui,
