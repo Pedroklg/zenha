@@ -488,10 +488,21 @@ pub(crate) async fn publish_share(
     ui_visible: Arc<std::sync::atomic::AtomicBool>,
 ) -> Result<LocalShare, SessionError> {
     if gpu_share::enabled()
-        && target.kind == CaptureKind::Screen
-        && let Some((_, index)) = parse_target_id(&target.id)
+        && let Some(gpu_target) = parse_target_id(&target.id)
+            .and_then(|(kind, source_id)| gpu_share::GpuTarget::new(kind, source_id))
     {
-        match publish_gpu_share(room.clone(), target, preset, index).await {
+        let output = gpu_share::ShareOutput {
+            source: Arc::new(OnceLock::new()),
+            preview: preview.clone(),
+            ui_visible: Arc::clone(&ui_visible),
+            on_end: Box::new({
+                let events = events.clone();
+                move |reason| {
+                    let _ = events.send(BackendEvent::ScreenShareEnded { reason });
+                }
+            }),
+        };
+        match publish_gpu_share(room.clone(), target, preset, gpu_target, output).await {
             Ok(share) => return Ok(share),
             Err(err) => {
                 tracing::warn!(%err, "gpu screen share unavailable, using the default path")
@@ -583,18 +594,18 @@ async fn publish_gpu_share(
     room: Arc<Room>,
     target: &CaptureTarget,
     preset: SharePreset,
-    device_index: u64,
+    gpu_target: gpu_share::GpuTarget,
+    output: gpu_share::ShareOutput,
 ) -> Result<LocalShare, SessionError> {
-    let slot = Arc::new(OnceLock::new());
+    let slot = Arc::clone(&output.source);
     let (size_tx, size_rx) = oneshot::channel();
     let config = gpu_share::GpuShareConfig {
-        device_index: u32::try_from(device_index)
-            .map_err(|_| SessionError::Video("invalid screen id".to_owned()))?,
+        target: gpu_target,
         max_size: (preset.max_width(), preset.max_height()),
         fps: preset.fps(),
         bitrate_bps: preset.max_bitrate_bps(),
     };
-    let share = gpu_share::GpuShare::start(config, slot.clone(), size_tx)?;
+    let share = gpu_share::GpuShare::start(config, output, size_tx)?;
     let capture: Box<dyn FrameSource> = Box::new(share);
     let (width, height) = match timeout(FIRST_FRAME_TIMEOUT, size_rx).await {
         Ok(Ok(Ok(size))) => size,

@@ -1,10 +1,13 @@
-use windows::Foundation::TimeSpan;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+use windows::Foundation::{TimeSpan, TypedEventHandler};
 use windows::Graphics::Capture::{
     Direct3D11CaptureFramePool, GraphicsCaptureItem, GraphicsCaptureSession,
 };
 use windows::Graphics::DirectX::Direct3D11::IDirect3DDevice;
 use windows::Graphics::DirectX::DirectXPixelFormat;
-use windows::Win32::Foundation::{LPARAM, RECT};
+use windows::Win32::Foundation::{HWND, LPARAM, RECT};
 use windows::Win32::Graphics::Direct3D11::{ID3D11Device, ID3D11DeviceContext, ID3D11Texture2D};
 use windows::Win32::Graphics::Dxgi::IDXGIDevice;
 use windows::Win32::Graphics::Gdi::{
@@ -15,9 +18,10 @@ use windows::Win32::System::WinRT::Direct3D11::{
     CreateDirect3D11DeviceFromDXGIDevice, IDirect3DDxgiInterfaceAccess,
 };
 use windows::Win32::System::WinRT::Graphics::Capture::IGraphicsCaptureItemInterop;
-use windows::core::{BOOL, Interface, PCWSTR, factory};
+use windows::Win32::UI::WindowsAndMessaging::IsWindow;
+use windows::core::{BOOL, IInspectable, Interface, PCWSTR, Ref, factory};
 
-use super::{GpuError, Step};
+use super::{GpuError, GpuTarget, Step};
 
 const POOL_BUFFERS: i32 = 2;
 
@@ -35,7 +39,7 @@ unsafe extern "system" fn collect_monitor(
 }
 
 /// Maps the libwebrtc screen id (an `EnumDisplayDevices` index) to its monitor.
-pub(super) fn monitor_for_device_index(index: u32) -> Result<HMONITOR, GpuError> {
+fn monitor_for_device_index(index: u32) -> Result<HMONITOR, GpuError> {
     let mut device = DISPLAY_DEVICEW {
         cb: u32::try_from(size_of::<DISPLAY_DEVICEW>()).unwrap_or(0),
         ..Default::default()
@@ -72,25 +76,56 @@ pub(super) fn monitor_for_device_index(index: u32) -> Result<HMONITOR, GpuError>
     Err(GpuError::Unsupported("no monitor matches the screen"))
 }
 
+fn capture_item(target: GpuTarget) -> Result<GraphicsCaptureItem, GpuError> {
+    let interop = factory::<GraphicsCaptureItem, IGraphicsCaptureItemInterop>()
+        .step("capture item factory")?;
+    match target {
+        GpuTarget::Monitor(index) => {
+            let monitor = monitor_for_device_index(index)?;
+            // SAFETY: `monitor` was just returned by `EnumDisplayMonitors`.
+            unsafe { interop.CreateForMonitor(monitor) }.step("capture item for the monitor")
+        }
+        GpuTarget::Window(handle) => {
+            // SAFETY: a closed or invalid window makes the call fail; nothing is dereferenced here.
+            unsafe { interop.CreateForWindow(HWND(handle as *mut core::ffi::c_void)) }
+                .step("capture item for the window")
+        }
+    }
+}
+
 pub(super) struct ScreenCapture {
     pool: Direct3D11CaptureFramePool,
     session: GraphicsCaptureSession,
+    item: GraphicsCaptureItem,
+    closed: Arc<AtomicBool>,
+    closed_token: Option<i64>,
+    window: Option<HWND>,
     size: (u32, u32),
-    _item: GraphicsCaptureItem,
 }
 
 impl ScreenCapture {
     pub(super) fn new(
         device: &ID3D11Device,
-        monitor: HMONITOR,
+        target: GpuTarget,
         fps: u32,
     ) -> Result<Self, GpuError> {
-        let interop = factory::<GraphicsCaptureItem, IGraphicsCaptureItemInterop>()
-            .step("capture item factory")?;
-        // SAFETY: `monitor` was just returned by `EnumDisplayMonitors`.
-        let item: GraphicsCaptureItem =
-            unsafe { interop.CreateForMonitor(monitor) }.step("capture item for the monitor")?;
+        let item = capture_item(target)?;
         let size = item.Size().step("capture item size")?;
+        let width = u32::try_from(size.Width).unwrap_or(0);
+        let height = u32::try_from(size.Height).unwrap_or(0);
+        if width < 2 || height < 2 {
+            return Err(GpuError::Unsupported("the capture target has no size"));
+        }
+        let closed = Arc::new(AtomicBool::new(false));
+        let flag = closed.clone();
+        let closed_token = item
+            .Closed(&TypedEventHandler::new(
+                move |_: Ref<GraphicsCaptureItem>, _: Ref<IInspectable>| {
+                    flag.store(true, Ordering::SeqCst);
+                    Ok(())
+                },
+            ))
+            .ok();
         let dxgi: IDXGIDevice = device.cast().step("IDXGIDevice")?;
         // SAFETY: `dxgi` is a live DXGI device; the call only adds a reference to it.
         let inspectable =
@@ -110,16 +145,17 @@ impl ScreenCapture {
             Duration: 7_500_000 / i64::from(fps.max(1)),
         });
         session.StartCapture().step("start capture")?;
-        let width = u32::try_from(size.Width).unwrap_or(0);
-        let height = u32::try_from(size.Height).unwrap_or(0);
-        if width < 2 || height < 2 {
-            return Err(GpuError::Unsupported("the monitor reported no size"));
-        }
         Ok(Self {
             pool,
             session,
+            item,
+            closed,
+            closed_token,
+            window: match target {
+                GpuTarget::Window(handle) => Some(HWND(handle as *mut core::ffi::c_void)),
+                GpuTarget::Monitor(_) => None,
+            },
             size: (width, height),
-            _item: item,
         })
     }
 
@@ -127,12 +163,22 @@ impl ScreenCapture {
         self.size
     }
 
-    /// Copies the newest frame into `target`; returns `false` when the screen did not change.
+    /// The window or monitor went away; `Closed` alone misses a window whose process was killed.
+    pub(super) fn closed(&self) -> bool {
+        // SAFETY: IsWindow only checks the handle and accepts stale ones.
+        self.closed.load(Ordering::SeqCst)
+            || self
+                .window
+                .is_some_and(|window| !unsafe { IsWindow(Some(window)) }.as_bool())
+    }
+
+    /// Copies the newest frame into `target` (capture size) and returns the size of its
+    /// content, or `None` when nothing changed.
     pub(super) fn copy_latest(
         &self,
         context: &ID3D11DeviceContext,
         target: &ID3D11Texture2D,
-    ) -> Result<bool, GpuError> {
+    ) -> Result<Option<(u32, u32)>, GpuError> {
         let mut latest = None;
         while let Ok(frame) = self.pool.TryGetNextFrame() {
             if let Some(previous) = latest.replace(frame) {
@@ -140,13 +186,9 @@ impl ScreenCapture {
             }
         }
         let Some(frame) = latest else {
-            return Ok(false);
+            return Ok(None);
         };
         let content = frame.ContentSize().step("frame size")?;
-        if (content.Width, content.Height) != (self.size.0 as i32, self.size.1 as i32) {
-            let _ = frame.Close();
-            return Err(GpuError::Unsupported("the monitor resolution changed"));
-        }
         let access: IDirect3DDxgiInterfaceAccess = frame
             .Surface()
             .step("frame surface")?
@@ -154,15 +196,21 @@ impl ScreenCapture {
             .step("IDirect3DDxgiInterfaceAccess")?;
         // SAFETY: the surface of a D3D11 frame pool is backed by an ID3D11Texture2D.
         let texture: ID3D11Texture2D = unsafe { access.GetInterface() }.step("frame texture")?;
-        // SAFETY: both textures are BGRA8 of the monitor size on the same device.
+        // SAFETY: both textures are BGRA8 of the pool size on the same device.
         unsafe { context.CopyResource(target, &texture) };
         let _ = frame.Close();
-        Ok(true)
+        Ok(Some((
+            u32::try_from(content.Width).unwrap_or(0),
+            u32::try_from(content.Height).unwrap_or(0),
+        )))
     }
 }
 
 impl Drop for ScreenCapture {
     fn drop(&mut self) {
+        if let Some(token) = self.closed_token {
+            let _ = self.item.RemoveClosed(token);
+        }
         let _ = self.session.Close();
         let _ = self.pool.Close();
     }
