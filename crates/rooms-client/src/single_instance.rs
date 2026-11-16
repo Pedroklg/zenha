@@ -32,7 +32,12 @@ fn pipe_name() -> String {
         .chars()
         .filter(char::is_ascii_alphanumeric)
         .collect();
-    format!(r"\\.\pipe\zenha-{user}")
+    let profile = if crate::settings::config_dir_override().is_some() {
+        "-alt"
+    } else {
+        ""
+    };
+    format!(r"\\.\pipe\zenha-{user}{profile}")
 }
 
 fn start_with(name: &str, link: Option<&str>) -> Startup {

@@ -20,6 +20,7 @@ UI text is Brazilian Portuguese.
 ```powershell
 cargo client                # run against the token server in the saved settings
 cargo client -- --demo      # no server needed
+$env:ZENHA_CONFIG_DIR='C:\tmp\zenha-b'; cargo client   # second profile: own settings.json, runs beside the main instance
 cargo test -p rooms-client
 ```
 

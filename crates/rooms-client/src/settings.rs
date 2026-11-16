@@ -154,7 +154,18 @@ pub enum SettingsError {
     NoParent,
 }
 
+pub const CONFIG_DIR_ENV: &str = "ZENHA_CONFIG_DIR";
+
+pub fn config_dir_override() -> Option<PathBuf> {
+    std::env::var_os(CONFIG_DIR_ENV)
+        .filter(|dir| !dir.is_empty())
+        .map(PathBuf::from)
+}
+
 pub fn default_path() -> Option<PathBuf> {
+    if let Some(dir) = config_dir_override() {
+        return Some(dir.join(FILE_NAME));
+    }
     let config = BaseDirs::new()?.config_dir().to_path_buf();
     let path = config.join(APP_DIR).join(FILE_NAME);
     migrate_legacy(&config.join(LEGACY_APP_DIR).join(FILE_NAME), &path);
