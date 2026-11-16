@@ -1,0 +1,14 @@
+# Copy this file to terraform.tfvars (git-ignored) and fill in your values.
+# Provide your subscription via ARM_SUBSCRIPTION_ID or uncomment subscription_id below.
+
+# subscription_id   = "00000000-0000-0000-0000-000000000000"
+resource_group_name = "zenha-rg"
+location            = "chilecentral"
+name_prefix         = "zenha"
+vm_size             = "Standard_B2ats_v2"
+os_disk_size_gb     = 30
+admin_username      = "azureuser"
+ssh_public_key      = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIReplaceWithYourOwnPublicKey comment"
+dns_label_prefix    = "zenha-voice-example"
+ssh_allowed_cidr    = ""
+schedule_enabled    = true

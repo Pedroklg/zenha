@@ -1,0 +1,10 @@
+# Copy this file to terraform.tfvars (git-ignored) and fill in your values.
+# Export HCLOUD_TOKEN in your shell instead of placing secrets in this file.
+
+location         = "fsn1"
+name_prefix      = "zenha"
+server_type      = "cx23"
+image            = "ubuntu-24.04"
+ssh_public_key   = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIReplaceWithYourOwnPublicKey comment"
+ssh_allowed_cidr = ""
+enable_ipv6      = true

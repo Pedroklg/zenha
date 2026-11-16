@@ -11,6 +11,11 @@
 *.key
 deploy/livekit.prod.yaml
 
+# OpenTofu (keep .terraform.lock.hcl committed)
+.terraform/
+*.tfstate
+*.tfstate.*
+
 .claude/settings.local.json
 CLAUDE.local.md
 

@@ -1,12 +1,13 @@
 # Deploy
 
-See [docs/deploy.md](../docs/deploy.md) for the complete Azure infrastructure-as-code, Cloudflare DNS, server bootstrap, GitHub Actions OIDC deployment, budget alerts, latency measurement, and cost guide.
+See [docs/deploy.md](../docs/deploy.md) for the complete OpenTofu infrastructure-as-code, Cloudflare DNS, server bootstrap, GitHub Actions OIDC deployment, budget alerts, latency measurement, and cost guide.
 
 ## Files in `deploy/`
 
-- [`azure/main.bicep`](azure/main.bicep) — Azure Bicep template (VNet, subnet, NSG, static Standard Public IP with DNS label, NIC, `Standard_B2ats_v2` Ubuntu 24.04 LTS VM).
-- [`azure/main.bicepparam`](azure/main.bicepparam) — Example Bicep parameter file (no secrets).
-- [`azure/cloud-init.yaml`](azure/cloud-init.yaml) — Cloud-init config installing Docker Engine + Compose plugin from official repositories, creating `/opt/zenha`, and enabling unattended security upgrades.
+- [`infra/modules/host/`](infra/modules/host/) — Provider-neutral host module defining the shared inbound port list (`ports`) and [`cloud-init.yaml`](infra/modules/host/cloud-init.yaml) (installs Docker Engine + Compose plugin from official repositories, creates `/opt/zenha`, and enables unattended security upgrades).
+- [`infra/azure/`](infra/azure/) — OpenTofu stack for Azure (VNet, subnet, NSG, static Standard Public IP with DNS label, NIC, `Standard_B2ats_v2` Ubuntu 24.04 LTS VM, and optional start/deallocate Logic App schedules). See [`infra/azure/README.md`](infra/azure/README.md) for adopting an existing Bicep deployment via `tofu import`.
+- [`infra/hetzner/`](infra/hetzner/) — OpenTofu stack for Hetzner Cloud (server, firewall, static Primary IPv4, SSH key, and cloud-init; no automatic scheduling).
+- [`azure/main.bicep`](azure/main.bicep), [`azure/main.bicepparam`](azure/main.bicepparam), [`azure/schedule.bicep`](azure/schedule.bicep) — Legacy Azure Bicep templates kept temporarily until the OpenTofu `import` migration is validated.
 - [`Dockerfile`](Dockerfile) — Multi-stage build for `rooms-token-server` (runs as non-root `zenha` user).
 - [`docker-compose.yml`](docker-compose.yml) — Production stack in `/opt/zenha` (`livekit/livekit-server:v1.13.11`, `rooms-token-server` from GHCR via `ZENHA_IMAGE`, `caddy:2.11.9-alpine`).
 - [`Caddyfile`](Caddyfile) — Reverse proxy for `{$TOKEN_DOMAIN}` (`127.0.0.1:8787`) and `{$RTC_DOMAIN}` (`127.0.0.1:7880`) with automatic HTTPS.
