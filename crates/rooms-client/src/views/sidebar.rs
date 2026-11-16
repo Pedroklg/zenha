@@ -13,18 +13,21 @@ use super::participant_menu::{
 use super::room::HEADER_HEIGHT;
 use crate::format::format_size;
 use crate::icons;
-use crate::state::{ShareState, UpdateBanner, UpdatePhase, UserAction, participant_volume_for};
+use crate::state::{
+    ConnectionStatus, ShareState, UpdateBanner, UpdatePhase, UserAction, participant_volume_for,
+};
 use crate::theme;
 use crate::ui_model::ParticipantView;
 
 const SIDEBAR_WIDTH: f32 = 256.0;
-const FOOTER_BUTTON_SIZE: f32 = 36.0;
-const FOOTER_BUTTON_GAP: f32 = 6.0;
+const FOOTER_AVATAR_SIZE: f32 = 32.0;
+const FOOTER_BUTTON_SIZE: f32 = 32.0;
+const FOOTER_BUTTON_GAP: f32 = 4.0;
 
 pub(super) struct SidebarUser<'a> {
     pub(super) name: &'a str,
-    pub(super) status_label: &'a str,
-    pub(super) status_connected: bool,
+    pub(super) connection: Option<ConnectionStatus>,
+    pub(super) ptt_hint: Option<&'a str>,
     pub(super) muted: bool,
     pub(super) deafened: bool,
 }
@@ -244,82 +247,131 @@ fn update_footer(ui: &mut egui::Ui, banner: &UpdateBanner, actions: &mut Vec<Use
         });
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct FooterStatus {
+    color: Color32,
+    tooltip: String,
+}
+
+fn footer_status(connection: Option<ConnectionStatus>, ptt_hint: Option<&str>) -> FooterStatus {
+    match connection {
+        None => FooterStatus {
+            color: theme::INACTIVE_DOT,
+            tooltip: "Fora de sala".to_owned(),
+        },
+        Some(ConnectionStatus::Connected) => {
+            let tooltip = match ptt_hint {
+                Some(hint) => format!("{} · {hint}", ConnectionStatus::Connected.label()),
+                None => ConnectionStatus::Connected.label().to_owned(),
+            };
+            FooterStatus {
+                color: theme::ACCENT,
+                tooltip,
+            }
+        }
+        Some(status @ (ConnectionStatus::Connecting | ConnectionStatus::Reconnecting)) => {
+            FooterStatus {
+                color: theme::STATUS_PENDING,
+                tooltip: status.label().to_owned(),
+            }
+        }
+    }
+}
+
 fn user_footer(ui: &mut egui::Ui, user: SidebarUser<'_>, actions: &mut Vec<UserAction>) {
     let avatar_colors = theme::avatar_color(user.name, true);
+    let status = footer_status(user.connection, user.ptt_hint);
+    let row_width = ui.available_width();
 
-    ui.horizontal(|ui| {
-        theme::avatar(ui, 36.0, user.name, avatar_colors);
-        ui.add_space(4.0);
+    ui.allocate_ui_with_layout(
+        Vec2::new(row_width, FOOTER_AVATAR_SIZE),
+        Layout::left_to_right(Align::Center),
+        |ui| {
+            ui.spacing_mut().item_spacing.x = 6.0;
+            theme::avatar(ui, FOOTER_AVATAR_SIZE, user.name, avatar_colors);
 
-        let buttons_width = FOOTER_BUTTON_SIZE * 3.0 + FOOTER_BUTTON_GAP * 2.0 + 8.0;
-        let text_width = (ui.available_width() - buttons_width).max(40.0);
-        ui.allocate_ui_with_layout(
-            Vec2::new(text_width, 36.0),
-            Layout::top_down(Align::Min),
-            |ui| {
-                ui.spacing_mut().item_spacing.y = 2.0;
-                ui.add(
-                    egui::Label::new(
-                        RichText::new(user.name)
-                            .font(theme::semibold(13.0))
-                            .color(theme::TEXT),
+            ui.allocate_ui_with_layout(
+                Vec2::new(ui.available_width(), FOOTER_AVATAR_SIZE),
+                Layout::right_to_left(Align::Center),
+                |ui| {
+                    ui.spacing_mut().item_spacing.x = FOOTER_BUTTON_GAP;
+                    if icons::icon_button(
+                        ui,
+                        FOOTER_BUTTON_SIZE,
+                        icons::gear,
+                        false,
+                        "Configurações",
                     )
-                    .truncate(),
-                );
-                let status_color = if user.status_connected {
-                    theme::SPEAKING
-                } else {
-                    theme::TEXT_WEAK
-                };
-                ui.add(
-                    egui::Label::new(
-                        RichText::new(user.status_label)
-                            .size(12.0)
-                            .color(status_color),
+                    .clicked()
+                    {
+                        actions.push(UserAction::OpenSettings);
+                    }
+
+                    let deafen_tip = if user.deafened {
+                        "Ligar áudio"
+                    } else {
+                        "Desligar áudio"
+                    };
+                    if icons::icon_button(
+                        ui,
+                        FOOTER_BUTTON_SIZE,
+                        icons::headphones,
+                        user.deafened,
+                        deafen_tip,
                     )
-                    .truncate(),
-                );
-            },
-        );
+                    .clicked()
+                    {
+                        actions.push(UserAction::ToggleDeafen);
+                    }
 
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            ui.spacing_mut().item_spacing.x = FOOTER_BUTTON_GAP;
-            if icons::icon_button(ui, FOOTER_BUTTON_SIZE, icons::gear, false, "Configurações")
-                .clicked()
-            {
-                actions.push(UserAction::OpenSettings);
-            }
+                    let mute_tip = if user.muted {
+                        "Ligar microfone"
+                    } else {
+                        "Desligar microfone"
+                    };
+                    let mute_resp = ui.add_enabled_ui(!user.deafened, |ui| {
+                        icons::icon_button(ui, FOOTER_BUTTON_SIZE, icons::mic, user.muted, mute_tip)
+                    });
+                    if mute_resp.inner.clicked() {
+                        actions.push(UserAction::ToggleMute);
+                    }
 
-            let deafen_tip = if user.deafened {
-                "Ligar áudio"
-            } else {
-                "Desligar áudio"
-            };
-            if icons::icon_button(
-                ui,
-                FOOTER_BUTTON_SIZE,
-                icons::headphones,
-                user.deafened,
-                deafen_tip,
-            )
-            .clicked()
-            {
-                actions.push(UserAction::ToggleDeafen);
-            }
-
-            let mute_tip = if user.muted {
-                "Ligar microfone"
-            } else {
-                "Desligar microfone"
-            };
-            let mute_resp = ui.add_enabled_ui(!user.deafened, |ui| {
-                icons::icon_button(ui, FOOTER_BUTTON_SIZE, icons::mic, user.muted, mute_tip)
-            });
-            if mute_resp.inner.clicked() {
-                actions.push(UserAction::ToggleMute);
-            }
-        });
-    });
+                    let identity_width = ui.available_width().max(24.0);
+                    ui.allocate_ui_with_layout(
+                        Vec2::new(identity_width, FOOTER_AVATAR_SIZE),
+                        Layout::left_to_right(Align::Center),
+                        |ui| {
+                            ui.set_max_width(identity_width);
+                            ui.set_clip_rect(ui.max_rect().intersect(ui.clip_rect()));
+                            ui.spacing_mut().item_spacing.x = 5.0;
+                            let (dot_rect, dot_resp) =
+                                ui.allocate_exact_size(Vec2::new(10.0, 20.0), Sense::hover());
+                            if ui.is_rect_visible(dot_rect) {
+                                ui.painter()
+                                    .circle_filled(dot_rect.center(), 4.0, status.color);
+                            }
+                            dot_resp.widget_info(|| {
+                                egui::WidgetInfo::labeled(
+                                    egui::Role::Label,
+                                    true,
+                                    status.tooltip.clone(),
+                                )
+                            });
+                            dot_resp.on_hover_text(status.tooltip);
+                            ui.add(
+                                egui::Label::new(
+                                    RichText::new(user.name)
+                                        .font(theme::semibold(13.0))
+                                        .color(theme::TEXT),
+                                )
+                                .truncate(),
+                            );
+                        },
+                    );
+                },
+            );
+        },
+    );
 }
 
 struct RoomsListView<'a> {
@@ -722,5 +774,47 @@ mod tests {
 
         let single_remote = vec![participant("id-ana-1", "Ana")];
         assert!(occupant_volume_target(true, "Ana", &summary, &single_remote, "id-self").is_none());
+    }
+
+    #[test]
+    fn footer_status_maps_connection_states_to_dot_color_and_tooltip() {
+        assert_eq!(
+            footer_status(None, None),
+            FooterStatus {
+                color: theme::INACTIVE_DOT,
+                tooltip: "Fora de sala".to_owned(),
+            }
+        );
+        assert_eq!(
+            footer_status(Some(ConnectionStatus::Connected), None),
+            FooterStatus {
+                color: theme::ACCENT,
+                tooltip: "Conectado".to_owned(),
+            }
+        );
+        assert_eq!(
+            footer_status(
+                Some(ConnectionStatus::Connected),
+                Some("Segure F9 para falar"),
+            ),
+            FooterStatus {
+                color: theme::ACCENT,
+                tooltip: "Conectado · Segure F9 para falar".to_owned(),
+            }
+        );
+        assert_eq!(
+            footer_status(Some(ConnectionStatus::Connecting), None),
+            FooterStatus {
+                color: theme::STATUS_PENDING,
+                tooltip: "Conectando…".to_owned(),
+            }
+        );
+        assert_eq!(
+            footer_status(Some(ConnectionStatus::Reconnecting), Some("ignored")),
+            FooterStatus {
+                color: theme::STATUS_PENDING,
+                tooltip: "Reconectando…".to_owned(),
+            }
+        );
     }
 }

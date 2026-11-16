@@ -27,9 +27,9 @@ pub enum ConnectionStatus {
 impl ConnectionStatus {
     pub fn label(self) -> &'static str {
         match self {
-            Self::Connecting => "conectando...",
-            Self::Connected => "conectado",
-            Self::Reconnecting => "reconectando...",
+            Self::Connecting => "Conectando…",
+            Self::Connected => "Conectado",
+            Self::Reconnecting => "Reconectando…",
         }
     }
 }

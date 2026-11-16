@@ -17,8 +17,8 @@ use super::sidebar::{SidebarArgs, SidebarUser, sidebar};
 use crate::chat_images::ChatImages;
 use crate::icons;
 use crate::state::{
-    AdminDialog, ConnectionStatus, LobbyVoiceState, LocalShare, RoomState, UpdateBanner,
-    UserAction, participant_volume_for, room_display_title,
+    AdminDialog, LobbyVoiceState, LocalShare, RoomState, UpdateBanner, UserAction,
+    participant_volume_for, room_display_title,
 };
 use crate::theme;
 use crate::ui_model::ParticipantView;
@@ -71,8 +71,8 @@ pub fn show(
     let local_name = local_display_name(&state.participants, &state.local_identity);
     let user = SidebarUser {
         name: local_name,
-        status_label: ptt_hint.unwrap_or_else(|| state.status.label()),
-        status_connected: ptt_hint.is_none() && state.status == ConnectionStatus::Connected,
+        connection: Some(state.status),
+        ptt_hint,
         muted: state.muted,
         deafened: state.deafened,
     };
@@ -152,8 +152,8 @@ pub fn show_lobby(
     let mut actions = Vec::new();
     let user = SidebarUser {
         name: display_name.trim(),
-        status_label: "Fora de sala",
-        status_connected: false,
+        connection: None,
+        ptt_hint: None,
         muted: voice.muted,
         deafened: voice.deafened,
     };
