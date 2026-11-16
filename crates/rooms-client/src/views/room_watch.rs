@@ -197,8 +197,10 @@ fn compact_participants_strip(
                         theme::avatar(
                             ui,
                             24.0,
+                            &participant.identity,
                             &participant.name,
-                            theme::avatar_color(&participant.identity, is_self),
+                            participant.avatar_version.as_deref(),
+                            is_self,
                         );
                         let mut label = participant.name.clone();
                         if let Some(badge) = participant_volume_badge(volume, is_self) {

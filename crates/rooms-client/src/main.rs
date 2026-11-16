@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app;
+mod avatars;
 mod chat_images;
 mod cli;
 mod clipboard_image;

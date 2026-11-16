@@ -30,6 +30,7 @@ const GATE_VALUE_WIDTH: f32 = 64.0;
 const GATE_MIN_DB: i8 = -70;
 const GATE_MAX_DB: i8 = -20;
 const GATE_DEFAULT_DB: i8 = -45;
+const AVATAR_PREVIEW_SIZE: f32 = 48.0;
 const METER_FLOOR_DB: f32 = -70.0;
 
 pub struct SettingsView<'a> {
@@ -47,6 +48,9 @@ pub struct SettingsView<'a> {
     pub invite_copied: bool,
     pub can_admin: bool,
     pub admin: &'a mut AdminState,
+    pub avatar_identity: &'a str,
+    pub avatar_version: Option<&'a str>,
+    pub avatar_notice: Option<&'a str>,
 }
 
 pub fn show(ctx: &egui::Context, mut view: SettingsView<'_>) -> Vec<UserAction> {
@@ -224,6 +228,8 @@ fn content(ui: &mut egui::Ui, view: &mut SettingsView<'_>, actions: &mut Vec<Use
         ui.small(RichText::new(error).color(theme::ERROR));
     }
     ui.add_space(ROW_GAP);
+    avatar_row(ui, view, actions);
+    ui.add_space(ROW_GAP);
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = ROW_GAP;
         if ui.button("Copiar link de convite").clicked() {
@@ -239,6 +245,38 @@ fn content(ui: &mut egui::Ui, view: &mut SettingsView<'_>, actions: &mut Vec<Use
     }
 
     admin_section(ui, view.can_admin, view.admin, actions);
+}
+
+fn can_remove_avatar(version: Option<&str>) -> bool {
+    version.is_some()
+}
+
+fn avatar_row(ui: &mut egui::Ui, view: &SettingsView<'_>, actions: &mut Vec<UserAction>) {
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = ROW_GAP;
+        ui.label(RichText::new("Foto:").color(theme::TEXT_SECONDARY));
+        theme::avatar(
+            ui,
+            AVATAR_PREVIEW_SIZE,
+            view.avatar_identity,
+            view.name_draft.as_str(),
+            view.avatar_version,
+            true,
+        );
+        if ui.button("Escolher foto").clicked() {
+            actions.push(UserAction::PickAvatar);
+        }
+        let remove = ui.add_enabled(
+            can_remove_avatar(view.avatar_version),
+            egui::Button::new("Remover foto"),
+        );
+        if remove.clicked() {
+            actions.push(UserAction::RemoveAvatar);
+        }
+    });
+    if let Some(notice) = view.avatar_notice {
+        ui.small(RichText::new(notice).color(theme::ERROR));
+    }
 }
 
 fn admin_section(
@@ -583,6 +621,12 @@ fn device_combo(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn remove_avatar_is_enabled_only_with_a_photo() {
+        assert!(!can_remove_avatar(None));
+        assert!(can_remove_avatar(Some("0123456789abcdef")));
+    }
 
     #[test]
     fn meter_maps_minus_70_to_0_db_onto_the_bar() {

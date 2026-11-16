@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 
 use eframe::egui;
 
+use crate::avatars::Avatars;
 use crate::chat_images::{ChatImages, ViewerImage, pending_paste_thumb_id};
 use crate::cli::{self, StartupLink};
 use crate::clipboard_image::{self, PasteImageError, SavedPastedImage};
@@ -30,7 +31,7 @@ use crate::state::{
 use crate::theme;
 #[cfg(windows)]
 use crate::tray::{Tray, TrayAction};
-use crate::ui_model::{SessionPort, UiCommand};
+use crate::ui_model::{SessionPort, UiCommand, UiEvent};
 use crate::update::{self, AvailableUpdate, UpdateDownloadEvent};
 use crate::views;
 
@@ -62,6 +63,7 @@ pub struct App {
     renderer: views::share::VideoRenderer,
     preview_renderer: views::share::VideoRenderer,
     picker_thumbnails: views::share::ThumbnailCache,
+    avatars: Avatars,
     images: ChatImages,
     viewer_image: ViewerImage,
     save_results: Receiver<Result<PathBuf, ()>>,
@@ -110,6 +112,11 @@ impl App {
             (Box::new(CoreSession::new(wake)), MEDIA_LABEL)
         };
         let mut state = AppState::new(settings, saved_password);
+        let avatar_cache_dir = settings_path
+            .as_deref()
+            .and_then(Path::parent)
+            .map(|dir| dir.join("avatars"));
+        state.set_avatar_cache_dir(avatar_cache_dir.clone());
         state.apply_startup_link(startup_link);
         if matches!(state.screen, Screen::Lobby) {
             session.configure(state.credentials());
@@ -144,6 +151,7 @@ impl App {
             renderer: views::share::VideoRenderer::default(),
             preview_renderer: views::share::VideoRenderer::default(),
             picker_thumbnails: views::share::ThumbnailCache::default(),
+            avatars: Avatars::default(),
             images: ChatImages::default(),
             viewer_image: ViewerImage::default(),
             save_results,
@@ -168,6 +176,18 @@ impl App {
             quitting: false,
             fullscreen: false,
         };
+        if demo_flag {
+            app.avatars.register_image(
+                ctx,
+                crate::demo::DEMO_AVATAR_IDENTITY,
+                crate::demo::DEMO_AVATAR_VERSION,
+                crate::demo::demo_avatar_image(),
+            );
+        } else if let (Some(dir), Some(version)) = (avatar_cache_dir, &app.state.avatar_version) {
+            let path = dir.join(format!("{}-{version}.png", app.state.client_id()));
+            let identity = app.state.client_id().to_owned();
+            app.avatars.register(ctx, &identity, version, path);
+        }
         app.flush_state_effects(ctx);
         app
     }
@@ -213,7 +233,16 @@ impl App {
     }
 
     fn pump_session(&mut self, ctx: &egui::Context) {
+        self.avatars.drain(ctx);
         while let Some(event) = self.session.try_recv() {
+            if let UiEvent::AvatarCached {
+                identity,
+                version,
+                path,
+            } = &event
+            {
+                self.avatars.register(ctx, identity, version, path.clone());
+            }
             self.state.apply_event(event);
         }
         if let Some(command) = self.state.poll_refresh(Instant::now()) {
@@ -441,6 +470,9 @@ impl App {
             match action {
                 UserAction::PickFile => {
                     resolved.extend(dialogs::pick_file().map(UserAction::AttachFile));
+                }
+                UserAction::PickAvatar => {
+                    resolved.extend(dialogs::pick_avatar().map(UserAction::SetAvatar));
                 }
                 UserAction::SaveReceivedFile { source, name } => {
                     if let Some(dest) = dialogs::pick_save_path(&name) {
@@ -711,6 +743,7 @@ impl eframe::App for App {
         let had_update_dialog = self.state.is_update_confirming();
         let can_save_name = self.state.can_save_name();
         let name_error = display_name_error(&self.state.name_draft);
+        let client_id = self.state.client_id().to_owned();
         let AppState {
             screen,
             form,
@@ -728,6 +761,8 @@ impl eframe::App for App {
             invite_copied,
             picker,
             admin,
+            avatar_version,
+            avatar_notice,
             ..
         } = &mut self.state;
         let can_admin = !matches!(screen, Screen::Onboarding);
@@ -744,6 +779,7 @@ impl eframe::App for App {
             Screen::Lobby => views::room::show_lobby(
                 ui,
                 &form.display_name,
+                (&client_id, avatar_version.as_deref()),
                 *lobby_voice,
                 rooms,
                 server_host(&form.server_url),
@@ -787,6 +823,9 @@ impl eframe::App for App {
                 invite_copied: *invite_copied,
                 can_admin,
                 admin,
+                avatar_identity: &client_id,
+                avatar_version: avatar_version.as_deref(),
+                avatar_notice: avatar_notice.as_deref(),
             },
         ));
         actions.extend(views::room::admin_dialog(ui.ctx(), &mut admin.dialog));
@@ -1397,6 +1436,7 @@ mod tests {
                     name: long_name.to_owned(),
                     muted: false,
                     speaking: false,
+                    avatar_version: None,
                 },
             ));
         harness.run_steps(2);

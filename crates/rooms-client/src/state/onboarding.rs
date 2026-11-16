@@ -217,6 +217,8 @@ impl AppState {
             client_id: self.client_id.clone(),
             display_name: self.form.display_name.trim().to_owned(),
             invite_code: self.current_password(),
+            avatar_version: self.avatar_version.clone(),
+            avatar_cache_dir: self.avatar_cache_dir.clone(),
         }
     }
 

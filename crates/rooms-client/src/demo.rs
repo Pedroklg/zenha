@@ -11,6 +11,17 @@ use crate::ui_model::{
     SessionPort, TargetKindView, TransferStateView, UiCommand, UiEvent,
 };
 
+pub fn demo_avatar_image() -> eframe::egui::ColorImage {
+    const SIDE: usize = 128;
+    let pixels = (0..SIDE * SIDE)
+        .map(|index| {
+            let (x, y) = ((index % SIDE) as u8, (index / SIDE) as u8);
+            eframe::egui::Color32::from_rgb(x.saturating_mul(2), y.saturating_mul(2), 180)
+        })
+        .collect();
+    eframe::egui::ColorImage::new([SIDE, SIDE], pixels)
+}
+
 fn is_image_name(name: &str) -> bool {
     rooms_core::is_image_mime(rooms_core::mime_for_name(name))
 }
@@ -19,6 +30,8 @@ pub const SELF_IDENTITY: &str = "demo-self";
 pub const SELF_NAME: &str = "Você";
 pub const DEMO_SERVER_URL: &str = "https://demo.zenha.local";
 pub const DEMO_PASSWORD: &str = "demo";
+pub const DEMO_AVATAR_IDENTITY: &str = "demo-ana";
+pub const DEMO_AVATAR_VERSION: &str = "demo";
 const FAILING_ROOM: &str = "falha";
 const REPLIES: [&str; 4] = [
     "Boa!",
@@ -225,6 +238,7 @@ impl DemoSession {
             name: name.to_owned(),
             muted: false,
             speaking: false,
+            avatar_version: None,
         }
     }
 
@@ -240,7 +254,7 @@ impl DemoSession {
                 self.schedule(Duration::ZERO, UiEvent::Left);
             }
             UiCommand::SetMuted(muted) => self.set_muted(muted),
-            UiCommand::SetDeafened(_) => {}
+            UiCommand::SetDeafened(_) | UiCommand::SetAvatar { .. } | UiCommand::ClearAvatar => {}
             UiCommand::SetDisplayName { name } => self.set_display_name(name),
             UiCommand::SendChat { text, save } => self.chat(text, save),
             UiCommand::LoadChatHistory { before } => self.load_chat_history(before),
@@ -590,7 +604,8 @@ impl DemoSession {
         }
         let mut me = Self::participant(SELF_IDENTITY, SELF_NAME);
         me.muted = self.muted;
-        let ana = Self::participant("demo-ana", "Ana");
+        let mut ana = Self::participant(DEMO_AVATAR_IDENTITY, "Ana");
+        ana.avatar_version = Some(DEMO_AVATAR_VERSION.to_owned());
         let bruno = Self::participant("demo-bruno", "Bruno");
         self.participants = vec![me.clone(), ana.clone()];
         self.room = Some(room.clone());

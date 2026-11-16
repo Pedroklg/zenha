@@ -590,12 +590,14 @@ mod tests {
                 name: "Você".to_owned(),
                 muted: false,
                 speaking: false,
+                avatar_version: None,
             },
             ParticipantView {
                 identity: "id-ana".to_owned(),
                 name: "Ana".to_owned(),
                 muted: false,
                 speaking: false,
+                avatar_version: None,
             },
         ];
         assert_eq!(

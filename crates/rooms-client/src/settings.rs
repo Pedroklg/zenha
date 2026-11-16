@@ -82,6 +82,8 @@ pub struct Settings {
     pub close_to_tray: bool,
     pub room_sounds: bool,
     pub dismissed_update_version: Option<String>,
+    /// Versão da foto de perfil enviada ao servidor; ausente significa sem foto.
+    pub avatar_version: Option<String>,
 }
 
 impl Default for Settings {
@@ -105,6 +107,7 @@ impl Default for Settings {
             close_to_tray: true,
             room_sounds: true,
             dismissed_update_version: None,
+            avatar_version: None,
         }
     }
 }
@@ -278,6 +281,7 @@ mod tests {
             close_to_tray: false,
             room_sounds: false,
             dismissed_update_version: Some("0.2.0".to_owned()),
+            avatar_version: Some("0123456789abcdef".to_owned()),
         };
         save(&path, &settings).unwrap();
         assert_eq!(load(&path), settings);
@@ -420,6 +424,25 @@ mod tests {
         assert!(!is_valid_client_id_hex("short"));
         assert!(!is_valid_client_id_hex("0123456789ABCDEF0123456789abcdef"));
         assert!(!is_valid_client_id_hex("0123456789abcdef0123456789abcdeg"));
+    }
+
+    #[test]
+    fn avatar_version_defaults_to_none_and_round_trips() {
+        let dir = temp_dir("avatar-version");
+        let path = dir.join(FILE_NAME);
+        std::fs::write(&path, r#"{"display_name":"Ana"}"#).unwrap();
+        assert_eq!(load(&path).avatar_version, None);
+
+        let settings = Settings {
+            avatar_version: Some("0123456789abcdef".to_owned()),
+            ..Settings::default()
+        };
+        save(&path, &settings).unwrap();
+        assert_eq!(
+            load(&path).avatar_version.as_deref(),
+            Some("0123456789abcdef")
+        );
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

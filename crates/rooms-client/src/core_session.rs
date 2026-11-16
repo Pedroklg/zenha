@@ -75,6 +75,8 @@ impl SessionPort for CoreSession {
             client_id: credentials.client_id,
             display_name: credentials.display_name,
             invite_code: credentials.invite_code,
+            avatar_version: credentials.avatar_version,
+            avatar_cache_dir: credentials.avatar_cache_dir,
         };
         match SessionHandle::spawn_with_http_tokens(config, backend) {
             Ok(handle) => self.install(handle),
@@ -111,6 +113,8 @@ fn to_core(command: UiCommand) -> Command {
         UiCommand::SetMuted(muted) => Command::SetMuted(muted),
         UiCommand::SetDeafened(deafened) => Command::SetDeafened(deafened),
         UiCommand::SetDisplayName { name } => Command::SetDisplayName { name },
+        UiCommand::SetAvatar { path } => Command::SetAvatar { path },
+        UiCommand::ClearAvatar => Command::ClearAvatar,
         UiCommand::SendChat { text, save } => Command::SendChat { text, save },
         UiCommand::LoadChatHistory { before } => Command::LoadChatHistory { before },
         UiCommand::DeleteChat { id } => Command::DeleteChat { id },
@@ -267,6 +271,10 @@ fn describe(error: &SessionError) -> String {
             "O servidor não respondeu ao chat salvo. A mensagem não foi salva; tente de novo."
                 .to_owned()
         }
+        SessionError::Avatar(_) => {
+            "Não foi possível atualizar a foto. Use PNG, JPEG ou WebP de até 2 MB e tente de novo."
+                .to_owned()
+        }
         SessionError::AdminInvalidPassword => "Senha de administrador incorreta.".to_owned(),
         SessionError::AdminUnauthorized => {
             "Sessão de administrador expirada. Entre novamente.".to_owned()
@@ -330,6 +338,7 @@ fn view(participant: Participant) -> ParticipantView {
         name: participant.name,
         muted: participant.muted,
         speaking: participant.speaking,
+        avatar_version: participant.avatar_version,
     }
 }
 
@@ -435,6 +444,21 @@ impl Translator {
             Event::ParticipantNameChanged { identity, name } => {
                 self.update(&identity, |p| p.name = name)
             }
+            Event::ParticipantAvatarChanged { identity, version } => {
+                self.update(&identity, |p| p.avatar_version = version)
+            }
+            Event::LocalAvatarChanged { version } => {
+                vec![UiEvent::LocalAvatarChanged { version }]
+            }
+            Event::AvatarCached {
+                identity,
+                version,
+                path,
+            } => vec![UiEvent::AvatarCached {
+                identity,
+                version,
+                path,
+            }],
             Event::ChatReceived(message) => {
                 vec![UiEvent::ChatReceived(self.chat_message_view(message))]
             }
@@ -550,6 +574,9 @@ impl Translator {
                 tracing::warn!(%error, "command failed");
                 match &error {
                     SessionError::InviteRejected => vec![UiEvent::InviteRejected],
+                    SessionError::Avatar(_) => vec![UiEvent::AvatarFailed {
+                        message: describe(&error),
+                    }],
                     SessionError::RateLimited
                     | SessionError::Unauthorized
                     | SessionError::Chat(_) => vec![UiEvent::ChatFailed {
@@ -601,6 +628,7 @@ mod tests {
             name: name.to_owned(),
             muted: false,
             speaking: false,
+            avatar_version: None,
         }
     }
 
@@ -627,6 +655,7 @@ mod tests {
                 name: "Ana".to_owned(),
                 muted: true,
                 speaking: false,
+                avatar_version: None,
             })]
         );
         let events = translator.translate(Event::ParticipantSpeakingChanged {
@@ -634,6 +663,67 @@ mod tests {
             speaking: true,
         });
         assert!(matches!(&events[..], [UiEvent::ParticipantUpdated(p)] if p.muted && p.speaking));
+    }
+
+    #[test]
+    fn avatar_events_update_participants_and_report_cache_paths() {
+        let mut translator = Translator::default();
+        joined(&mut translator);
+        let events = translator.translate(Event::ParticipantAvatarChanged {
+            identity: "ana".to_owned(),
+            version: Some("0123456789abcdef".to_owned()),
+        });
+        assert!(matches!(
+            &events[..],
+            [UiEvent::ParticipantUpdated(p)]
+                if p.identity == "ana" && p.avatar_version.as_deref() == Some("0123456789abcdef")
+        ));
+        let events = translator.translate(Event::ParticipantAvatarChanged {
+            identity: "ana".to_owned(),
+            version: None,
+        });
+        assert!(matches!(
+            &events[..],
+            [UiEvent::ParticipantUpdated(p)] if p.avatar_version.is_none()
+        ));
+        assert!(
+            translator
+                .translate(Event::ParticipantAvatarChanged {
+                    identity: "ghost".to_owned(),
+                    version: None,
+                })
+                .is_empty()
+        );
+
+        let path = std::path::PathBuf::from("avatars/ana-0123456789abcdef.png");
+        assert_eq!(
+            translator.translate(Event::AvatarCached {
+                identity: "ana".to_owned(),
+                version: "0123456789abcdef".to_owned(),
+                path: path.clone(),
+            }),
+            vec![UiEvent::AvatarCached {
+                identity: "ana".to_owned(),
+                version: "0123456789abcdef".to_owned(),
+                path,
+            }]
+        );
+        assert_eq!(
+            translator.translate(Event::LocalAvatarChanged { version: None }),
+            vec![UiEvent::LocalAvatarChanged { version: None }]
+        );
+    }
+
+    #[test]
+    fn avatar_failures_become_avatar_failed_in_portuguese() {
+        let mut translator = Translator::default();
+        let events = translator.translate(Event::CommandFailed(SessionError::Avatar(
+            "avatar file is empty".to_owned(),
+        )));
+        assert!(matches!(
+            &events[..],
+            [UiEvent::AvatarFailed { message }] if message.contains("PNG, JPEG ou WebP")
+        ));
     }
 
     #[test]

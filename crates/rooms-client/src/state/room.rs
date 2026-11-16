@@ -452,6 +452,9 @@ pub(super) fn apply_room_event(state: &mut RoomState, event: UiEvent) -> Option<
         | UiEvent::AdminInviteRotated
         | UiEvent::AdminStoppedScreenShare
         | UiEvent::MovedByAdmin { .. }
+        | UiEvent::LocalAvatarChanged { .. }
+        | UiEvent::AvatarCached { .. }
+        | UiEvent::AvatarFailed { .. }
         | UiEvent::RemovedFromRoom { .. }
         | UiEvent::AdminFailed { .. } => None,
     }

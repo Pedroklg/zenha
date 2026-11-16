@@ -18,6 +18,10 @@ pub enum UiCommand {
     SetDisplayName {
         name: String,
     },
+    SetAvatar {
+        path: PathBuf,
+    },
+    ClearAvatar,
     SendChat {
         text: String,
         save: bool,
@@ -73,6 +77,8 @@ impl fmt::Debug for UiCommand {
                 .debug_struct("SetDisplayName")
                 .field("name", name)
                 .finish(),
+            Self::SetAvatar { path } => f.debug_struct("SetAvatar").field("path", path).finish(),
+            Self::ClearAvatar => f.write_str("ClearAvatar"),
             Self::SendChat { text, save } => f
                 .debug_struct("SendChat")
                 .field("text", text)
@@ -214,6 +220,7 @@ pub struct ParticipantView {
     pub name: String,
     pub muted: bool,
     pub speaking: bool,
+    pub avatar_version: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -258,6 +265,19 @@ pub enum UiEvent {
         identity: String,
     },
     ParticipantUpdated(ParticipantView),
+    /// Foto de perfil de alguém já gravada no cache em disco.
+    AvatarCached {
+        identity: String,
+        version: String,
+        path: PathBuf,
+    },
+    /// Versão da foto do usuário local depois de enviar ou remover; `None` = sem foto.
+    LocalAvatarChanged {
+        version: Option<String>,
+    },
+    AvatarFailed {
+        message: String,
+    },
     Reconnecting,
     Reconnected,
     Left,
@@ -345,6 +365,8 @@ pub struct Credentials {
     pub client_id: String,
     pub display_name: String,
     pub invite_code: String,
+    pub avatar_version: Option<String>,
+    pub avatar_cache_dir: Option<PathBuf>,
 }
 
 impl fmt::Debug for Credentials {
@@ -386,6 +408,8 @@ mod tests {
             client_id: "c1".to_owned(),
             display_name: "Ana".to_owned(),
             invite_code: "invite-secret-456".to_owned(),
+            avatar_version: None,
+            avatar_cache_dir: None,
         };
         let creds_dbg = format!("{creds:?}");
         assert!(!creds_dbg.contains("invite-secret-456"));

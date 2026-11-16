@@ -51,6 +51,10 @@ pub enum UserAction {
     CancelConnect,
     ChangeServer,
     SaveDisplayName,
+    /// Effect handled by the app (file dialog); the state does not change.
+    PickAvatar,
+    SetAvatar(PathBuf),
+    RemoveAvatar,
     CopyInviteLink,
     ToggleMute,
     ToggleDeafen,
@@ -163,6 +167,9 @@ pub struct AppState {
     pub room_sounds: bool,
     pub picker: SharePicker,
     pub admin: AdminState,
+    pub avatar_version: Option<String>,
+    pub avatar_notice: Option<String>,
+    avatar_cache_dir: Option<PathBuf>,
     client_id: String,
     last_room: String,
     saved_credential: Option<(String, String)>,
@@ -225,6 +232,9 @@ impl AppState {
             room_sounds: settings.room_sounds,
             picker: SharePicker::default(),
             admin: AdminState::default(),
+            avatar_version: settings.avatar_version.clone(),
+            avatar_notice: None,
+            avatar_cache_dir: None,
             client_id: settings.client_id.clone(),
             last_room: settings.last_room.clone(),
             saved_credential,
@@ -242,6 +252,14 @@ impl AppState {
             pending_update_effects: Vec::new(),
             pending_move_notice: None,
         }
+    }
+
+    pub fn set_avatar_cache_dir(&mut self, dir: Option<PathBuf>) {
+        self.avatar_cache_dir = dir;
+    }
+
+    pub fn client_id(&self) -> &str {
+        &self.client_id
     }
 
     pub fn tray_muted(&self) -> Option<bool> {
@@ -286,6 +304,7 @@ impl AppState {
             close_to_tray: self.close_to_tray,
             room_sounds: self.room_sounds,
             dismissed_update_version: self.update.dismissed_version.clone(),
+            avatar_version: self.avatar_version.clone(),
             ..self.form.to_settings()
         }
     }
@@ -306,6 +325,19 @@ impl AppState {
             UserAction::CancelConnect => self.cancel_connect(),
             UserAction::ChangeServer => self.change_server(),
             UserAction::SaveDisplayName => self.save_display_name(),
+            UserAction::PickAvatar => Vec::new(),
+            UserAction::SetAvatar(path) => {
+                self.avatar_notice = None;
+                vec![UiCommand::SetAvatar { path }]
+            }
+            UserAction::RemoveAvatar => {
+                self.avatar_notice = None;
+                if self.avatar_version.is_some() {
+                    vec![UiCommand::ClearAvatar]
+                } else {
+                    Vec::new()
+                }
+            }
             UserAction::CopyInviteLink => {
                 self.invite_copied = true;
                 Vec::new()
@@ -681,6 +713,15 @@ impl AppState {
                 local_identity,
                 participants,
             } => self.on_joined(room, local_identity, participants),
+            UiEvent::LocalAvatarChanged { version } => {
+                self.avatar_notice = None;
+                if self.avatar_version != version {
+                    self.avatar_version = version;
+                    self.pending_save = Some(self.settings_snapshot());
+                }
+            }
+            UiEvent::AvatarFailed { message } => self.avatar_notice = Some(message),
+            UiEvent::AvatarCached { .. } => {}
             UiEvent::CaptureTargetsUpdated(targets) => self.picker.set_targets(targets),
             UiEvent::CaptureThumbnail {
                 id,
@@ -819,6 +860,43 @@ mod test_support;
 mod tests {
     use super::*;
     use test_support::{person, state_with_code, valid_settings};
+
+    #[test]
+    fn avatar_actions_events_and_credentials_follow_the_local_photo() {
+        let mut state = AppState::new(&valid_settings(), None);
+        assert!(state.credentials().avatar_version.is_none());
+        assert!(state.handle_action(UserAction::RemoveAvatar).is_empty());
+        let path = PathBuf::from("foto.png");
+        assert_eq!(
+            state.handle_action(UserAction::SetAvatar(path.clone())),
+            vec![UiCommand::SetAvatar { path }]
+        );
+
+        state.apply_event(UiEvent::LocalAvatarChanged {
+            version: Some("0123456789abcdef".to_owned()),
+        });
+        assert_eq!(state.avatar_version.as_deref(), Some("0123456789abcdef"));
+        assert_eq!(
+            state.take_pending_save().unwrap().avatar_version.as_deref(),
+            Some("0123456789abcdef")
+        );
+        assert_eq!(
+            state.credentials().avatar_version.as_deref(),
+            Some("0123456789abcdef")
+        );
+        assert_eq!(
+            state.handle_action(UserAction::RemoveAvatar),
+            vec![UiCommand::ClearAvatar]
+        );
+
+        state.apply_event(UiEvent::AvatarFailed {
+            message: "falhou".to_owned(),
+        });
+        assert_eq!(state.avatar_notice.as_deref(), Some("falhou"));
+        state.apply_event(UiEvent::LocalAvatarChanged { version: None });
+        assert!(state.avatar_notice.is_none());
+        assert!(state.take_pending_save().unwrap().avatar_version.is_none());
+    }
 
     #[test]
     fn close_to_tray_loads_from_settings_and_saves_on_change() {
