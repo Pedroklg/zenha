@@ -18,7 +18,26 @@ if (git status --porcelain --untracked-files=no) { throw 'Ha mudancas nao commit
 
 $meta = (cargo metadata --no-deps --format-version 1) -join "`n" | ConvertFrom-Json
 $current = ($meta.packages | Where-Object { $_.name -eq 'rooms-client' }).version
-if ($current -ne $Version) { throw "Cargo.toml esta em $current; suba para $Version (Cargo.toml e installer/zenha.iss) antes" }
+if ($current -ne $Version) {
+    $branch = "release/$tag"
+    Invoke-Step "branch $branch" { git switch -q -c $branch }
+    $toml = [IO.File]::ReadAllText((Join-Path $root 'Cargo.toml'))
+    $toml = [regex]::Replace($toml, '(?m)(\[workspace\.package\]\s*\r?\nversion = ")[^"]+(")', "`${1}$Version`${2}")
+    [IO.File]::WriteAllText((Join-Path $root 'Cargo.toml'), $toml)
+    $issPath = Join-Path $root 'installer\zenha.iss'
+    $iss = [IO.File]::ReadAllText($issPath)
+    $iss = [regex]::Replace($iss, '(#define AppVersion ")[^"]+(")', "`${1}$Version`${2}")
+    [IO.File]::WriteAllText($issPath, $iss)
+    Invoke-Step 'cargo update -w' { cargo update -w -q }
+    Invoke-Step 'add bump' { git add Cargo.toml Cargo.lock installer/zenha.iss }
+    Invoke-Step 'commit bump' { git commit -q -m "chore(release): bump version to $Version" }
+    Invoke-Step 'switch main' { git switch -q main }
+    Invoke-Step 'merge bump' { git merge --no-ff -q $branch -m "Merge branch '$branch'" }
+    Invoke-Step 'delete branch' { git branch -q -d $branch }
+    $meta = (cargo metadata --no-deps --format-version 1) -join "`n" | ConvertFrom-Json
+    $current = ($meta.packages | Where-Object { $_.name -eq 'rooms-client' }).version
+    if ($current -ne $Version) { throw "Falha ao subir a versao: Cargo.toml esta em $current" }
+}
 
 git ls-remote --exit-code --tags origin "refs/tags/$tag" | Out-Null
 if ($LASTEXITCODE -eq 0) { throw "A tag $tag ja existe" }

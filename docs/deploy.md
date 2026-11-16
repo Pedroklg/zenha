@@ -233,12 +233,12 @@ ssh -i ~/.ssh/zenha_azure azureuser@<public-ip> '
 
 Releases are built on a Windows PC; GitHub Actions does not build or test the code.
 
-1. Bump `[workspace.package].version` in `Cargo.toml` and `AppVersion` in `installer/zenha.iss`, and merge to `main`.
+1. Start from a clean `main`. Unless they already match, the script bumps `[workspace.package].version` in `Cargo.toml`, `AppVersion` in `installer/zenha.iss` and `Cargo.lock` on a `release/vX.Y.Z` branch and merges it.
 2. On `main`, run (needs `gh` logged in and Inno Setup 6):
    ```powershell
    scripts\release.cmd 0.2.0
    ```
-   The script checks the version against `Cargo.toml` and that tag `v0.2.0` does not exist, runs `cargo ci`, builds the installer and zip with `scripts\package.cmd` (baking in the repository variable `ZENHA_DEFAULT_SERVER` as the default server and this repository as the update source), pushes `main` and creates tag `v0.2.0` and the GitHub Release.
+   The script checks that tag `v0.2.0` does not exist, runs `cargo ci`, builds the installer and zip with `scripts\package.cmd` (baking in the repository variable `ZENHA_DEFAULT_SERVER` as the default server and this repository as the update source), pushes `main` and creates tag `v0.2.0` and the GitHub Release.
 3. The tag starts `server-image`, which pushes `ghcr.io/<owner>/zenha-token-server:v0.2.0` and `:latest`.
 4. When `server-image` succeeds, `deploy` sets `ZENHA_IMAGE` in `/opt/zenha/.env`, runs `docker compose pull && docker compose up -d --remove-orphans` and checks `/health`.
 
@@ -258,6 +258,8 @@ With `schedule_enabled = true`, [`schedule.tf`](../deploy/infra/azure/schedule.t
 | Deallocate | Sun, Mon | 02:00 | `zenha-schedule-deallocate-sun-mon` |
 
 Deallocation drops anyone still in a call. For a late session, pause the schedule or start the VM again. To change the times, override `schedules` in `terraform.tfvars` and run `tofu apply`.
+
+The `deploy` workflow starts a deallocated VM, updates it and deallocates it again, so a release outside the schedule still reaches the server.
 
 ```powershell
 scripts\server.cmd start
