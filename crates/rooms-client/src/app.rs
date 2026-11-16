@@ -6,9 +6,9 @@ use std::time::{Duration, Instant};
 
 use eframe::egui;
 
-use crate::chat_images::{ChatImages, ViewerImage};
+use crate::chat_images::{ChatImages, ViewerImage, pending_paste_thumb_id};
 use crate::cli::{self, StartupLink};
-use crate::clipboard_image::{self, PasteImageError};
+use crate::clipboard_image::{self, PasteImageError, SavedPastedImage};
 use crate::core_session::CoreSession;
 use crate::credentials;
 use crate::demo::DemoSession;
@@ -24,7 +24,8 @@ use crate::settings::{self, Settings};
 #[cfg(windows)]
 use crate::single_instance::Listener;
 use crate::state::{
-    AppState, ChatEntry, CredentialOp, Screen, UserAction, display_name_error, room_display_title,
+    AppState, ChatEntry, CredentialOp, PendingPastedImage, Screen, UserAction, display_name_error,
+    room_display_title,
 };
 use crate::theme;
 #[cfg(windows)]
@@ -58,8 +59,8 @@ pub struct App {
     save_sender: Sender<Result<PathBuf, ()>>,
     open_results: Receiver<Result<(), ()>>,
     open_sender: Sender<Result<(), ()>>,
-    paste_results: Receiver<Result<PathBuf, PasteImageError>>,
-    paste_sender: Sender<Result<PathBuf, PasteImageError>>,
+    paste_results: Receiver<Result<SavedPastedImage, PasteImageError>>,
+    paste_sender: Sender<Result<SavedPastedImage, PasteImageError>>,
     update_rx: Option<Receiver<AvailableUpdate>>,
     #[cfg(windows)]
     forwarded_links: Option<Receiver<String>>,
@@ -255,6 +256,9 @@ impl App {
     fn flush_state_effects(&mut self) {
         let pending = self.state.take_pending_commands();
         self.send_commands(pending);
+        for path in self.state.take_pending_paste_deletes() {
+            clipboard_image::delete_in_background(path);
+        }
         let credential_ops = self.state.take_credential_ops();
         let pending_save = self.state.take_pending_save();
         if self.is_demo {
@@ -405,7 +409,13 @@ impl App {
                         ChatEntry::Text(_) => None,
                     })
                     .collect();
-                self.images.retain(|id| ids.contains(id));
+                let pending_id = room
+                    .chat
+                    .pending_paste
+                    .as_ref()
+                    .map(|pending| pending_paste_thumb_id(&pending.path));
+                self.images
+                    .retain(|id| ids.contains(id) || pending_id.as_deref() == Some(id));
             }
             _ => self.images.retain(|_| false),
         }
@@ -429,15 +439,20 @@ impl App {
     }
 
     fn pump_pasted_images(&mut self, ctx: &egui::Context) {
-        let mut attached = Vec::new();
+        let mut staged = Vec::new();
         while let Ok(result) = self.paste_results.try_recv() {
             match result {
-                Ok(path) => attached.push(UserAction::AttachFile(path)),
+                Ok(saved) => staged.push(UserAction::StagePastedImage(PendingPastedImage {
+                    path: saved.path,
+                    name: saved.name,
+                    size: saved.size,
+                })),
                 Err(err) => self.state.set_chat_notice(err.user_message().to_owned()),
             }
         }
-        if !attached.is_empty() {
-            self.dispatch(ctx, attached);
+        if !staged.is_empty() {
+            self.dispatch(ctx, staged);
+            self.prune_images();
         }
     }
 
@@ -638,6 +653,31 @@ impl eframe::App for App {
             || egui::Popup::is_any_open(ui.ctx())
             || had_hotkey_capture;
         let text_input_focused = ui.ctx().text_edit_focused() || prev_text_edit_focused;
+        let paste_action_triggered = actions.iter().any(|action| {
+            matches!(
+                action,
+                UserAction::SendPastedImage | UserAction::CancelPastedImage | UserAction::SendChat
+            )
+        });
+        if self.state.has_pending_paste()
+            && self.state.can_paste_chat_image()
+            && !blocking_overlay_open
+            && !paste_action_triggered
+        {
+            if ui
+                .ctx()
+                .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+            {
+                actions.push(UserAction::CancelPastedImage);
+            } else if self.state.chat_draft_is_empty()
+                && ui.ctx().memory(|m| m.focused()).is_none()
+                && ui
+                    .ctx()
+                    .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter))
+            {
+                actions.push(UserAction::SendPastedImage);
+            }
+        }
         let fullscreen = self.state.is_fullscreen();
         if fullscreen
             && !already_toggled_fullscreen

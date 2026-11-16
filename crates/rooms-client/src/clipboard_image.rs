@@ -43,19 +43,48 @@ impl fmt::Display for PasteImageError {
 
 impl std::error::Error for PasteImageError {}
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SavedPastedImage {
+    pub path: PathBuf,
+    pub name: String,
+    pub size: u64,
+}
+
 /// Pasta temporária usada para salvar imagens coladas antes do envio.
 pub fn paste_temp_dir() -> PathBuf {
     std::env::temp_dir().join(PASTE_DIR_NAME)
 }
 
 /// Codifica a imagem colada em PNG e grava um arquivo temporário em `dir`.
-pub fn save_pasted_image(image: &ColorImage, dir: &Path) -> Result<PathBuf, PasteImageError> {
+pub fn save_pasted_image(
+    image: &ColorImage,
+    dir: &Path,
+) -> Result<SavedPastedImage, PasteImageError> {
     let [width, height] = image.size;
     let rgba = color_image_to_rgba(image)?;
     let png = encode_rgba_to_png(width, height, &rgba, MAX_FILE_BYTES)?;
+    let size = u64::try_from(png.len()).map_err(|_| PasteImageError::PrepareFailed)?;
     let now_secs = current_unix_secs()?;
     let base_stem = format_paste_stem_at(now_secs, DISPLAY_UTC_OFFSET_MINUTES);
-    write_unique_png(dir, &base_stem, &png)
+    let (path, name) = write_unique_png(dir, &base_stem, &png)?;
+    Ok(SavedPastedImage { path, name, size })
+}
+
+pub fn delete_in_background(path: PathBuf) {
+    let spawned = std::thread::Builder::new()
+        .name("delete-pasted-image".to_owned())
+        .spawn(move || delete_pasted_file(&path));
+    if let Err(err) = spawned {
+        tracing::debug!(%err, "could not start pasted image delete thread");
+    }
+}
+
+fn delete_pasted_file(path: &Path) {
+    if let Err(err) = fs::remove_file(path)
+        && err.kind() != std::io::ErrorKind::NotFound
+    {
+        tracing::debug!(%err, path = %path.display(), "could not remove pasted image");
+    }
 }
 
 /// Remove arquivos temporários `print-*.png` antigos deixados por sessões anteriores.
@@ -177,7 +206,11 @@ pub fn encode_rgba_to_png(
     Ok(png)
 }
 
-fn write_unique_png(dir: &Path, base_stem: &str, png: &[u8]) -> Result<PathBuf, PasteImageError> {
+fn write_unique_png(
+    dir: &Path,
+    base_stem: &str,
+    png: &[u8],
+) -> Result<(PathBuf, String), PasteImageError> {
     fs::create_dir_all(dir).map_err(|err| {
         tracing::warn!(%err, path = %dir.display(), "could not create pasted images directory");
         PasteImageError::PrepareFailed
@@ -189,7 +222,7 @@ fn write_unique_png(dir: &Path, base_stem: &str, png: &[u8]) -> Result<PathBuf, 
         } else {
             format!("{base_stem}-{attempt}{FILE_EXT}")
         };
-        let path = dir.join(filename);
+        let path = dir.join(&filename);
         match OpenOptions::new().write(true).create_new(true).open(&path) {
             Ok(mut file) => {
                 if let Err(err) = file.write_all(png).and_then(|()| file.flush()) {
@@ -197,7 +230,7 @@ fn write_unique_png(dir: &Path, base_stem: &str, png: &[u8]) -> Result<PathBuf, 
                     let _ = fs::remove_file(&path);
                     return Err(PasteImageError::PrepareFailed);
                 }
-                return Ok(path);
+                return Ok((path, filename));
             }
             Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => continue,
             Err(err) => {
@@ -305,18 +338,26 @@ mod tests {
 
         let first = save_pasted_image(&image, &dir)?;
         let second = save_pasted_image(&image, &dir)?;
-        assert_ne!(first, second);
-        assert!(first.exists());
-        assert!(second.exists());
-        let first_name = first.file_name().and_then(|n| n.to_str()).unwrap_or("");
-        assert!(first_name.starts_with("print-") && first_name.ends_with(".png"));
+        assert_ne!(first.path, second.path);
+        assert!(first.path.exists());
+        assert!(second.path.exists());
+        assert_eq!(first.size, fs::metadata(&first.path)?.len());
+        assert!(first.name.starts_with("print-") && first.name.ends_with(".png"));
+        assert_eq!(
+            first.path.file_name().and_then(|n| n.to_str()),
+            Some(first.name.as_str())
+        );
 
         let keep = dir.join("unrelated.txt");
         fs::write(&keep, b"keep")?;
 
+        delete_pasted_file(&first.path);
+        assert!(!first.path.exists());
+        delete_pasted_file(&first.path);
+        assert!(second.path.exists());
+
         cleanup_old_pastes(&dir);
-        assert!(!first.exists());
-        assert!(!second.exists());
+        assert!(!second.path.exists());
         assert!(keep.exists());
 
         let _ = fs::remove_dir_all(&dir);

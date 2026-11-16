@@ -1,10 +1,10 @@
 use eframe::egui::{self, CornerRadius, Margin, RichText, Stroke};
 use rooms_protocol::MAX_CHAT_MESSAGE_LEN;
 
-use crate::chat_images::{ChatImages, ThumbState, ViewerImage, fit_within};
+use crate::chat_images::{ChatImages, ThumbState, ViewerImage, fit_within, pending_paste_thumb_id};
 use crate::format::{DISPLAY_UTC_OFFSET_MINUTES, format_hhmm, format_size};
 use crate::icons;
-use crate::state::{ChatEntry, ChatState, ImageViewer, UserAction};
+use crate::state::{ChatEntry, ChatState, ImageViewer, PendingPastedImage, UserAction};
 use crate::theme;
 use crate::ui_model::{ChatMessageView, FileTransferView, ParticipantView, TransferStateView};
 
@@ -99,6 +99,7 @@ pub fn viewer(
 }
 
 const THUMB_MAX: (f32, f32) = (240.0, 180.0);
+const PASTE_THUMB_MAX: (f32, f32) = (64.0, 48.0);
 const HEADER_HEIGHT: f32 = 64.0;
 
 pub fn show(
@@ -161,8 +162,16 @@ pub fn show(
                     ui.painter()
                         .hline(full.x_range(), top, Stroke::new(1.0, theme::BORDER));
                     notice(ui, chat, &mut actions);
+                    if let Some(pending) = &chat.pending_paste {
+                        pending_paste_card(ui, pending, images, &mut actions);
+                        ui.add_space(8.0);
+                    }
                     if input(ui, chat, &mut actions) {
-                        actions.push(UserAction::SendChat);
+                        if chat.draft.is_empty() && chat.pending_paste.is_some() {
+                            actions.push(UserAction::SendPastedImage);
+                        } else {
+                            actions.push(UserAction::SendChat);
+                        }
                     }
                 });
 
@@ -402,6 +411,69 @@ fn file_entry(
 }
 
 const TEMPORARY_BUTTON_SIZE: f32 = 24.0;
+
+fn pending_paste_card(
+    ui: &mut egui::Ui,
+    pending: &PendingPastedImage,
+    images: &mut ChatImages,
+    actions: &mut Vec<UserAction>,
+) {
+    let thumb_id = pending_paste_thumb_id(&pending.path);
+    egui::Frame::new()
+        .fill(theme::CONTROL)
+        .stroke(Stroke::new(1.0, theme::BORDER))
+        .corner_radius(CornerRadius::same(8))
+        .inner_margin(Margin::same(8))
+        .show(ui, |ui| {
+            ui.set_min_width(ui.available_width());
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 10.0;
+                match images.texture(ui.ctx(), &thumb_id, &pending.path) {
+                    ThumbState::Ready(texture) => {
+                        let size = texture.size_vec2();
+                        let (width, height) =
+                            fit_within(size.x, size.y, PASTE_THUMB_MAX.0, PASTE_THUMB_MAX.1);
+                        ui.add(
+                            egui::Image::new(&texture)
+                                .fit_to_exact_size(egui::vec2(width.max(1.0), height.max(1.0)))
+                                .corner_radius(CornerRadius::same(4)),
+                        );
+                    }
+                    ThumbState::Loading => {
+                        ui.allocate_ui_with_layout(
+                            egui::vec2(PASTE_THUMB_MAX.0, PASTE_THUMB_MAX.1),
+                            egui::Layout::centered_and_justified(egui::Direction::TopDown),
+                            |ui| {
+                                ui.spinner();
+                            },
+                        );
+                    }
+                    ThumbState::Failed => {}
+                }
+                ui.vertical(|ui| {
+                    ui.spacing_mut().item_spacing.y = 4.0;
+                    ui.add(
+                        egui::Label::new(
+                            RichText::new(&pending.name)
+                                .font(theme::semibold(13.0))
+                                .color(theme::TEXT),
+                        )
+                        .truncate(),
+                    );
+                    ui.weak(format_size(pending.size));
+                    ui.horizontal_wrapped(|ui| {
+                        ui.spacing_mut().item_spacing.x = 6.0;
+                        if ui.add(theme::accent_button("Enviar")).clicked() {
+                            actions.push(UserAction::SendPastedImage);
+                        }
+                        if ui.button("Cancelar").clicked() {
+                            actions.push(UserAction::CancelPastedImage);
+                        }
+                    });
+                });
+            });
+        });
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct TemporaryToggleState {

@@ -147,6 +147,7 @@ impl AppState {
         match link {
             StartupLink::None => {}
             StartupLink::Invite(invite) => {
+                self.discard_pending_paste();
                 self.screen = Screen::Onboarding;
                 self.active_password.clear();
                 self.pending_password_save = None;
@@ -330,6 +331,7 @@ impl AppState {
         self.onboarding.link_input.clear();
         self.onboarding.link_error = None;
         self.invite_copied = false;
+        self.discard_pending_paste();
         self.screen = Screen::Onboarding;
         if was_in_room {
             leave_cue.into_iter().chain([UiCommand::Leave]).collect()
@@ -367,6 +369,7 @@ impl AppState {
             self.pending_credential_ops
                 .push(CredentialOp::Forget { server });
         }
+        self.discard_pending_paste();
         self.screen = Screen::Onboarding;
     }
 }

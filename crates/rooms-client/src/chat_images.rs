@@ -323,6 +323,10 @@ fn rgba_to_color_image(image: image::RgbaImage) -> egui::ColorImage {
     egui::ColorImage::from_rgba_unmultiplied(size, image.as_raw())
 }
 
+pub fn pending_paste_thumb_id(path: &Path) -> String {
+    format!("pending-paste:{}", path.display())
+}
+
 pub fn fit_within(width: f32, height: f32, max_width: f32, max_height: f32) -> (f32, f32) {
     if width <= 0.0 || height <= 0.0 || max_width <= 0.0 || max_height <= 0.0 {
         return (0.0, 0.0);
