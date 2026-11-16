@@ -495,80 +495,47 @@ fn participant_card(
             let inner_width = (width - 36.0).max(80.0);
             ui.set_min_width(inner_width);
             ui.set_max_width(inner_width);
-            ui.horizontal(|ui| {
-                theme::avatar(
-                    ui,
-                    52.0,
-                    &participant.name,
-                    theme::avatar_color(&participant.identity, is_self),
-                );
-                ui.add_space(8.0);
+            ui.allocate_ui_with_layout(
+                Vec2::new(inner_width, 52.0),
+                Layout::left_to_right(Align::Center),
+                |ui| {
+                    theme::avatar(
+                        ui,
+                        52.0,
+                        &participant.name,
+                        theme::avatar_color(&participant.identity, is_self),
+                    );
+                    ui.add_space(8.0);
 
-                let text_col_w = if is_sharing_remote {
-                    (ui.available_width() - 88.0).max(40.0)
-                } else {
-                    ui.available_width().max(40.0)
-                };
-
-                ui.allocate_ui_with_layout(
-                    Vec2::new(text_col_w, 48.0),
-                    Layout::top_down(Align::Min),
-                    |ui| {
-                        ui.spacing_mut().item_spacing.y = 4.0;
-                        ui.horizontal(|ui| {
-                            ui.spacing_mut().item_spacing.x = 6.0;
-                            ui.label(
-                                RichText::new(&participant.name)
-                                    .font(theme::semibold(15.0))
-                                    .color(theme::TEXT),
-                            );
-                            if is_self {
-                                ui.label(
-                                    RichText::new("(você)").size(13.0).color(theme::TEXT_WEAK),
-                                );
-                            } else if let Some(badge) = participant_volume_badge(volume, is_self) {
-                                ui.label(RichText::new(badge).size(12.0).color(theme::TEXT_WEAK));
+                    ui.allocate_ui_with_layout(
+                        Vec2::new(ui.available_width(), 52.0),
+                        Layout::right_to_left(Align::Center),
+                        |ui| {
+                            if is_sharing_remote
+                                && ui.add(theme::accent_button("Assistir")).clicked()
+                            {
+                                actions.push(UserAction::Watch(participant.identity.clone()));
                             }
-                        });
 
-                        if is_sharing_remote || is_sharing_local {
-                            ui.label(
-                                RichText::new("Transmitindo a tela")
-                                    .size(13.0)
-                                    .color(theme::TEXT_WEAK),
+                            let text_col_w = ui.available_width().max(40.0);
+                            ui.allocate_ui_with_layout(
+                                Vec2::new(text_col_w, 48.0),
+                                Layout::top_down(Align::Min),
+                                |ui| {
+                                    ui.set_max_width(text_col_w);
+                                    ui.spacing_mut().item_spacing.y = 4.0;
+                                    participant_name_row(ui, participant, is_self, volume);
+                                    participant_status_row(
+                                        ui,
+                                        participant,
+                                        is_sharing_remote || is_sharing_local,
+                                    );
+                                },
                             );
-                        } else if participant.speaking {
-                            ui.label(
-                                RichText::new("Falando")
-                                    .font(theme::semibold(13.0))
-                                    .color(theme::SPEAKING),
-                            );
-                        } else if participant.muted {
-                            ui.horizontal(|ui| {
-                                ui.spacing_mut().item_spacing.x = 4.0;
-                                let (icon_rect, _) =
-                                    ui.allocate_exact_size(Vec2::splat(14.0), Sense::hover());
-                                icons::mic(ui.painter(), icon_rect, theme::TEXT_WEAK, true);
-                                ui.label(
-                                    RichText::new("Microfone desligado")
-                                        .size(13.0)
-                                        .color(theme::TEXT_WEAK),
-                                );
-                            });
-                        } else {
-                            ui.label(RichText::new("Ouvindo").size(13.0).color(theme::TEXT_WEAK));
-                        }
-                    },
-                );
-
-                if is_sharing_remote {
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        if ui.add(theme::accent_button("Assistir")).clicked() {
-                            actions.push(UserAction::Watch(participant.identity.clone()));
-                        }
-                    });
-                }
-            });
+                        },
+                    );
+                },
+            );
         })
         .response;
 
@@ -585,6 +552,82 @@ fn participant_card(
                 rooms,
             },
             actions,
+        );
+    }
+}
+
+fn participant_name_row(
+    ui: &mut egui::Ui,
+    participant: &ParticipantView,
+    is_self: bool,
+    volume: u16,
+) {
+    let badge = if is_self {
+        Some(("(você)".to_owned(), 13.0))
+    } else {
+        participant_volume_badge(volume, is_self).map(|label| (label, 12.0))
+    };
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 6.0;
+        let max_name_w = if badge.is_some() {
+            (ui.available_width() - 48.0).max(24.0)
+        } else {
+            ui.available_width().max(24.0)
+        };
+        ui.scope(|ui| {
+            ui.set_max_width(max_name_w);
+            ui.add(
+                egui::Label::new(
+                    RichText::new(&participant.name)
+                        .font(theme::semibold(15.0))
+                        .color(theme::TEXT),
+                )
+                .truncate(),
+            );
+        });
+        if let Some((label, size)) = badge {
+            ui.label(RichText::new(label).size(size).color(theme::TEXT_WEAK));
+        }
+    });
+}
+
+fn participant_status_row(ui: &mut egui::Ui, participant: &ParticipantView, is_sharing: bool) {
+    if is_sharing {
+        ui.add(
+            egui::Label::new(
+                RichText::new("Transmitindo")
+                    .size(13.0)
+                    .color(theme::TEXT_WEAK),
+            )
+            .truncate(),
+        );
+    } else if participant.speaking {
+        ui.add(
+            egui::Label::new(
+                RichText::new("Falando")
+                    .font(theme::semibold(13.0))
+                    .color(theme::SPEAKING),
+            )
+            .truncate(),
+        );
+    } else if participant.muted {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            let (icon_rect, _) = ui.allocate_exact_size(Vec2::splat(14.0), Sense::hover());
+            icons::mic(ui.painter(), icon_rect, theme::TEXT_WEAK, true);
+            ui.add(
+                egui::Label::new(
+                    RichText::new("Microfone desligado")
+                        .size(13.0)
+                        .color(theme::TEXT_WEAK),
+                )
+                .truncate(),
+            );
+        });
+    } else {
+        ui.add(
+            egui::Label::new(RichText::new("Ouvindo").size(13.0).color(theme::TEXT_WEAK))
+                .truncate(),
         );
     }
 }
