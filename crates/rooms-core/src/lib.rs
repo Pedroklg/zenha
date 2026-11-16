@@ -22,6 +22,8 @@ mod default_device;
 #[cfg(any(windows, test))]
 mod file_receive;
 mod files;
+#[cfg(windows)]
+mod gpu_share;
 mod handle;
 #[cfg(windows)]
 mod livekit_backend;
