@@ -918,7 +918,7 @@ mod tests {
         assert_eq!(state.hotkeys.capturing, Some(HotkeyAction::ToggleDeafen));
         assert_eq!(
             state.hotkeys.capture_error.as_deref(),
-            Some("Esse atalho já está em uso em \"Mutar microfone\".")
+            Some("Esse atalho já está em uso em \"Ligar/desligar microfone\".")
         );
         assert!(state.take_pending_save().is_none());
 
@@ -941,7 +941,7 @@ mod tests {
         assert_eq!(state.hotkeys.ptt, None);
         assert_eq!(
             state.hotkeys.capture_error.as_deref(),
-            Some("Esse atalho já está em uso em \"Ensurdecer\".")
+            Some("Esse atalho já está em uso em \"Ligar/desligar áudio\".")
         );
         state.handle_action(UserAction::SetHotkey(
             HotkeyAction::PushToTalk,

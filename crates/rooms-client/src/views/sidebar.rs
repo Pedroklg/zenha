@@ -222,7 +222,7 @@ fn user_footer(ui: &mut egui::Ui, user: SidebarUser<'_>, actions: &mut Vec<UserA
             let mute_tip = if user.muted {
                 "Ligar microfone"
             } else {
-                "Mutar microfone"
+                "Desligar microfone"
             };
             let mute_resp = ui.add_enabled_ui(!user.deafened, |ui| {
                 icons::icon_button(ui, FOOTER_BUTTON_SIZE, icons::mic, user.muted, mute_tip)
