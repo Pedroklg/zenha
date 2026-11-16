@@ -647,8 +647,12 @@ impl AppState {
 
     pub fn apply_event(&mut self, event: UiEvent) {
         match event {
-            UiEvent::RoomsUpdated(rooms) => {
+            UiEvent::RoomsUpdated(mut rooms) => {
                 if !matches!(self.screen, Screen::Onboarding) {
+                    for room in &mut rooms {
+                        room.participants
+                            .sort_by_cached_key(|name| name.to_lowercase());
+                    }
                     self.rooms = rooms;
                     self.lobby_error = None;
                     self.prune_admin_dialog_for_rooms();
