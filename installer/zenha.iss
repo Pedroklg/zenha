@@ -45,3 +45,4 @@ Root: HKCU; Subkey: "Software\Classes\zenha\shell\open\command"; ValueType: stri
 
 [Run]
 Filename: "{app}\{#AppExeName}"; Description: "Abrir o {#AppName}"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\{#AppExeName}"; Flags: nowait skipifnotsilent

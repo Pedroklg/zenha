@@ -11,11 +11,11 @@ use super::participant_menu::{
     ParticipantMenuCtx, VolumeMenuScope, participant_volume_badge, participant_volume_menu,
 };
 use super::room::HEADER_HEIGHT;
+use crate::format::format_size;
 use crate::icons;
-use crate::state::{ShareState, UserAction, participant_volume_for};
+use crate::state::{ShareState, UpdateBanner, UpdatePhase, UserAction, participant_volume_for};
 use crate::theme;
 use crate::ui_model::ParticipantView;
-use crate::update::AvailableUpdate;
 
 const SIDEBAR_WIDTH: f32 = 256.0;
 const FOOTER_BUTTON_SIZE: f32 = 36.0;
@@ -38,7 +38,7 @@ pub(super) struct SidebarArgs<'a> {
     pub(super) participant_volumes: &'a BTreeMap<String, u16>,
     pub(super) rooms: &'a [RoomSummary],
     pub(super) server_host: &'a str,
-    pub(super) available_update: Option<&'a AvailableUpdate>,
+    pub(super) update_banner: Option<&'a UpdateBanner>,
     pub(super) is_admin: bool,
 }
 
@@ -95,9 +95,9 @@ pub(super) fn sidebar(ui: &mut egui::Ui, args: SidebarArgs<'_>, actions: &mut Ve
                     ui.painter()
                         .hline(full.x_range(), top, Stroke::new(1.0, theme::BORDER));
                     user_footer(ui, args.user, actions);
-                    if let Some(update) = args.available_update {
+                    if let Some(banner) = args.update_banner {
                         ui.add_space(8.0);
-                        update_footer(ui, update, actions);
+                        update_footer(ui, banner, actions);
                     }
                 });
 
@@ -125,15 +125,24 @@ pub(super) fn sidebar(ui: &mut egui::Ui, args: SidebarArgs<'_>, actions: &mut Ve
         });
 }
 
-fn update_footer(ui: &mut egui::Ui, update: &AvailableUpdate, actions: &mut Vec<UserAction>) {
+fn update_footer(ui: &mut egui::Ui, banner: &UpdateBanner, actions: &mut Vec<UserAction>) {
+    let failed = matches!(banner.phase, UpdatePhase::Failed(_));
+    let (fill, border) = if failed {
+        (theme::ERROR_BG, theme::ERROR_BORDER)
+    } else {
+        (theme::CONTROL, theme::BORDER)
+    };
+
     egui::Frame::new()
-        .fill(theme::CONTROL)
-        .stroke(Stroke::new(1.0, theme::BORDER))
+        .fill(fill)
+        .stroke(Stroke::new(1.0, border))
         .corner_radius(CornerRadius::same(6))
         .inner_margin(Margin::symmetric(8, 5))
         .show(ui, |ui| {
+            ui.set_min_width(ui.available_width());
+            let show_dismiss = !matches!(banner.phase, UpdatePhase::Downloading { .. });
             ui.horizontal(|ui| {
-                let link_text = RichText::new(format!("Nova versão {}", update.version))
+                let link_text = RichText::new(format!("Nova versão {}", banner.version))
                     .size(12.0)
                     .color(theme::ACCENT_TEXT);
                 if ui
@@ -141,18 +150,97 @@ fn update_footer(ui: &mut egui::Ui, update: &AvailableUpdate, actions: &mut Vec<
                     .on_hover_text("Abrir página do release")
                     .clicked()
                 {
-                    ui.ctx().open_url(egui::OpenUrl::new_tab(&update.url));
+                    ui.ctx().open_url(egui::OpenUrl::new_tab(&banner.url));
                 }
 
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    let close =
-                        egui::Button::new(RichText::new("×").size(12.0).color(theme::TEXT_WEAK))
-                            .frame(false);
-                    if ui.add(close).on_hover_text("Dispensar").clicked() {
-                        actions.push(UserAction::DismissUpdate);
-                    }
-                });
+                if show_dismiss {
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        let close = egui::Button::new(
+                            RichText::new("×").size(12.0).color(theme::TEXT_WEAK),
+                        )
+                        .frame(false);
+                        if ui.add(close).on_hover_text("Dispensar").clicked() {
+                            actions.push(UserAction::DismissUpdate);
+                        }
+                    });
+                }
             });
+
+            if !banner.can_install {
+                return;
+            }
+
+            match &banner.phase {
+                UpdatePhase::Available => {
+                    ui.add_space(6.0);
+                    let btn = egui::Button::new(
+                        RichText::new("Atualizar")
+                            .font(theme::semibold(12.0))
+                            .color(theme::ON_ACCENT),
+                    )
+                    .fill(theme::ACCENT)
+                    .stroke(Stroke::NONE)
+                    .corner_radius(CornerRadius::same(6));
+                    if ui.add(btn).clicked() {
+                        actions.push(UserAction::StartUpdate);
+                    }
+                }
+                UpdatePhase::Confirming => {
+                    ui.add_space(4.0);
+                    ui.label(
+                        RichText::new("Confirmando…")
+                            .size(12.0)
+                            .color(theme::TEXT_WEAK),
+                    );
+                }
+                UpdatePhase::Downloading { downloaded, total } => {
+                    let fraction = if *total == 0 {
+                        0.0
+                    } else {
+                        (*downloaded as f32 / *total as f32).clamp(0.0, 1.0)
+                    };
+                    ui.add_space(6.0);
+                    ui.add(
+                        egui::ProgressBar::new(fraction)
+                            .desired_height(8.0)
+                            .fill(theme::ACCENT),
+                    );
+                    ui.add_space(4.0);
+                    ui.horizontal(|ui| {
+                        let pct = (fraction * 100.0).round();
+                        let status = if *total > 0 {
+                            format!("{pct:.0}% · {}", format_size(*downloaded))
+                        } else {
+                            "Baixando…".to_owned()
+                        };
+                        ui.label(RichText::new(status).size(11.0).color(theme::TEXT_WEAK));
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            if ui.small_button("Cancelar").clicked() {
+                                actions.push(UserAction::CancelUpdateDownload);
+                            }
+                        });
+                    });
+                }
+                UpdatePhase::Ready(_) => {
+                    ui.add_space(4.0);
+                    ui.label(
+                        RichText::new("Pronto para instalar")
+                            .size(12.0)
+                            .color(theme::ACCENT_TEXT),
+                    );
+                }
+                UpdatePhase::Failed(message) => {
+                    ui.add_space(4.0);
+                    ui.add(
+                        egui::Label::new(RichText::new(message).size(12.0).color(theme::ERROR))
+                            .wrap(),
+                    );
+                    ui.add_space(6.0);
+                    if ui.small_button("Tentar de novo").clicked() {
+                        actions.push(UserAction::RetryUpdate);
+                    }
+                }
+            }
         });
 }
 

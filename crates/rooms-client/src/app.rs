@@ -24,18 +24,19 @@ use crate::settings::{self, Settings};
 #[cfg(windows)]
 use crate::single_instance::Listener;
 use crate::state::{
-    AppState, ChatEntry, CredentialOp, PendingPastedImage, Screen, UserAction, display_name_error,
-    room_display_title,
+    AppState, ChatEntry, CredentialOp, PendingPastedImage, Screen, UpdateEffect, UserAction,
+    display_name_error, room_display_title,
 };
 use crate::theme;
 #[cfg(windows)]
 use crate::tray::{Tray, TrayAction};
 use crate::ui_model::{SessionPort, UiCommand};
-use crate::update::{self, AvailableUpdate};
+use crate::update::{self, AvailableUpdate, UpdateDownloadEvent};
 use crate::views;
 
 const REPAINT_INTERVAL: Duration = Duration::from_millis(100);
 const VIDEO_REPAINT_INTERVAL: Duration = Duration::from_millis(33);
+const DEMO_DOWNLOAD_DURATION: Duration = Duration::from_millis(1800);
 const MAX_DROPPED_FILES: usize = 5;
 const DEMO_LABEL: &str = "modo demonstração";
 #[cfg(not(windows))]
@@ -43,6 +44,14 @@ const MEDIA_LABEL: Option<&str> =
     Some("sem mídia: servidor de tokens real, backend do LiveKit disponível só no Windows");
 #[cfg(windows)]
 const MEDIA_LABEL: Option<&str> = None;
+
+struct DemoUpdateDownload {
+    id: u64,
+    version: String,
+    total: u64,
+    started_at: Instant,
+    duration: Duration,
+}
 
 pub struct App {
     state: AppState,
@@ -62,6 +71,10 @@ pub struct App {
     paste_results: Receiver<Result<SavedPastedImage, PasteImageError>>,
     paste_sender: Sender<Result<SavedPastedImage, PasteImageError>>,
     update_rx: Option<Receiver<AvailableUpdate>>,
+    update_download_tx: Sender<UpdateDownloadEvent>,
+    update_download_rx: Receiver<UpdateDownloadEvent>,
+    active_download: Option<update::DownloadHandle>,
+    demo_download: Option<DemoUpdateDownload>,
     #[cfg(windows)]
     forwarded_links: Option<Receiver<String>>,
     #[cfg(windows)]
@@ -104,9 +117,15 @@ impl App {
         let (save_sender, save_results) = channel();
         let (open_sender, open_results) = channel();
         let (paste_sender, paste_results) = channel();
-        let update_rx = (!demo_flag)
-            .then(|| update::spawn_check(ctx.clone()))
-            .flatten();
+        let (update_download_tx, update_download_rx) = channel();
+        let update_rx = if demo_flag {
+            state.set_can_auto_update(true);
+            state.set_available_update(update::demo_available_update());
+            None
+        } else {
+            state.set_can_auto_update(update::is_installed_exe());
+            update::spawn_check(ctx.clone())
+        };
         #[cfg(windows)]
         let forwarded_links = instance.map(|listener| {
             let _ = listener.ctx.set(ctx.clone());
@@ -134,6 +153,10 @@ impl App {
             paste_results,
             paste_sender,
             update_rx,
+            update_download_tx,
+            update_download_rx,
+            active_download: None,
+            demo_download: None,
             #[cfg(windows)]
             forwarded_links,
             #[cfg(windows)]
@@ -145,7 +168,7 @@ impl App {
             quitting: false,
             fullscreen: false,
         };
-        app.flush_state_effects();
+        app.flush_state_effects(ctx);
         app
     }
 
@@ -189,14 +212,14 @@ impl App {
         }
     }
 
-    fn pump_session(&mut self) {
+    fn pump_session(&mut self, ctx: &egui::Context) {
         while let Some(event) = self.session.try_recv() {
             self.state.apply_event(event);
         }
         if let Some(command) = self.state.poll_refresh(Instant::now()) {
             self.session.send(command);
         }
-        self.flush_state_effects();
+        self.flush_state_effects(ctx);
     }
 
     fn pump_update(&mut self) {
@@ -212,6 +235,76 @@ impl App {
                 self.update_rx = None;
             }
             Err(TryRecvError::Empty) => {}
+        }
+    }
+
+    fn pump_update_download(&mut self, ctx: &egui::Context) {
+        let mut events = Vec::new();
+        while let Ok(event) = self.update_download_rx.try_recv() {
+            events.push(event);
+        }
+        if events.is_empty() {
+            return;
+        }
+        for event in events {
+            if let UpdateDownloadEvent::Finished { id, .. } = &event
+                && self
+                    .active_download
+                    .as_ref()
+                    .is_some_and(|handle| handle.id() == *id)
+            {
+                self.active_download = None;
+            }
+            self.state.apply_update_event(event);
+        }
+        self.flush_state_effects(ctx);
+    }
+
+    fn pump_demo_update(&mut self, ctx: &egui::Context) {
+        let Some(demo) = &self.demo_download else {
+            return;
+        };
+        let elapsed = demo.started_at.elapsed();
+        if elapsed >= demo.duration {
+            let id = demo.id;
+            let total = demo.total;
+            let version = demo.version.clone();
+            self.demo_download = None;
+            self.state
+                .apply_update_event(UpdateDownloadEvent::Progress {
+                    id,
+                    downloaded: total,
+                    total,
+                });
+            let (_, exe_path) = update::installer_paths(&update::update_temp_dir(), &version)
+                .unwrap_or_else(|| (PathBuf::new(), PathBuf::from("Zenha-demo-setup.exe")));
+            self.state
+                .apply_update_event(UpdateDownloadEvent::Finished {
+                    id,
+                    result: Ok(exe_path),
+                });
+            self.flush_state_effects(ctx);
+        } else {
+            let duration_ms = demo.duration.as_millis().max(1);
+            let downloaded = u64::try_from(
+                u128::from(demo.total).saturating_mul(elapsed.as_millis()) / duration_ms,
+            )
+            .unwrap_or(demo.total)
+            .min(demo.total);
+            self.state
+                .apply_update_event(UpdateDownloadEvent::Progress {
+                    id: demo.id,
+                    downloaded,
+                    total: demo.total,
+                });
+            ctx.request_repaint_after(Duration::from_millis(50));
+        }
+    }
+
+    #[cfg(test)]
+    fn finish_demo_download_now(&mut self) {
+        if let Some(demo) = &mut self.demo_download {
+            demo.duration = Duration::ZERO;
         }
     }
 
@@ -236,7 +329,7 @@ impl App {
             if is_invite && matches!(self.state.screen, Screen::Lobby) {
                 self.session.configure(self.state.credentials());
             }
-            self.flush_state_effects();
+            self.flush_state_effects(ctx);
         }
     }
 
@@ -253,7 +346,66 @@ impl App {
         }
     }
 
-    fn flush_state_effects(&mut self) {
+    fn flush_state_effects(&mut self, ctx: &egui::Context) {
+        let update_effects = self.state.take_update_effects();
+        for effect in update_effects {
+            match effect {
+                UpdateEffect::StartDownload { id, version, asset } => {
+                    if self.is_demo {
+                        self.demo_download = Some(DemoUpdateDownload {
+                            id,
+                            version,
+                            total: asset.size,
+                            started_at: Instant::now(),
+                            duration: DEMO_DOWNLOAD_DURATION,
+                        });
+                        ctx.request_repaint();
+                    } else {
+                        self.active_download = update::spawn_download(
+                            ctx.clone(),
+                            id,
+                            version,
+                            asset,
+                            self.update_download_tx.clone(),
+                        );
+                    }
+                }
+                UpdateEffect::CancelDownload { id } => {
+                    if self.is_demo {
+                        if self.demo_download.as_ref().is_some_and(|d| d.id == id) {
+                            self.demo_download = None;
+                        }
+                    } else if self
+                        .active_download
+                        .as_ref()
+                        .is_some_and(|handle| handle.id() == id)
+                    {
+                        self.active_download = None;
+                    }
+                }
+                UpdateEffect::RunInstaller { path } => {
+                    if self.is_demo {
+                        let cmds = self.state.leave_for_update();
+                        self.send_commands(cmds);
+                    } else {
+                        match update::launch_installer(&path) {
+                            Ok(()) => {
+                                let cmds = self.state.leave_for_update();
+                                self.send_commands(cmds);
+                                self.quitting = true;
+                                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                            }
+                            Err(err) => {
+                                tracing::warn!(%err, "could not start update installer");
+                                self.state.on_installer_launch_failed(
+                                    "Não foi possível iniciar o instalador.".to_owned(),
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
         let pending = self.state.take_pending_commands();
         self.send_commands(pending);
         for path in self.state.take_pending_paste_deletes() {
@@ -468,15 +620,17 @@ impl App {
             .flat_map(|action| self.state.handle_action(action))
             .collect();
         self.send_commands(commands);
-        self.flush_state_effects();
+        self.flush_state_effects(ctx);
     }
 }
 
 impl eframe::App for App {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        self.pump_session();
+        self.pump_session(ctx);
         self.reset_renderers_outside_room();
         self.pump_update();
+        self.pump_update_download(ctx);
+        self.pump_demo_update(ctx);
         #[cfg(windows)]
         self.pump_forwarded_links(ctx);
         let now = Instant::now();
@@ -552,8 +706,9 @@ impl eframe::App for App {
 
         let show_password = self.state.show_password_field();
         let ptt_hint = self.state.push_to_talk_hint();
-        let available_update = self.state.visible_update().cloned();
+        let update_banner = self.state.visible_update_banner();
         let had_admin_dialog = self.state.admin.dialog.is_some();
+        let had_update_dialog = self.state.is_update_confirming();
         let can_save_name = self.state.can_save_name();
         let name_error = display_name_error(&self.state.name_draft);
         let AppState {
@@ -590,7 +745,7 @@ impl eframe::App for App {
                 server_host(&form.server_url),
                 lobby_error.as_deref(),
                 lobby_notice.as_deref(),
-                available_update.as_ref(),
+                update_banner.as_ref(),
                 is_admin,
             ),
             Screen::Connecting { room } => {
@@ -607,7 +762,7 @@ impl eframe::App for App {
                 audio.stream_volume,
                 &audio.participant_volumes,
                 ptt_hint.as_deref(),
-                available_update.as_ref(),
+                update_banner.as_ref(),
                 is_admin,
             ),
         };
@@ -629,6 +784,10 @@ impl eframe::App for App {
             },
         ));
         actions.extend(views::room::admin_dialog(ui.ctx(), &mut admin.dialog));
+        actions.extend(views::room::update_confirm_dialog(
+            ui.ctx(),
+            had_update_dialog,
+        ));
         actions.extend(views::share::picker(
             ui.ctx(),
             picker,
@@ -648,7 +807,9 @@ impl eframe::App for App {
             .any(|action| matches!(action, UserAction::ToggleFullscreen));
         let blocking_overlay_open = had_popup_before_views
             || had_admin_dialog
+            || had_update_dialog
             || self.state.admin.dialog.is_some()
+            || self.state.is_update_confirming()
             || ui.ctx().any_popup_open()
             || egui::Popup::is_any_open(ui.ctx())
             || had_hotkey_capture;
@@ -1172,5 +1333,79 @@ mod tests {
         harness.run_steps(2);
         assert!(!harness.state().state.is_share_preview_collapsed());
         assert!(harness.query_by_label("Recolher").is_some());
+    }
+
+    #[test]
+    fn demo_update_footer_prompts_in_room_shows_progress_and_completes() {
+        let settings = Settings {
+            client_id: demo::SELF_IDENTITY.to_owned(),
+            display_name: demo::SELF_NAME.to_owned(),
+            token_server_url: demo::DEMO_SERVER_URL.to_owned(),
+            ..Settings::default()
+        };
+        let mut harness = Harness::builder()
+            .with_size(egui::Vec2::new(960.0, 600.0))
+            .with_accessibility_check(false)
+            .build_eframe(move |cc| {
+                App::new(
+                    &cc.egui_ctx,
+                    &settings,
+                    Some(demo::DEMO_PASSWORD.to_owned()),
+                    None,
+                    true,
+                    StartupLink::None,
+                    #[cfg(windows)]
+                    None,
+                )
+            });
+
+        harness.run_steps(2);
+        assert!(harness.query_by_label("Atualizar").is_some());
+
+        harness.get_by_label("Geral").click();
+        harness.run_steps(2);
+        assert!(matches!(harness.state().state.screen, Screen::InRoom(_)));
+
+        harness.get_by_label("Atualizar").click();
+        harness.run_steps(3);
+        assert!(harness.state().state.is_update_confirming());
+        assert!(
+            harness
+                .query_by_label("Atualizar agora? Você vai sair da sala.")
+                .is_some()
+        );
+
+        harness.get_by_label("Cancelar").click();
+        harness.run_steps(2);
+        assert!(!harness.state().state.is_update_confirming());
+        assert!(matches!(harness.state().state.screen, Screen::InRoom(_)));
+
+        harness.get_by_label("Atualizar").click();
+        harness.run_steps(3);
+        harness.get_by_label("Atualizar").click();
+        harness.run_steps(3);
+        assert!(!harness.state().state.is_update_confirming());
+        assert!(matches!(
+            harness
+                .state()
+                .state
+                .visible_update_banner()
+                .map(|b| b.phase),
+            Some(crate::state::UpdatePhase::Downloading { .. })
+        ));
+        assert!(harness.query_by_label("Cancelar").is_some());
+
+        harness.get_by_label("Cancelar").click();
+        harness.run_steps(3);
+        assert!(harness.query_by_label("Atualizar").is_some());
+
+        harness.get_by_label("Atualizar").click();
+        harness.run_steps(3);
+        harness.get_by_label("Atualizar").click();
+        harness.run_steps(1);
+        harness.state_mut().finish_demo_download_now();
+        harness.run_steps(2);
+        assert!(matches!(harness.state().state.screen, Screen::Lobby));
+        assert!(harness.query_by_label("Pronto para instalar").is_some());
     }
 }
