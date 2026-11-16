@@ -69,6 +69,8 @@ pub fn bot_main(args: &BotArgs) -> anyhow::Result<()> {
         client_id: client_id.clone(),
         display_name: args.name.clone(),
         invite_code: args.invite.clone(),
+        avatar_version: None,
+        avatar_cache_dir: None,
     };
     #[cfg(windows)]
     let backend = LiveKitBackend::with_options(options);

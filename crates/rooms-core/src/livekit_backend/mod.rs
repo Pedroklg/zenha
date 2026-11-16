@@ -261,6 +261,10 @@ impl MediaBackend for LiveKitBackend {
         self.publish_name(name).await
     }
 
+    async fn set_avatar_attribute(&self, version: Option<&str>) -> Result<(), SessionError> {
+        self.publish_avatar_attribute(version).await
+    }
+
     async fn send_data(&self, topic: &str, payload: Vec<u8>) -> Result<(), SessionError> {
         self.publish_data(topic, payload).await
     }

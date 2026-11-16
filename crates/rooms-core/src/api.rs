@@ -13,6 +13,8 @@ pub struct SessionConfig {
     pub client_id: String,
     pub display_name: String,
     pub invite_code: String,
+    pub avatar_version: Option<String>,
+    pub avatar_cache_dir: Option<PathBuf>,
 }
 
 impl fmt::Debug for SessionConfig {
@@ -22,6 +24,8 @@ impl fmt::Debug for SessionConfig {
             .field("client_id", &self.client_id)
             .field("display_name", &self.display_name)
             .field("invite_code", &"<redacted>")
+            .field("avatar_version", &self.avatar_version)
+            .field("avatar_cache_dir", &self.avatar_cache_dir)
             .finish()
     }
 }
@@ -32,6 +36,7 @@ pub struct Participant {
     pub name: String,
     pub muted: bool,
     pub speaking: bool,
+    pub avatar_version: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -208,6 +213,12 @@ pub enum Command {
     SetDisplayName {
         name: String,
     },
+    /// Envia uma nova foto de perfil para o servidor e propaga a versão pela sala.
+    SetAvatar {
+        path: PathBuf,
+    },
+    /// Remove a foto de perfil no servidor e limpa o atributo na sala.
+    ClearAvatar,
     SendChat {
         text: String,
         save: bool,
@@ -272,6 +283,8 @@ impl fmt::Debug for Command {
                 .debug_struct("SetDisplayName")
                 .field("name", name)
                 .finish(),
+            Self::SetAvatar { path } => f.debug_struct("SetAvatar").field("path", path).finish(),
+            Self::ClearAvatar => f.write_str("ClearAvatar"),
             Self::SendChat { text, save } => f
                 .debug_struct("SendChat")
                 .field("text", text)
@@ -352,6 +365,18 @@ pub enum Event {
     ParticipantNameChanged {
         identity: String,
         name: String,
+    },
+    ParticipantAvatarChanged {
+        identity: String,
+        version: Option<String>,
+    },
+    LocalAvatarChanged {
+        version: Option<String>,
+    },
+    AvatarCached {
+        identity: String,
+        version: String,
+        path: PathBuf,
     },
     ChatReceived(ChatMessage),
     /// Página do histórico de mensagens salvas retornada pelo servidor.
@@ -439,6 +464,8 @@ pub enum SessionError {
     RateLimited,
     #[error("saved chat request failed: {0}")]
     Chat(String),
+    #[error("avatar request failed: {0}")]
+    Avatar(String),
     #[error("invalid admin password")]
     AdminInvalidPassword,
     #[error("admin session expired")]

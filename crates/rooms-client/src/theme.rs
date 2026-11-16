@@ -236,20 +236,36 @@ pub fn initial(name: &str) -> String {
         .map_or_else(|| "?".to_owned(), |c| c.to_uppercase().collect())
 }
 
-pub fn avatar(ui: &mut egui::Ui, size: f32, initial_str: &str, colors: (Color32, Color32)) {
+pub fn avatar(
+    ui: &mut egui::Ui,
+    size: f32,
+    identity: &str,
+    name: &str,
+    avatar_version: Option<&str>,
+    is_self: bool,
+) {
     let (rect, _) = ui.allocate_exact_size(Vec2::splat(size), Sense::hover());
-    if ui.is_rect_visible(rect) {
-        let painter = ui.painter();
-        painter.circle_filled(rect.center(), size * 0.5, colors.0);
-        let text = initial(initial_str);
-        painter.text(
-            rect.center(),
-            Align2::CENTER_CENTER,
-            text,
-            semibold((size * 0.42).round()),
-            colors.1,
-        );
+    if !ui.is_rect_visible(rect) {
+        return;
     }
+    if let Some(texture) = crate::avatars::texture(ui.ctx(), identity, avatar_version) {
+        let radius = CornerRadius::same((size * 0.5).round() as u8);
+        egui::Image::new(&texture)
+            .fit_to_exact_size(Vec2::splat(size))
+            .corner_radius(radius)
+            .paint_at(ui, rect);
+        return;
+    }
+    let colors = avatar_color(identity, is_self);
+    let painter = ui.painter();
+    painter.circle_filled(rect.center(), size * 0.5, colors.0);
+    painter.text(
+        rect.center(),
+        Align2::CENTER_CENTER,
+        initial(name),
+        semibold((size * 0.42).round()),
+        colors.1,
+    );
 }
 
 #[cfg(test)]

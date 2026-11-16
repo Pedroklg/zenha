@@ -3,10 +3,10 @@ use std::time::Duration;
 use async_trait::async_trait;
 use reqwest::{StatusCode, header};
 use rooms_protocol::{
-    AdminLoginRequest, AdminLoginResponse, AdminRoom, ChatHistoryResponse, ChatMessage,
-    CreateRoomRequest, ErrorResponse, MoveParticipantRequest, RoomSummary, RoomsResponse,
-    SaveChatRequest, TokenRequest, TokenResponse, UpdateInviteRequest, UpdateRoomRequest,
-    validate_client_id, validate_room_name,
+    AdminLoginRequest, AdminLoginResponse, AdminRoom, AvatarUploadResponse, ChatHistoryResponse,
+    ChatMessage, CreateRoomRequest, ErrorResponse, MoveParticipantRequest, RoomSummary,
+    RoomsResponse, SaveChatRequest, TokenRequest, TokenResponse, UpdateInviteRequest,
+    UpdateRoomRequest, validate_avatar_version, validate_client_id, validate_room_name,
 };
 
 use crate::api::SessionError;
@@ -14,6 +14,7 @@ use crate::chat::validate_chat_id;
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 const INVITE_HEADER: &str = "x-invite-code";
+const MAX_AVATAR_DOWNLOAD_BYTES: usize = 512 * 1024;
 
 #[async_trait]
 pub trait TokenClient: Send + Sync + 'static {
@@ -79,6 +80,18 @@ pub trait TokenClient: Send + Sync + 'static {
         jwt: &str,
         request: UpdateInviteRequest,
     ) -> Result<(), SessionError>;
+    async fn upload_avatar(
+        &self,
+        jwt: &str,
+        bytes: Vec<u8>,
+    ) -> Result<AvatarUploadResponse, SessionError>;
+    async fn delete_avatar(&self, jwt: &str) -> Result<(), SessionError>;
+    async fn download_avatar(
+        &self,
+        jwt: &str,
+        identity: &str,
+        version: Option<&str>,
+    ) -> Result<Option<Vec<u8>>, SessionError>;
 }
 
 #[derive(Debug, Clone)]
@@ -148,6 +161,23 @@ impl HttpTokenClient {
         validate_chat_id(id)?;
         Ok(self.url(&format!("/admin/rooms/{room}/chat/{id}")))
     }
+
+    fn avatar_get_url(
+        &self,
+        identity: &str,
+        version: Option<&str>,
+    ) -> Result<String, SessionError> {
+        validate_client_id(identity).map_err(|err| SessionError::InvalidInput(err.to_string()))?;
+        let base = self.url(&format!("/avatar/{identity}"));
+        match version {
+            Some(version) => {
+                validate_avatar_version(version)
+                    .map_err(|err| SessionError::InvalidInput(err.to_string()))?;
+                Ok(format!("{base}?v={version}"))
+            }
+            None => Ok(base),
+        }
+    }
 }
 
 fn transport_error(err: &reqwest::Error) -> SessionError {
@@ -194,6 +224,37 @@ async fn send_chat_request(
     let response = request.send().await.map_err(|err| transport_error(&err))?;
     if !response.status().is_success() {
         return Err(chat_status_error(response.status()));
+    }
+    Ok(response)
+}
+
+fn avatar_status_error(status: StatusCode, body_error: Option<&str>) -> SessionError {
+    match status {
+        StatusCode::UNAUTHORIZED => SessionError::Unauthorized,
+        StatusCode::TOO_MANY_REQUESTS => SessionError::RateLimited,
+        StatusCode::BAD_REQUEST | StatusCode::PAYLOAD_TOO_LARGE => {
+            let fallback = if status == StatusCode::PAYLOAD_TOO_LARGE {
+                "image exceeds 2 MB limit"
+            } else {
+                "invalid avatar image"
+            };
+            SessionError::Avatar(non_empty_error(body_error, fallback))
+        }
+        StatusCode::SERVICE_UNAVAILABLE => {
+            SessionError::Avatar("avatar storage unavailable on server".to_owned())
+        }
+        other => SessionError::TokenServer(format!("server returned HTTP {}", other.as_u16())),
+    }
+}
+
+async fn send_avatar_request(
+    request: reqwest::RequestBuilder,
+) -> Result<reqwest::Response, SessionError> {
+    let response = request.send().await.map_err(|err| transport_error(&err))?;
+    let status = response.status();
+    if !status.is_success() {
+        let body_error = read_error_message(response).await;
+        return Err(avatar_status_error(status, body_error.as_deref()));
     }
     Ok(response)
 }
@@ -486,6 +547,69 @@ impl TokenClient for HttpTokenClient {
         .await?;
         Ok(())
     }
+
+    async fn upload_avatar(
+        &self,
+        jwt: &str,
+        bytes: Vec<u8>,
+    ) -> Result<AvatarUploadResponse, SessionError> {
+        let response = send_avatar_request(
+            self.http
+                .put(self.url("/avatar"))
+                .bearer_auth(jwt)
+                .header(header::CONTENT_TYPE, "application/octet-stream")
+                .body(bytes),
+        )
+        .await?;
+        response
+            .json::<AvatarUploadResponse>()
+            .await
+            .map_err(|err| transport_error(&err))
+    }
+
+    async fn delete_avatar(&self, jwt: &str) -> Result<(), SessionError> {
+        let _ = send_avatar_request(self.http.delete(self.url("/avatar")).bearer_auth(jwt)).await?;
+        Ok(())
+    }
+
+    async fn download_avatar(
+        &self,
+        jwt: &str,
+        identity: &str,
+        version: Option<&str>,
+    ) -> Result<Option<Vec<u8>>, SessionError> {
+        let url = self.avatar_get_url(identity, version)?;
+        let response = self
+            .http
+            .get(url)
+            .bearer_auth(jwt)
+            .header(header::ACCEPT, "image/png")
+            .send()
+            .await
+            .map_err(|err| transport_error(&err))?;
+        let status = response.status();
+        if status == StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        if !status.is_success() {
+            let body_error = read_error_message(response).await;
+            return Err(avatar_status_error(status, body_error.as_deref()));
+        }
+        if response
+            .content_length()
+            .is_some_and(|len| len > MAX_AVATAR_DOWNLOAD_BYTES as u64)
+        {
+            return Err(SessionError::Avatar("avatar response too large".to_owned()));
+        }
+        let bytes = response
+            .bytes()
+            .await
+            .map_err(|err| transport_error(&err))?;
+        if bytes.len() > MAX_AVATAR_DOWNLOAD_BYTES {
+            return Err(SessionError::Avatar("avatar response too large".to_owned()));
+        }
+        Ok(Some(bytes.to_vec()))
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -602,6 +726,27 @@ impl TokenClient for UnavailableTokenClient {
         _jwt: &str,
         _request: UpdateInviteRequest,
     ) -> Result<(), SessionError> {
+        Err(SessionError::TokenServer("not signed in".to_owned()))
+    }
+
+    async fn upload_avatar(
+        &self,
+        _jwt: &str,
+        _bytes: Vec<u8>,
+    ) -> Result<AvatarUploadResponse, SessionError> {
+        Err(SessionError::TokenServer("not signed in".to_owned()))
+    }
+
+    async fn delete_avatar(&self, _jwt: &str) -> Result<(), SessionError> {
+        Err(SessionError::TokenServer("not signed in".to_owned()))
+    }
+
+    async fn download_avatar(
+        &self,
+        _jwt: &str,
+        _identity: &str,
+        _version: Option<&str>,
+    ) -> Result<Option<Vec<u8>>, SessionError> {
         Err(SessionError::TokenServer("not signed in".to_owned()))
     }
 }
@@ -783,5 +928,39 @@ mod tests {
                 .is_err()
         );
         assert!(client.admin_chat_delete_url("geral", "a/b").is_err());
+    }
+
+    #[test]
+    fn avatar_urls_and_status_errors_validate() {
+        let client = HttpTokenClient::new("http://host:8080/").unwrap();
+        assert_eq!(
+            client
+                .avatar_get_url("client-ana", Some("0123456789abcdef"))
+                .as_deref(),
+            Ok("http://host:8080/avatar/client-ana?v=0123456789abcdef")
+        );
+        assert_eq!(
+            client.avatar_get_url("client-ana", None).as_deref(),
+            Ok("http://host:8080/avatar/client-ana")
+        );
+        assert!(client.avatar_get_url("../bad", None).is_err());
+        assert!(client.avatar_get_url("client-ana", Some("../bad")).is_err());
+
+        assert_eq!(
+            avatar_status_error(StatusCode::UNAUTHORIZED, None),
+            SessionError::Unauthorized
+        );
+        assert_eq!(
+            avatar_status_error(StatusCode::TOO_MANY_REQUESTS, None),
+            SessionError::RateLimited
+        );
+        assert_eq!(
+            avatar_status_error(StatusCode::PAYLOAD_TOO_LARGE, Some("too big")),
+            SessionError::Avatar("too big".to_owned())
+        );
+        assert_eq!(
+            avatar_status_error(StatusCode::BAD_REQUEST, Some("bad format")),
+            SessionError::Avatar("bad format".to_owned())
+        );
     }
 }

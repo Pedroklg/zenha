@@ -275,12 +275,15 @@ mod tests {
                 name: "bot".into(),
                 muted: false,
                 speaking: false,
+                avatar_version: None,
             }]);
             let config = SessionConfig {
                 token_server_url: "http://unused.invalid".into(),
                 client_id: "bot".into(),
                 display_name: "bot".into(),
                 invite_code: "code".into(),
+                avatar_version: None,
+                avatar_cache_dir: None,
             };
             let handle =
                 SessionHandle::spawn(config, backend.clone(), FakeTokenClient::new()).unwrap();
@@ -344,6 +347,7 @@ mod tests {
                 name: "Other".into(),
                 muted: false,
                 speaking: false,
+                avatar_version: None,
             }));
         rig.wait_for("participant_joined", |e| {
             matches!(e, BotEvent::ParticipantJoined { participant } if participant.identity == "other")

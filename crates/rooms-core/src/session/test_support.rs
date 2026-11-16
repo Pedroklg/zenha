@@ -23,6 +23,8 @@ pub(super) fn config() -> SessionConfig {
         client_id: "client-pedro".to_owned(),
         display_name: "pedro".to_owned(),
         invite_code: "secret".to_owned(),
+        avatar_version: None,
+        avatar_cache_dir: None,
     }
 }
 
@@ -39,6 +41,7 @@ pub(super) fn participant(identity: &str) -> Participant {
         name: identity.to_uppercase(),
         muted: false,
         speaking: false,
+        avatar_version: None,
     }
 }
 

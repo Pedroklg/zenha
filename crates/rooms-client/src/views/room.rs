@@ -69,7 +69,14 @@ pub fn show(
     }
 
     let local_name = local_display_name(&state.participants, &state.local_identity);
+    let local_avatar = state
+        .participants
+        .iter()
+        .find(|p| p.identity == state.local_identity)
+        .and_then(|p| p.avatar_version.as_deref());
     let user = SidebarUser {
+        identity: &state.local_identity,
+        avatar_version: local_avatar,
         name: local_name,
         connection: Some(state.status),
         ptt_hint,
@@ -141,6 +148,7 @@ pub fn show(
 pub fn show_lobby(
     ui: &mut egui::Ui,
     display_name: &str,
+    avatar: (&str, Option<&str>),
     voice: LobbyVoiceState,
     rooms: &[RoomSummary],
     server_host: &str,
@@ -151,6 +159,8 @@ pub fn show_lobby(
 ) -> Vec<UserAction> {
     let mut actions = Vec::new();
     let user = SidebarUser {
+        identity: avatar.0,
+        avatar_version: avatar.1,
         name: display_name.trim(),
         connection: None,
         ptt_hint: None,
@@ -502,8 +512,10 @@ fn participant_card(
                     theme::avatar(
                         ui,
                         52.0,
+                        &participant.identity,
                         &participant.name,
-                        theme::avatar_color(&participant.identity, is_self),
+                        participant.avatar_version.as_deref(),
+                        is_self,
                     );
                     ui.add_space(8.0);
 
@@ -875,6 +887,7 @@ mod tests {
             name: name.to_owned(),
             muted: false,
             speaking: false,
+            avatar_version: None,
         }
     }
 

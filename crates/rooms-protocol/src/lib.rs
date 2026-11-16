@@ -23,6 +23,10 @@ pub const ADMIN_STOP_SHARE_TOPIC: &str = "admin.stop_share";
 pub const ADMIN_MOVE_TOPIC: &str = "admin.move";
 pub const ADMIN_CHAT_DELETE_TOPIC: &str = "admin.chat_delete";
 pub const ROOMS_CHANGED_TOPIC: &str = "rooms.changed";
+pub const AVATAR_ATTR: &str = "zenha.avatar";
+pub const AVATAR_SIZE_PX: u32 = 128;
+pub const MAX_AVATAR_UPLOAD_BYTES: usize = 2 * 1024 * 1024;
+pub const MAX_AVATAR_VERSION_LEN: usize = 32;
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TokenRequest {
@@ -222,6 +226,12 @@ pub struct AdminChatDelete {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RoomsChanged {}
 
+/// Resposta do servidor ao enviar uma foto de perfil com `PUT /avatar`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AvatarUploadResponse {
+    pub version: String,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum ValidationError {
     #[error("value is empty")]
@@ -308,6 +318,27 @@ pub fn validate_client_id(id: &str) -> Result<(), ValidationError> {
 /// Texto de chat: não vazio depois de aparar e com até 2000 caracteres.
 pub fn validate_chat_text(text: &str) -> Result<(), ValidationError> {
     check_len(text.trim(), MAX_CHAT_MESSAGE_LEN)
+}
+
+/// Versão de foto de perfil: 1 a 32 caracteres ASCII seguros para URL e nome de arquivo.
+pub fn validate_avatar_version(version: &str) -> Result<(), ValidationError> {
+    check_len(version, MAX_AVATAR_VERSION_LEN)?;
+    let allowed = |c: char| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_';
+    if !version.chars().all(allowed) {
+        return Err(ValidationError::InvalidCharacter);
+    }
+    Ok(())
+}
+
+/// Interpreta o atributo `zenha.avatar`, tratando vazio ou inválido como ausência de foto.
+pub fn parse_avatar_attribute(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    validate_avatar_version(trimmed)
+        .ok()
+        .map(|()| trimmed.to_owned())
 }
 
 fn check_len(value: &str, max: usize) -> Result<(), ValidationError> {
@@ -664,5 +695,37 @@ mod tests {
         assert!(!resp_dbg.contains("jwt-secret-token-xyz"));
         assert!(resp_dbg.contains("wss://lk.example"));
         assert!(resp_dbg.contains("<redacted>"));
+    }
+
+    #[test]
+    fn avatar_upload_response_and_version_validation() {
+        let resp = AvatarUploadResponse {
+            version: "0123456789abcdef".to_owned(),
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        assert_eq!(
+            serde_json::from_str::<AvatarUploadResponse>(&json).unwrap(),
+            resp
+        );
+
+        assert_eq!(validate_avatar_version("0123456789abcdef"), Ok(()));
+        assert_eq!(validate_avatar_version(""), Err(ValidationError::Empty));
+        assert_eq!(
+            validate_avatar_version(&"a".repeat(MAX_AVATAR_VERSION_LEN + 1)),
+            Err(ValidationError::TooLong {
+                max: MAX_AVATAR_VERSION_LEN,
+            })
+        );
+        assert_eq!(
+            validate_avatar_version("../bad"),
+            Err(ValidationError::InvalidCharacter)
+        );
+        assert_eq!(parse_avatar_attribute(""), None);
+        assert_eq!(parse_avatar_attribute("   "), None);
+        assert_eq!(parse_avatar_attribute("../escape"), None);
+        assert_eq!(
+            parse_avatar_attribute("0123456789abcdef"),
+            Some("0123456789abcdef".to_owned())
+        );
     }
 }

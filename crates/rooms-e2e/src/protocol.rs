@@ -328,6 +328,7 @@ pub fn error_kind(error: &SessionError) -> &'static str {
         SessionError::Unauthorized => "unauthorized",
         SessionError::RateLimited => "rate_limited",
         SessionError::Chat(_) => "chat",
+        SessionError::Avatar(_) => "avatar",
         SessionError::AdminInvalidPassword => "admin_invalid_password",
         SessionError::AdminUnauthorized => "admin_unauthorized",
         SessionError::AdminDisabled => "admin_disabled",
@@ -616,7 +617,10 @@ impl BotEvent {
             },
             Event::ChatHistory { .. }
             | Event::ChatDeleted { .. }
-            | Event::ParticipantNameChanged { .. } => return None,
+            | Event::ParticipantNameChanged { .. }
+            | Event::ParticipantAvatarChanged { .. }
+            | Event::LocalAvatarChanged { .. }
+            | Event::AvatarCached { .. } => return None,
             Event::CommandFailed(error) => Self::CommandFailed {
                 error: error.into(),
             },

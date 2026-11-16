@@ -46,6 +46,7 @@ impl MediaBackend for NoMediaBackend {
                 name: self.identity.clone(),
                 muted: false,
                 speaking: false,
+                avatar_version: None,
             }],
             events: rx,
         })
@@ -65,6 +66,10 @@ impl MediaBackend for NoMediaBackend {
     }
 
     async fn set_display_name(&self, _name: &str) -> Result<(), SessionError> {
+        Ok(())
+    }
+
+    async fn set_avatar_attribute(&self, _version: Option<&str>) -> Result<(), SessionError> {
         Ok(())
     }
 

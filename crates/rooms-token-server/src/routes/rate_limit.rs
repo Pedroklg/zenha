@@ -6,6 +6,8 @@ use std::time::{Duration, Instant};
 
 const CHAT_RATE_LIMIT: usize = 10;
 const CHAT_RATE_WINDOW: Duration = Duration::from_secs(10);
+pub(super) const AVATAR_RATE_LIMIT: usize = 10;
+const AVATAR_RATE_WINDOW: Duration = Duration::from_secs(60);
 const ADMIN_LOGIN_RATE_LIMIT: usize = 5;
 const ADMIN_LOGIN_WINDOW: Duration = Duration::from_secs(60);
 const RATE_LIMIT_PRUNE_THRESHOLD: usize = 1024;
@@ -101,6 +103,27 @@ impl ChatRateLimiter {
     }
 }
 
+pub struct AvatarRateLimiter(SlidingWindowLimiter);
+
+impl Default for AvatarRateLimiter {
+    fn default() -> Self {
+        Self(SlidingWindowLimiter::new(
+            AVATAR_RATE_LIMIT,
+            AVATAR_RATE_WINDOW,
+        ))
+    }
+}
+
+impl AvatarRateLimiter {
+    pub fn check(&self, client_id: &str) -> bool {
+        self.check_at(client_id, Instant::now())
+    }
+
+    fn check_at(&self, client_id: &str, now: Instant) -> bool {
+        self.0.check_and_record_at(client_id, now)
+    }
+}
+
 pub struct AdminLoginLimiter(SlidingWindowLimiter);
 
 impl Default for AdminLoginLimiter {
@@ -148,7 +171,7 @@ fn prune_expired(times: &mut VecDeque<Instant>, now: Instant, window: Duration) 
 mod tests {
     use std::time::{Duration, Instant};
 
-    use super::ChatRateLimiter;
+    use super::{AVATAR_RATE_LIMIT, AvatarRateLimiter, ChatRateLimiter};
 
     #[test]
     fn rate_limiter_allows_10_per_10s_and_resets_after_window() {
@@ -160,5 +183,16 @@ mod tests {
         assert!(!limiter.check_at("client-a", t0 + Duration::from_secs(9)));
         assert!(limiter.check_at("client-b", t0 + Duration::from_secs(9)));
         assert!(limiter.check_at("client-a", t0 + Duration::from_secs(10)));
+    }
+
+    #[test]
+    fn avatar_rate_limiter_caps_uploads_per_minute() {
+        let limiter = AvatarRateLimiter::default();
+        let t0 = Instant::now();
+        for _ in 0..AVATAR_RATE_LIMIT {
+            assert!(limiter.check_at("client-a", t0));
+        }
+        assert!(!limiter.check_at("client-a", t0 + Duration::from_secs(59)));
+        assert!(limiter.check_at("client-a", t0 + Duration::from_secs(60)));
     }
 }

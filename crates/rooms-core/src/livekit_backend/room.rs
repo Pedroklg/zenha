@@ -1,5 +1,6 @@
 //! Conexão de sala do LiveKit, estado de participantes e compartilhamento de vídeo.
 
+use std::collections::HashMap;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Once, PoisonError};
 use std::time::Duration;
@@ -8,6 +9,7 @@ use livekit::prelude::{
     PlatformAudio, RemoteParticipant, RemoteTrack, RemoteTrackPublication, Room, RoomError,
     RoomOptions, TrackKind, TrackSource,
 };
+use rooms_protocol::{AVATAR_ATTR, parse_avatar_attribute};
 use tokio::sync::mpsc::{self, UnboundedSender};
 use tokio::task::JoinHandle;
 use tokio::time::timeout;
@@ -206,11 +208,13 @@ impl LiveKitBackend {
 
         let local = room.local_participant();
         let local_identity = String::from(local.identity());
+        let local_attributes = local.attributes();
         let mut participants = vec![Participant {
             name: display_name(local.name(), &local_identity),
             identity: local_identity.clone(),
             muted: self.flags.microphone_muted.load(Ordering::SeqCst),
             speaking: false,
+            avatar_version: avatar_version(&local_attributes),
         }];
         let mut remotes: Vec<Participant> = room
             .remote_participants()
@@ -488,12 +492,20 @@ fn microphone_muted(participant: &RemoteParticipant) -> bool {
         })
 }
 
+fn avatar_version(attributes: &HashMap<String, String>) -> Option<String> {
+    attributes
+        .get(AVATAR_ATTR)
+        .and_then(|value| parse_avatar_attribute(value))
+}
+
 pub(super) fn remote_view(participant: &RemoteParticipant) -> Participant {
     let identity = String::from(participant.identity());
+    let attributes = participant.attributes();
     Participant {
         name: display_name(participant.name(), &identity),
         muted: microphone_muted(participant),
         speaking: false,
+        avatar_version: avatar_version(&attributes),
         identity,
     }
 }

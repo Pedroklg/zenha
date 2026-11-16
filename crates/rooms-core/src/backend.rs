@@ -29,6 +29,10 @@ pub enum BackendEvent {
         identity: String,
         name: String,
     },
+    AvatarChanged {
+        identity: String,
+        version: Option<String>,
+    },
     DataReceived {
         sender: Option<String>,
         topic: String,
@@ -76,6 +80,7 @@ pub trait MediaBackend: Send + Sync + 'static {
     async fn set_microphone_muted(&self, muted: bool) -> Result<(), SessionError>;
     async fn set_output_muted(&self, muted: bool) -> Result<(), SessionError>;
     async fn set_display_name(&self, name: &str) -> Result<(), SessionError>;
+    async fn set_avatar_attribute(&self, version: Option<&str>) -> Result<(), SessionError>;
     async fn send_data(&self, topic: &str, payload: Vec<u8>) -> Result<(), SessionError>;
     /// Returns as soon as the transfer starts; progress arrives as `BackendEvent::FileTransfer`
     /// with the same id, ending in `Done` (with the source path) or `Failed`.

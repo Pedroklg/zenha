@@ -102,6 +102,11 @@ impl ChatStore {
             CREATE TABLE IF NOT EXISTS settings (
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS avatars (
+                identity TEXT PRIMARY KEY,
+                png BLOB NOT NULL,
+                version TEXT NOT NULL
             );",
         )?;
         Ok(Self {
@@ -276,6 +281,49 @@ impl ChatStore {
                 params![INVITE_HASH_SETTING_KEY, hash],
             )?;
             Ok(())
+        })
+        .await
+    }
+
+    pub async fn upsert_avatar(
+        &self,
+        identity: String,
+        png: Vec<u8>,
+        version: String,
+    ) -> Result<(), ChatStoreError> {
+        self.with_conn(move |conn| {
+            conn.execute(
+                "INSERT INTO avatars (identity, png, version) VALUES (?1, ?2, ?3)
+                 ON CONFLICT(identity) DO UPDATE SET png = excluded.png, version = excluded.version",
+                params![identity, png, version],
+            )?;
+            Ok(())
+        })
+        .await
+    }
+
+    pub async fn get_avatar(
+        &self,
+        identity: String,
+    ) -> Result<Option<(Vec<u8>, String)>, ChatStoreError> {
+        self.with_conn(move |conn| {
+            let row = conn
+                .query_row(
+                    "SELECT png, version FROM avatars WHERE identity = ?1",
+                    params![identity],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .optional()?;
+            Ok(row)
+        })
+        .await
+    }
+
+    pub async fn delete_avatar(&self, identity: String) -> Result<bool, ChatStoreError> {
+        self.with_conn(move |conn| {
+            let deleted =
+                conn.execute("DELETE FROM avatars WHERE identity = ?1", params![identity])?;
+            Ok(deleted > 0)
         })
         .await
     }
@@ -1216,6 +1264,55 @@ mod tests {
         assert_eq!(
             reopened.get_invite_code_hash().await.unwrap().as_deref(),
             Some("$argon2id$override")
+        );
+    }
+
+    #[tokio::test]
+    async fn avatar_crud_persists_across_reopen() {
+        let temp = TempDb::new();
+        {
+            let store = ChatStore::open(&temp.path).unwrap();
+            assert_eq!(
+                store.get_avatar("client-ana".to_owned()).await.unwrap(),
+                None
+            );
+            store
+                .upsert_avatar(
+                    "client-ana".to_owned(),
+                    vec![1, 2, 3, 4],
+                    "0123456789abcdef".to_owned(),
+                )
+                .await
+                .unwrap();
+            store
+                .upsert_avatar(
+                    "client-ana".to_owned(),
+                    vec![5, 6, 7],
+                    "fedcba9876543210".to_owned(),
+                )
+                .await
+                .unwrap();
+        }
+        let reopened = ChatStore::open(&temp.path).unwrap();
+        assert_eq!(
+            reopened.get_avatar("client-ana".to_owned()).await.unwrap(),
+            Some((vec![5, 6, 7], "fedcba9876543210".to_owned()))
+        );
+        assert!(
+            reopened
+                .delete_avatar("client-ana".to_owned())
+                .await
+                .unwrap()
+        );
+        assert!(
+            !reopened
+                .delete_avatar("client-ana".to_owned())
+                .await
+                .unwrap()
+        );
+        assert_eq!(
+            reopened.get_avatar("client-ana".to_owned()).await.unwrap(),
+            None
         );
     }
 }

@@ -25,6 +25,8 @@ const FOOTER_BUTTON_SIZE: f32 = 32.0;
 const FOOTER_BUTTON_GAP: f32 = 4.0;
 
 pub(super) struct SidebarUser<'a> {
+    pub(super) identity: &'a str,
+    pub(super) avatar_version: Option<&'a str>,
     pub(super) name: &'a str,
     pub(super) connection: Option<ConnectionStatus>,
     pub(super) ptt_hint: Option<&'a str>,
@@ -279,7 +281,6 @@ fn footer_status(connection: Option<ConnectionStatus>, ptt_hint: Option<&str>) -
 }
 
 fn user_footer(ui: &mut egui::Ui, user: SidebarUser<'_>, actions: &mut Vec<UserAction>) {
-    let avatar_colors = theme::avatar_color(user.name, true);
     let status = footer_status(user.connection, user.ptt_hint);
     let row_width = ui.available_width();
 
@@ -288,7 +289,14 @@ fn user_footer(ui: &mut egui::Ui, user: SidebarUser<'_>, actions: &mut Vec<UserA
         Layout::left_to_right(Align::Center),
         |ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
-            theme::avatar(ui, FOOTER_AVATAR_SIZE, user.name, avatar_colors);
+            theme::avatar(
+                ui,
+                FOOTER_AVATAR_SIZE,
+                user.identity,
+                user.name,
+                user.avatar_version,
+                true,
+            );
 
             ui.allocate_ui_with_layout(
                 Vec2::new(ui.available_width(), FOOTER_AVATAR_SIZE),
@@ -705,6 +713,7 @@ mod tests {
             name: name.to_owned(),
             muted: false,
             speaking: false,
+            avatar_version: None,
         }
     }
 
@@ -715,6 +724,7 @@ mod tests {
             name: "Ana".to_owned(),
             muted: false,
             speaking: true,
+            avatar_version: None,
         }];
         assert!(is_occupant_speaking(true, "Ana", &list));
         assert!(!is_occupant_speaking(false, "Ana", &list));

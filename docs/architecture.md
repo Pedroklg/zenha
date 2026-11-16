@@ -70,6 +70,7 @@ sequenceDiagram
 - The token's identity is the `client_id`, its name is the trimmed display name, and it grants only the requested room.
 - Chat messages go over LiveKit data. Only messages a user marks as saved reach the token server; history is read back with `GET /rooms/{room}/chat`.
 - Files go over LiveKit byte streams, up to 50 MB, and never touch the token server.
+- Profile photos go to `PUT /avatar` (Bearer JWT). The server re-encodes them as 128x128 PNG in the same database and serves them with `GET /avatar/{identity}?v=<version>`. The version travels in the `zenha.avatar` participant attribute, and clients cache each version on disk.
 - The same database stores the rooms (seeded once from `ROOMS_ROOM_LIST`) and the rotated invite hash.
 - Admin routes (`/admin/*`) exist only when `ROOMS_ADMIN_CODE_HASH` is set; otherwise they return `404`.
 

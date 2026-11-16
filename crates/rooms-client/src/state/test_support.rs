@@ -29,6 +29,7 @@ pub(super) fn valid_settings() -> Settings {
         close_to_tray: true,
         room_sounds: true,
         dismissed_update_version: None,
+        avatar_version: None,
     }
 }
 
@@ -60,6 +61,7 @@ pub(super) fn person(identity: &str) -> ParticipantView {
         name: identity.to_uppercase(),
         muted: false,
         speaking: false,
+        avatar_version: None,
     }
 }
 
