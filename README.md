@@ -17,7 +17,7 @@ Zenha is a Windows desktop app for voice rooms, text chat, file sharing and scre
 - **Voice rooms**: live occupant lists, active-speaker highlight, mute and deafen, device selection, automatic reconnection.
 - **Noise suppression**: Off, WebRTC default, Enhanced (RNNoise) or Maximum (DeepFilterNet 3), plus a noise gate with a level meter.
 - **Hotkeys**: global mute, deafen and push-to-talk, with audio cues.
-- **Screen sharing**: a monitor or window at 720p30, 1080p30 or 1080p60 (experimental), with per-app or system audio and a viewer volume slider.
+- **Screen sharing**: a monitor or window at 720p30, 1080p30 or 1080p60, captured and H.264-encoded on the GPU, with per-app or system audio and a viewer volume slider.
 - **Chat and files**: room chat with unread badge, image thumbnails, saved messages and file transfers up to 50 MB.
 - **Invites and tray**: `zenha://` invite links, passwords in Windows Credential Manager, minimize to tray without leaving the call.
 - **Admin** (optional): manage rooms, mute, stop shares, kick and rotate the invite code.
