@@ -12,6 +12,7 @@ use super::room::{
     HEADER_HEIGHT, chat_toggle_button, collapsed_chat_notice_banner, share_error_banner,
 };
 use super::share::VideoRenderer;
+use crate::icons;
 use crate::state::{
     LocalShare, RoomState, ShareState, UserAction, WatchState, participant_volume_for,
 };
@@ -199,11 +200,7 @@ fn compact_participants_strip(
                             &participant.name,
                             theme::avatar_color(&participant.identity, is_self),
                         );
-                        let mut label = if participant.muted {
-                            format!("{} (mudo)", participant.name)
-                        } else {
-                            participant.name.clone()
-                        };
+                        let mut label = participant.name.clone();
                         if let Some(badge) = participant_volume_badge(volume, is_self) {
                             label.push_str(" · ");
                             label.push_str(&badge);
@@ -213,6 +210,12 @@ fn compact_participants_strip(
                                 .font(theme::semibold(13.0))
                                 .color(text_color),
                         );
+                        if participant.muted {
+                            let (icon_rect, response) =
+                                ui.allocate_exact_size(Vec2::splat(14.0), Sense::hover());
+                            icons::mic(ui.painter(), icon_rect, theme::TEXT_WEAK, true);
+                            response.on_hover_text("Microfone desligado");
+                        }
                     });
                 })
                 .response;

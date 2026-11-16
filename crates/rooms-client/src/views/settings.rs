@@ -189,7 +189,7 @@ fn content(ui: &mut egui::Ui, view: &mut SettingsView<'_>, actions: &mut Vec<Use
     ui.add_space(CONTROL_GAP);
     let mut muted_on_join = view.muted_on_join;
     if ui
-        .checkbox(&mut muted_on_join, "Entrar com o microfone mudo")
+        .checkbox(&mut muted_on_join, "Entrar com o microfone desligado")
         .changed()
     {
         actions.push(UserAction::SetMutedOnJoin(muted_on_join));
