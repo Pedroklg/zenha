@@ -17,7 +17,7 @@ Regras aplicadas no desenvolvimento e no code review. Cada regra tem um ID está
 
 - As regras valem para **código novo e código tocado na branch ou task**.
 - Código legado fora do diff não é migrado de carona; ocorrência irmã só entra no review quando faz parte da mesma mudança ou quando a alteração quebrou um contrato compartilhado.
-- Ao tocar um arquivo grande já existente (como `crates/rooms-client/src/state.rs` ou `crates/rooms-core/src/session.rs`), não agrave o acoplamento e extraia lógica pura nova em funções testáveis, sem exigir reescrita do módulo inteiro.
+- Ao tocar um módulo grande já existente (como `crates/rooms-client/src/state/` ou `crates/rooms-core/src/session/`), não agrave o acoplamento e extraia lógica pura nova em funções testáveis, sem exigir reescrita do módulo inteiro.
 
 ## Severidades
 

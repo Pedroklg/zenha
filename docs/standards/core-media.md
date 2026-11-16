@@ -11,7 +11,7 @@ Complementa [general.md](general.md). Escopo: `crates/rooms-core/`.
 ## CORE-02: Conferência da assinatura do SDK na versão fixada
 
 - Antes de chamar métodos de `livekit` ou `libwebrtc`, confira a assinatura real nos fontes da versão fixada no `Cargo.lock` (em `~/.cargo/registry/src/` ou `patches/`).
-- Erros do SDK nunca chegam crus à UI: passam por sanitização (`sanitize_error` em `livekit_backend.rs`) ou viram variantes semânticas de `SessionError`.
+- Erros do SDK nunca chegam crus à UI: passam por sanitização (`sanitize_error` em `backend_support.rs`) ou viram variantes semânticas de `SessionError`.
 
 ## CORE-03: `unsafe` restrito, mínimo e documentado com `SAFETY:`
 
@@ -35,12 +35,12 @@ Complementa [general.md](general.md). Escopo: `crates/rooms-core/`.
 
 ## CORE-06: Sem bloqueio nem `std::sync::MutexGuard` através de `.await`
 
-- Nas tarefas Tokio (`session.rs`, `livekit_backend.rs`, `livekit_files.rs`, `token.rs`), nunca mantenha `std::sync::MutexGuard` ou `RwLock*Guard` vivo através de `.await`: copie o dado num bloco `{ ... }` síncrono curto ou use `tokio::sync::Mutex`.
+- Nas tarefas Tokio (`session/`, `livekit_backend/`, `livekit_files.rs`, `token.rs`), nunca mantenha `std::sync::MutexGuard` ou `RwLock*Guard` vivo através de `.await`: copie o dado num bloco `{ ... }` síncrono curto ou use `tokio::sync::Mutex`.
 - Nunca chame `std::thread::sleep`, `JoinHandle::join` demorado, I/O pesado síncrono ou inicialização COM direto na thread do runtime da sessão (`handle.rs`).
 
 ## CORE-07: Cancelamento limpo em `tokio::select!` e parada de threads em `Drop`
 
-- Todo ramo de `tokio::select!` (`session.rs`) precisa ser seguro ao cancelamento (cancellation-safe): futures de conexão ou backoff que guardam estado entre iterações permanecem em `Pin<Box<...>>` dentro de `Phase`.
+- Todo ramo de `tokio::select!` (`session/mod.rs`) precisa ser seguro ao cancelamento (cancellation-safe): futures de conexão ou backoff que guardam estado entre iterações permanecem em `Pin<Box<...>>` dentro de `Phase`.
 - Structs que iniciam thread de captura/áudio ou tarefa em background (`Worker`, `MicCapture`, `ShareAudioCapture`, `OutputStream`, `SessionHandle`) implementam `Drop` sinalizando parada (`AtomicBool` / fechamento de canal) e aguardando encerramento ordenado.
 - Ao sair do loop de sessão ou trocar de sala, execute `teardown().await`.
 
@@ -71,9 +71,9 @@ Complementa [general.md](general.md). Escopo: `crates/rooms-core/`.
 - Ao adicionar ou alterar uma variante em `Command`, `Event` ou método em `MediaBackend`, atualize no mesmo diff os **8 pontos de ligação**:
   1. `crates/rooms-core/src/api.rs`
   2. `crates/rooms-core/src/backend.rs`
-  3. `crates/rooms-core/src/session.rs`
+  3. `crates/rooms-core/src/session/`
   4. `crates/rooms-core/src/testing.rs`
   5. `crates/rooms-core/src/no_media.rs`
-  6. `crates/rooms-core/src/livekit_backend.rs`
-  7. `crates/rooms-client/src/` (`ui_model.rs`, `core_session.rs`, `demo.rs`, `state.rs`)
+  6. `crates/rooms-core/src/livekit_backend/`
+  7. `crates/rooms-client/src/` (`ui_model.rs`, `core_session.rs`, `demo.rs`, `state/`)
   8. `crates/rooms-e2e/src/protocol.rs`

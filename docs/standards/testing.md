@@ -9,14 +9,14 @@ Complementa [general.md](general.md). Vale para blocos `#[cfg(test)]` em todas a
 
 ## TST-02: Handlers do `rooms-token-server` testados com `tower::ServiceExt::oneshot`
 
-- Rotas e regras de autenticação/validação em `crates/rooms-token-server/src/routes.rs` são testadas montando o `Router` com `ChatStore::open_in_memory()` e `RoomDirectory` em memória, disparando requisições com `oneshot` sem abrir porta TCP.
+- Rotas e regras de autenticação/validação em `crates/rooms-token-server/src/routes/` são testadas montando o `Router` com `ChatStore::open_in_memory()` e `RoomDirectory` em memória, disparando requisições com `oneshot` sem abrir porta TCP.
 - Cada caminho de erro (`400`, `401`, `403`, `404`, `409`, `429`, `502`, `503`) tem teste verificando o `StatusCode` e garantindo que o corpo JSON não vaza segredos.
 
 ## TST-03: Sessão e UI testadas com dublês determinísticos (`NoMediaBackend`, `TestPatternSource`, `DemoSession`)
 
-- Testes de `session.rs` em `rooms-core` usam `NoMediaBackend` / dublês de `testing.rs` e um `TokenClient` fake, sem `livekit-server` real.
+- Testes de `session/` em `rooms-core` usam `NoMediaBackend` / dublês de `testing.rs` e um `TokenClient` fake, sem `livekit-server` real.
 - Testes de captura sem GPU/SO usam `TestPatternSource` (`capture.rs`).
-- Testes de UI exercitam `AppState` (`state.rs`) verificando transições e efeitos (`UiCommand`, `CredentialOp`).
+- Testes de UI exercitam `AppState` (`state/`) verificando transições e efeitos (`UiCommand`, `CredentialOp`).
 
 ## TST-04: Proibido apagar, enfraquecer ou ignorar testes existentes
 
