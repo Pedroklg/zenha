@@ -115,3 +115,4 @@ strip = "debuginfo"
 [patch.crates-io]
 webrtc-sys = { path = "patches/webrtc-sys" }
 libwebrtc = { path = "patches/libwebrtc" }
+livekit = { path = "patches/livekit" }

@@ -1,6 +1,6 @@
 # Patched dependencies
 
-Local copies of two crates from [livekit/rust-sdks](https://github.com/livekit/rust-sdks),
+Local copies of three crates from [livekit/rust-sdks](https://github.com/livekit/rust-sdks),
 wired in through `[patch.crates-io]` in the root `Cargo.toml`. Both are licensed under
 Apache-2.0 by LiveKit, Inc.; see `webrtc-sys/NOTICE.md`.
 
@@ -8,6 +8,7 @@ Apache-2.0 by LiveKit, Inc.; see `webrtc-sys/NOTICE.md`.
 | --- | --- | --- |
 | `webrtc-sys` | 0.3.53 | Added `AudioTrack::set_volume(double)` FFI binding |
 | `libwebrtc` | 0.4.0 | Added `RtcAudioTrack::set_volume(f64)` clamped to `0.0..=10.0` |
+| `livekit` | 0.10.1 | `unpublish_track` stops the transceiver, so libwebrtc frees the send stream and its encoder instead of keeping them until the room is left |
 
 When upgrading the LiveKit SDK, copy the new versions from the cargo registry and reapply the
 changes listed here. Drop a crate from this folder once upstream ships the same API.
