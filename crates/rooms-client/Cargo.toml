@@ -32,6 +32,9 @@ keyring.workspace = true
 rfd.workspace = true
 tray-icon.workspace = true
 
+[dev-dependencies]
+egui_kittest.workspace = true
+
 [build-dependencies]
 winresource.workspace = true
 

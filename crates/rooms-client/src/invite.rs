@@ -1,10 +1,21 @@
 //! Formatação e leitura de links de convite `zenha://entrar`.
 
+use std::fmt;
+
 /// Dados extraídos de um link de convite do Zenha.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct Invite {
     pub server: String,
     pub password: String,
+}
+
+impl fmt::Debug for Invite {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Invite")
+            .field("server", &self.server)
+            .field("password", &"<redacted>")
+            .finish()
+    }
 }
 
 const PREFIX: &str = "zenha://entrar?";
@@ -178,5 +189,17 @@ mod tests {
             parse("zenha://entrar?servidor=https%3A%2F%2Fvoz.exemplo&senha=%ZZ"),
             None
         );
+    }
+
+    #[test]
+    fn invite_debug_redacts_password() {
+        let invite = Invite {
+            server: "https://voz.exemplo".to_owned(),
+            password: "super-secret-password".to_owned(),
+        };
+        let dbg = format!("{invite:?}");
+        assert!(!dbg.contains("super-secret-password"));
+        assert!(dbg.contains("https://voz.exemplo"));
+        assert!(dbg.contains("<redacted>"));
     }
 }
