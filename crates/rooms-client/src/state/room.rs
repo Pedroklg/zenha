@@ -684,6 +684,21 @@ mod tests {
     }
 
     #[test]
+    fn rooms_updated_sorts_occupants_by_name() {
+        let mut state = state_with_code();
+        state.handle_action(UserAction::SubmitOnboarding);
+        let room = |people: &[&str]| RoomSummary {
+            name: "geral".to_owned(),
+            title: String::new(),
+            participants: people.iter().map(|p| (*p).to_owned()).collect(),
+        };
+        state.apply_event(UiEvent::RoomsUpdated(vec![room(&["Pedro", "bel", "KNC"])]));
+        assert_eq!(state.rooms, vec![room(&["bel", "KNC", "Pedro"])]);
+        state.apply_event(UiEvent::RoomsUpdated(vec![room(&["KNC", "Pedro", "bel"])]));
+        assert_eq!(state.rooms, vec![room(&["bel", "KNC", "Pedro"])]);
+    }
+
+    #[test]
     fn refresh_runs_in_lobby_and_in_room_only() {
         let mut state = state_with_code();
         let start = Instant::now();
