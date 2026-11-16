@@ -18,9 +18,9 @@ Complementa [general.md](general.md). Escopo: `.github/workflows/`, `deploy/`, `
 - Segredos de produção residem apenas na VM em `/opt/zenha/.env` e `/opt/zenha/livekit.yaml` com permissão restrita (`0600`).
 - Workflows em `.github/workflows/` nunca imprimem segredos em stdout, validam tags antes de interpolar em scripts remotos e validam `/health` após o deploy (`deploy.yml`).
 
-## OPS-04: Segurança de rede e infraestrutura Azure (`deploy/azure/`)
+## OPS-04: Segurança de rede e infraestrutura (`deploy/infra/`)
 
-- No Bicep (`deploy/azure/main.bicep`), apenas as portas estritamente necessárias (`80/TCP`, `443/TCP`, `7881/TCP`, `7882/UDP`) ficam abertas para a internet; SSH (`22/TCP`) permanece fechado por padrão (`sshAllowedCidr = ''`).
+- Na lista de portas de `deploy/infra/modules/host` (usada por todos os provedores), apenas as portas estritamente necessárias (`80/TCP`, `443/TCP`, `7881/TCP`, `7882/UDP`) ficam abertas para a internet; SSH (`22/TCP`) permanece fechado por padrão (`ssh_allowed_cidr = ""`).
 - `rooms-token-server` e a porta HTTP interna do `livekit-server` escutam apenas em loopback na VM, expostos externamente exclusivamente via TLS no Caddy.
 
 ## OPS-05: Release validada antes de empacotar
