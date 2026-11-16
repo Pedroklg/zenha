@@ -111,6 +111,7 @@ impl Session {
             }
             Command::SetMuted(muted) => self.set_muted(muted).await,
             Command::SetDeafened(deafened) => self.set_deafened(deafened).await,
+            Command::SetDisplayName { name } => self.set_display_name(name).await,
             Command::SendChat { text, save } => self.send_chat(&text, save).await,
             Command::LoadChatHistory { before } => self.load_chat_history(before).await,
             Command::DeleteChat { id } => self.delete_chat(&id).await,
@@ -164,6 +165,9 @@ impl Session {
             }
             Some(BackendEvent::SpeakingChanged { identity, speaking }) => {
                 self.emit(Event::ParticipantSpeakingChanged { identity, speaking });
+            }
+            Some(BackendEvent::NameChanged { identity, name }) => {
+                self.emit(Event::ParticipantNameChanged { identity, name });
             }
             Some(BackendEvent::DataReceived {
                 sender,

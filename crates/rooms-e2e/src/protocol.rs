@@ -614,7 +614,9 @@ impl BotEvent {
                     RemovalReason::RoomDeleted => "room_deleted".to_owned(),
                 },
             },
-            Event::ChatHistory { .. } | Event::ChatDeleted { .. } => return None,
+            Event::ChatHistory { .. }
+            | Event::ChatDeleted { .. }
+            | Event::ParticipantNameChanged { .. } => return None,
             Event::CommandFailed(error) => Self::CommandFailed {
                 error: error.into(),
             },

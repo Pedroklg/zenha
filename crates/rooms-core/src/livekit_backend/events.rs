@@ -13,7 +13,7 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 use crate::api::RemovalReason;
 use crate::backend::BackendEvent;
-use crate::backend_support::SpeakingTracker;
+use crate::backend_support::{SpeakingTracker, display_name};
 use crate::file_receive::FileReceiver;
 use crate::files::FILE_TOPIC;
 use crate::livekit_files;
@@ -75,6 +75,15 @@ fn translate(
             speaking.forget(&identity);
             watch.clear_if(&identity);
             vec![BackendEvent::ParticipantLeft { identity }]
+        }
+        RoomEvent::ParticipantNameChanged {
+            participant, name, ..
+        } => {
+            let identity = String::from(participant.identity());
+            vec![BackendEvent::NameChanged {
+                name: display_name(name, &identity),
+                identity,
+            }]
         }
         RoomEvent::TrackMuted {
             participant,

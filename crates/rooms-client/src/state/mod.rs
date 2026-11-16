@@ -20,7 +20,7 @@ pub use audio::{
     LobbyVoiceState, MAX_PARTICIPANT_VOLUME, MicLevelView, participant_volume_for,
 };
 pub use chat::{ChatEntry, ChatState, ImageViewer};
-pub use onboarding::{CredentialOp, LoginForm, OnboardingState};
+pub use onboarding::{CredentialOp, LoginForm, OnboardingState, display_name_error};
 pub use room::{ConnectionStatus, RoomState, room_display_title};
 pub use share::{LocalShare, SharePicker, ShareState, WatchState, aspect_fit};
 
@@ -49,6 +49,7 @@ pub enum UserAction {
     JoinRoom(String),
     CancelConnect,
     ChangeServer,
+    SaveDisplayName,
     CopyInviteLink,
     ToggleMute,
     ToggleDeafen,
@@ -138,6 +139,7 @@ pub enum UserAction {
 pub struct AppState {
     pub screen: Screen,
     pub form: LoginForm,
+    pub name_draft: String,
     pub onboarding: OnboardingState,
     pub lobby_voice: LobbyVoiceState,
     pub lobby_error: Option<String>,
@@ -198,6 +200,7 @@ impl AppState {
                 Screen::Onboarding
             },
             form,
+            name_draft: settings.display_name.clone(),
             onboarding: OnboardingState::default(),
             lobby_voice: LobbyVoiceState::from_muted(settings.muted_on_join),
             lobby_error: None,
@@ -286,6 +289,7 @@ impl AppState {
             UserAction::JoinRoom(room) => self.join_room(room),
             UserAction::CancelConnect => self.cancel_connect(),
             UserAction::ChangeServer => self.change_server(),
+            UserAction::SaveDisplayName => self.save_display_name(),
             UserAction::CopyInviteLink => {
                 self.invite_copied = true;
                 Vec::new()
@@ -318,6 +322,7 @@ impl AppState {
             }),
             UserAction::OpenSettings => {
                 self.audio.open = true;
+                self.name_draft.clone_from(&self.form.display_name);
                 self.invite_copied = false;
                 self.admin.notice = None;
                 vec![UiCommand::RefreshAudioDevices]

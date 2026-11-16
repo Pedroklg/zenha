@@ -204,6 +204,10 @@ pub enum Command {
     Leave,
     SetMuted(bool),
     SetDeafened(bool),
+    /// Troca o nome exibido: vale para os próximos tokens e, numa sala, para os outros na hora.
+    SetDisplayName {
+        name: String,
+    },
     SendChat {
         text: String,
         save: bool,
@@ -264,6 +268,10 @@ impl fmt::Debug for Command {
             Self::Leave => f.write_str("Leave"),
             Self::SetMuted(muted) => f.debug_tuple("SetMuted").field(muted).finish(),
             Self::SetDeafened(deafened) => f.debug_tuple("SetDeafened").field(deafened).finish(),
+            Self::SetDisplayName { name } => f
+                .debug_struct("SetDisplayName")
+                .field("name", name)
+                .finish(),
             Self::SendChat { text, save } => f
                 .debug_struct("SendChat")
                 .field("text", text)
@@ -340,6 +348,10 @@ pub enum Event {
     ParticipantSpeakingChanged {
         identity: String,
         speaking: bool,
+    },
+    ParticipantNameChanged {
+        identity: String,
+        name: String,
     },
     ChatReceived(ChatMessage),
     /// Página do histórico de mensagens salvas retornada pelo servidor.

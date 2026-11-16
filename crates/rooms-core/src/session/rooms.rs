@@ -37,6 +37,22 @@ impl Session {
         self.start_attempt(room, None);
     }
 
+    pub(super) async fn set_display_name(&mut self, name: String) {
+        if let Err(err) = validate_display_name(&name) {
+            self.emit(Event::CommandFailed(SessionError::InvalidInput(
+                err.to_string(),
+            )));
+            return;
+        }
+        let name = name.trim().to_owned();
+        self.config.display_name.clone_from(&name);
+        if self.connected()
+            && let Err(err) = self.backend.set_display_name(&name).await
+        {
+            self.emit(Event::CommandFailed(err));
+        }
+    }
+
     pub(super) fn refresh_rooms(&self) {
         let tokens = self.tokens.clone();
         let sink = self.sink.clone();
@@ -63,9 +79,10 @@ mod tests {
     use tokio::sync::mpsc;
 
     use crate::api::{Command, Event, SessionError};
+    use crate::backend::BackendEvent;
     use crate::backoff::ReconnectPolicy;
     use crate::handle::EventSink;
-    use crate::testing::{FakeBackend, FakeTokenClient};
+    use crate::testing::{BackendCall, FakeBackend, FakeTokenClient};
 
     use super::super::run;
     use super::super::test_support::{config, harness};
@@ -152,5 +169,58 @@ mod tests {
         assert_eq!(h.tokens.rooms_calls(), 1);
         assert_eq!(rooms.len(), 1);
         assert_eq!(rooms[0].title, "Sala Geral");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn set_display_name_renames_in_room_and_on_the_next_token() {
+        let mut h = harness();
+        h.send(Command::SetDisplayName {
+            name: "  Ana  ".to_owned(),
+        });
+        h.join("geral").await;
+        assert_eq!(h.tokens.requests()[0].display_name, "Ana");
+        assert!(
+            !h.backend
+                .calls()
+                .contains(&BackendCall::SetDisplayName("Ana".to_owned()))
+        );
+
+        h.send(Command::SetDisplayName {
+            name: "Bia".to_owned(),
+        });
+        h.send(Command::SetDisplayName {
+            name: "   ".to_owned(),
+        });
+        assert!(matches!(
+            h.next().await,
+            Event::CommandFailed(SessionError::InvalidInput(_))
+        ));
+        assert!(
+            h.backend
+                .calls()
+                .contains(&BackendCall::SetDisplayName("Bia".to_owned()))
+        );
+
+        h.send(Command::Leave);
+        assert_eq!(h.next().await, Event::Left);
+        h.join("jogos").await;
+        assert_eq!(h.tokens.requests().last().unwrap().display_name, "Bia");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn backend_name_change_is_forwarded() {
+        let mut h = harness();
+        h.join("geral").await;
+        assert!(h.backend.emit(BackendEvent::NameChanged {
+            identity: "ana".to_owned(),
+            name: "Ana Paula".to_owned(),
+        }));
+        assert_eq!(
+            h.next().await,
+            Event::ParticipantNameChanged {
+                identity: "ana".to_owned(),
+                name: "Ana Paula".to_owned(),
+            }
+        );
     }
 }

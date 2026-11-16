@@ -257,6 +257,10 @@ impl MediaBackend for LiveKitBackend {
         Ok(())
     }
 
+    async fn set_display_name(&self, name: &str) -> Result<(), SessionError> {
+        self.publish_name(name).await
+    }
+
     async fn send_data(&self, topic: &str, payload: Vec<u8>) -> Result<(), SessionError> {
         self.publish_data(topic, payload).await
     }

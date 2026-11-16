@@ -15,6 +15,9 @@ pub enum UiCommand {
     Leave,
     SetMuted(bool),
     SetDeafened(bool),
+    SetDisplayName {
+        name: String,
+    },
     SendChat {
         text: String,
         save: bool,
@@ -66,6 +69,10 @@ impl fmt::Debug for UiCommand {
             Self::Leave => f.write_str("Leave"),
             Self::SetMuted(muted) => f.debug_tuple("SetMuted").field(muted).finish(),
             Self::SetDeafened(deafened) => f.debug_tuple("SetDeafened").field(deafened).finish(),
+            Self::SetDisplayName { name } => f
+                .debug_struct("SetDisplayName")
+                .field("name", name)
+                .finish(),
             Self::SendChat { text, save } => f
                 .debug_struct("SendChat")
                 .field("text", text)

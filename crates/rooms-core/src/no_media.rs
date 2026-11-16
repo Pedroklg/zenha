@@ -64,6 +64,10 @@ impl MediaBackend for NoMediaBackend {
         Ok(())
     }
 
+    async fn set_display_name(&self, _name: &str) -> Result<(), SessionError> {
+        Ok(())
+    }
+
     async fn send_data(&self, _topic: &str, _payload: Vec<u8>) -> Result<(), SessionError> {
         Ok(())
     }

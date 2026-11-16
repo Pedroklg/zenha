@@ -143,6 +143,7 @@ mod tests {
         assert!(claims.video.can_publish());
         assert!(claims.video.can_subscribe());
         assert!(claims.video.can_publish_data());
+        assert!(claims.video.can_update_own_metadata());
         assert!(!claims.video.room_admin);
 
         let now = SystemTime::now()

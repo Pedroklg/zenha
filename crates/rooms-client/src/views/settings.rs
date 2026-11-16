@@ -16,7 +16,9 @@ const METER_FLOOR_DB: f32 = -70.0;
 
 pub struct SettingsView<'a> {
     pub server_url: &'a str,
-    pub display_name: &'a str,
+    pub name_draft: &'a mut String,
+    pub name_error: Option<String>,
+    pub can_save_name: bool,
     pub audio: &'a AudioState,
     pub hotkeys: &'a HotkeyState,
     pub close_to_tray: bool,
@@ -168,14 +170,22 @@ fn content(ui: &mut egui::Ui, view: &mut SettingsView<'_>, actions: &mut Vec<Use
     });
     ui.horizontal(|ui| {
         ui.label(RichText::new("Nome:").color(theme::TEXT_SECONDARY));
-        ui.label(view.display_name.trim());
+        let response = ui.add(egui::TextEdit::singleline(view.name_draft).desired_width(200.0));
+        let enter = response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+        let save = ui.add_enabled(view.can_save_name, egui::Button::new("Salvar nome"));
+        if view.can_save_name && (save.clicked() || enter) {
+            actions.push(UserAction::SaveDisplayName);
+        }
     });
+    if let Some(error) = &view.name_error {
+        ui.small(RichText::new(error).color(theme::ERROR));
+    }
     ui.add_space(6.0);
     ui.horizontal(|ui| {
         if ui.button("Copiar link de convite").clicked() {
             actions.push(UserAction::CopyInviteLink);
         }
-        if ui.button("Trocar servidor ou nome").clicked() {
+        if ui.button("Trocar servidor").clicked() {
             actions.push(UserAction::ChangeServer);
         }
     });
