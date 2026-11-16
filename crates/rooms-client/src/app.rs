@@ -83,7 +83,11 @@ impl App {
     ) -> Self {
         theme::install(ctx);
         let (mut session, banner): (Box<dyn SessionPort>, _) = if demo_flag {
-            (Box::new(DemoSession::new()), Some(DEMO_LABEL))
+            #[cfg(test)]
+            let demo_session = DemoSession::with_delays(crate::demo::DemoDelays::instant());
+            #[cfg(not(test))]
+            let demo_session = DemoSession::new();
+            (Box::new(demo_session), Some(DEMO_LABEL))
         } else {
             let ctx = ctx.clone();
             let wake = Arc::new(move || ctx.request_repaint());
@@ -106,9 +110,9 @@ impl App {
             listener.links
         });
         #[cfg(windows)]
-        let global_keys = GlobalKeys::new(ctx);
+        let global_keys = (!cfg!(test)).then(|| GlobalKeys::new(ctx)).flatten();
         #[cfg(windows)]
-        let tray = Tray::new(ctx);
+        let tray = (!cfg!(test)).then(|| Tray::new(ctx)).flatten();
         let mut app = Self {
             state,
             session,
@@ -715,7 +719,18 @@ fn open_path_in_os(path: &Path) -> std::io::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{open_path_in_os, window_is_hidden};
+    use std::sync::mpsc::channel;
+    use std::time::Duration;
+
+    use eframe::egui;
+    use egui_kittest::Harness;
+    use egui_kittest::kittest::Queryable;
+
+    use super::{App, open_path_in_os, window_is_hidden};
+    use crate::cli::StartupLink;
+    use crate::demo;
+    use crate::settings::Settings;
+    use crate::state::{Screen, UserAction};
 
     #[test]
     fn open_path_in_os_rejects_missing_and_directory_paths() {
@@ -734,5 +749,92 @@ mod tests {
         assert!(window_is_hidden(false, None, Some(false)));
         assert!(!window_is_hidden(false, Some(false), None));
         assert!(!window_is_hidden(false, Some(false), Some(true)));
+    }
+
+    #[test]
+    fn demo_app_renders_lobby_room_settings_and_chat_frames() {
+        let (tx, rx) = channel();
+        let handle = std::thread::spawn(move || {
+            let settings = Settings {
+                client_id: demo::SELF_IDENTITY.to_owned(),
+                display_name: demo::SELF_NAME.to_owned(),
+                token_server_url: demo::DEMO_SERVER_URL.to_owned(),
+                ..Settings::default()
+            };
+            let mut harness = Harness::builder()
+                .with_size(egui::Vec2::new(960.0, 600.0))
+                .with_accessibility_check(false)
+                .build_eframe(move |cc| {
+                    App::new(
+                        &cc.egui_ctx,
+                        &settings,
+                        Some(demo::DEMO_PASSWORD.to_owned()),
+                        None,
+                        true,
+                        StartupLink::None,
+                        #[cfg(windows)]
+                        None,
+                    )
+                });
+
+            harness.run_steps(2);
+            assert!(matches!(harness.state().state.screen, Screen::Lobby));
+            assert_eq!(harness.state().state.rooms.len(), 3);
+
+            harness.get_by_label("Geral").click();
+            harness.run_steps(2);
+            assert!(matches!(
+                &harness.state().state.screen,
+                Screen::InRoom(room) if room.room == "geral" && room.chat.open
+            ));
+
+            harness.get_by_label("Configurações").click();
+            harness.run_steps(2);
+            assert!(harness.state().state.audio.open);
+
+            let ctx = harness.ctx.clone();
+            harness
+                .state_mut()
+                .dispatch(&ctx, vec![UserAction::ToggleChat]);
+            harness.run_steps(2);
+            assert!(matches!(
+                &harness.state().state.screen,
+                Screen::InRoom(room) if !room.chat.open
+            ));
+
+            harness.state_mut().dispatch(
+                &ctx,
+                vec![UserAction::ToggleChat, UserAction::CloseSettings],
+            );
+            harness.run_steps(2);
+            assert!(!harness.state().state.audio.open);
+            assert!(matches!(
+                &harness.state().state.screen,
+                Screen::InRoom(room) if room.chat.open
+            ));
+
+            harness.get_by_label("Sair da sala").click();
+            harness.run_steps(2);
+            assert!(matches!(harness.state().state.screen, Screen::Lobby));
+
+            let _ = tx.send(());
+        });
+
+        match rx.recv_timeout(Duration::from_secs(5)) {
+            Ok(()) => {
+                if let Err(payload) = handle.join() {
+                    std::panic::resume_unwind(payload);
+                }
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                if let Err(payload) = handle.join() {
+                    std::panic::resume_unwind(payload);
+                }
+                panic!("demo UI smoke test thread disconnected unexpectedly");
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                panic!("demo UI smoke test timed out after 5s (possible egui Context deadlock)");
+            }
+        }
     }
 }

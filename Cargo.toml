@@ -23,6 +23,7 @@ directories = "6.0"
 dotenvy = "0.15"
 deep_filter = { git = "https://github.com/Rikorose/DeepFilterNet", rev = "978576aa8400552a4ce9730838c635aa30db5e61", default-features = false, features = ["tract", "default-model"] }
 eframe = "0.37"
+egui_kittest = { version = "0.37", features = ["eframe"] }
 futures-util = { version = "0.3", default-features = false }
 global-hotkey = "=0.10.0"
 http-body-util = "0.1"

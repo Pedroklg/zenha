@@ -51,7 +51,7 @@ deny = [
     { crate = "livekit", wrappers = ["rooms-core"], reason = "CORE-01/UI-01: apenas rooms-core pode depender de livekit" },
     { crate = "libwebrtc", wrappers = ["livekit"], reason = "CORE-01: libwebrtc só pode entrar via livekit dentro de rooms-core" },
     { crate = "livekit-api", wrappers = ["rooms-token-server"], reason = "CORE-01/SRV-01: livekit-api restrito a rooms-token-server" },
-    { crate = "eframe", wrappers = ["rooms-client"], reason = "UI-01: eframe restrito a rooms-client" },
+    { crate = "eframe", wrappers = ["rooms-client", "egui_kittest"], reason = "UI-01: eframe restrito a rooms-client (egui_kittest só como dev-dependency dele)" },
     { crate = "axum", wrappers = ["rooms-token-server"], reason = "SRV-01: axum restrito a rooms-token-server" },
     { crate = "rusqlite", wrappers = ["rooms-token-server"], reason = "SRV-05: rusqlite restrito a rooms-token-server" },
 ]
