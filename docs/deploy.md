@@ -43,7 +43,7 @@ This guide covers provisioning and operating the Zenha voice/video server (`live
 
 ## 3. Provisioning the VM with OpenTofu (`deploy/infra/azure`)
 
-> **Legacy Bicep migration note:** The legacy `deploy/azure/*.bicep` templates remain temporarily in the repository and will be removed after `tofu import` of the existing deployment is validated. To adopt an existing Bicep environment instead of creating a fresh VM, follow [`deploy/infra/azure/README.md`](../deploy/infra/azure/README.md#adotar-a-vm-existente).
+> **Former Bicep deployment:** the Bicep templates that created the current `zenha-rg` were removed after its resources were imported into OpenTofu with a clean `tofu plan`. To adopt another deployment created by them, follow [`deploy/infra/azure/README.md`](../deploy/infra/azure/README.md#adotar-a-vm-existente).
 
 1. Log in to Azure, select your subscription, and export `ARM_SUBSCRIPTION_ID`:
    ```bash
@@ -159,7 +159,7 @@ rm /tmp/zenha-setup.sh
 
 ### Step 5.3 — Alternative: Run `setup-server.sh` over SSH
 
-If you enabled `sshAllowedCidr` for your workstation IP:
+If you enabled `ssh_allowed_cidr` for your workstation IP:
 ```bash
 scp -i ~/.ssh/zenha_azure deploy/setup-server.sh deploy/docker-compose.yml deploy/Caddyfile azureuser@<publicIpAddress>:/tmp/
 ssh -i ~/.ssh/zenha_azure azureuser@<publicIpAddress> \

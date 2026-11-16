@@ -42,7 +42,7 @@ Provisions the Zenha Linux VM (`Standard_B2ats_v2`), VNet/subnet, NSG, static St
 
 ## Adotar a VM existente
 
-Use the commands below to adopt resources already created by `deploy/azure/main.bicep` and `deploy/azure/schedule.bicep` in resource group `zenha-rg` (assuming default `name_prefix = "zenha"`).
+Use the commands below to adopt resources already created by the former Bicep templates (`main.bicep` and `schedule.bicep`, now removed from the repository) in resource group `zenha-rg` (assuming default `name_prefix = "zenha"`).
 
 > **Warning:** Before running any `tofu apply` after importing, **always run `tofu plan` and confirm there are zero `destroy` or `replace` (`-/+`) actions** in the plan output.
 
@@ -66,7 +66,7 @@ tofu import azurerm_linux_virtual_machine.main "/subscriptions/<subscription-id>
 
 ### 3. Import schedule workflows, triggers, actions, and role assignments
 
-If `deploy/azure/schedule.bicep` was not deployed yet and you do not want schedules, set `schedule_enabled = false` in `terraform.tfvars` and skip this step. Otherwise, keep `schedule_enabled = true` and import the four Logic App workflows and their child resources:
+If the schedule was not deployed yet and you do not want schedules, set `schedule_enabled = false` in `terraform.tfvars` and skip this step. Otherwise, keep `schedule_enabled = true` and import the four Logic App workflows and their child resources:
 
 ```bash
 tofu import 'azurerm_logic_app_workflow.schedule["start-mon-fri"]' "/subscriptions/<subscription-id>/resourceGroups/zenha-rg/providers/Microsoft.Logic/workflows/zenha-schedule-start-mon-fri"
@@ -85,7 +85,7 @@ tofu import 'azurerm_logic_app_action_custom.schedule["deallocate-tue-sat"]' "/s
 tofu import 'azurerm_logic_app_action_custom.schedule["deallocate-sun-mon"]' "/subscriptions/<subscription-id>/resourceGroups/zenha-rg/providers/Microsoft.Logic/workflows/zenha-schedule-deallocate-sun-mon/actions/VmPowerAction"
 ```
 
-Next, look up the GUID of each `Virtual Machine Contributor` role assignment created by `schedule.bicep` on `zenha-vm`:
+Next, look up the GUID of each `Virtual Machine Contributor` role assignment created by the former schedule template on `zenha-vm`:
 
 ```bash
 az role assignment list \

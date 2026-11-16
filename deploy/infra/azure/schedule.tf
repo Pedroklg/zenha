@@ -63,8 +63,8 @@ resource "azurerm_role_assignment" "schedule_vm_contributor" {
   principal_type                   = "ServicePrincipal"
   skip_service_principal_aad_check = true
 
-  # Azure does not return skip_service_principal_aad_check on read.
+  # Azure returns the scope with "resourcegroups" in lower case and does not return skip_service_principal_aad_check.
   lifecycle {
-    ignore_changes = [skip_service_principal_aad_check]
+    ignore_changes = [scope, skip_service_principal_aad_check]
   }
 }
