@@ -130,8 +130,8 @@ impl fmt::Debug for UiCommand {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SharePresetView {
     P720F30,
-    #[default]
     P1080F30,
+    #[default]
     P1080F60,
 }
 
