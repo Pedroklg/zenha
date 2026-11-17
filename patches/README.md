@@ -6,9 +6,9 @@ Apache-2.0 by LiveKit, Inc.; see `webrtc-sys/NOTICE.md`.
 
 | Crate | Version | Change |
 | --- | --- | --- |
-| `webrtc-sys` | 0.3.53 | Added `AudioTrack::set_volume(double)` FFI binding |
-| `libwebrtc` | 0.4.0 | Added `RtcAudioTrack::set_volume(f64)` clamped to `0.0..=10.0` |
-| `livekit` | 0.10.1 | `unpublish_track` stops the transceiver, so libwebrtc frees the send stream and its encoder instead of keeping them until the room is left |
+| `webrtc-sys` | 0.3.54 | Added `AudioTrack::set_volume(double)` and the `argb_scale` (libyuv `ARGBScale`) FFI bindings |
+| `libwebrtc` | 0.4.1 | Added `RtcAudioTrack::set_volume(f64)` clamped to `0.0..=10.0` and `yuv_helper::argb_scale` |
+| `livekit` | 0.11.0 | `unpublish_track` stops the transceiver, so libwebrtc frees the send stream and its encoder instead of keeping them until the room is left |
 
 When upgrading the LiveKit SDK, copy the new versions from the cargo registry and reapply the
 changes listed here. Drop a crate from this folder once upstream ships the same API.
