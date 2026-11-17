@@ -142,7 +142,7 @@ impl ScreenCapture {
         let _ = session.SetIsBorderRequired(false);
         let _ = session.SetIsCursorCaptureEnabled(true);
         let _ = session.SetMinUpdateInterval(TimeSpan {
-            Duration: 7_500_000 / i64::from(fps.max(1)),
+            Duration: min_update_interval(fps),
         });
         session.StartCapture().step("start capture")?;
         Ok(Self {
@@ -213,5 +213,30 @@ impl Drop for ScreenCapture {
         }
         let _ = self.session.Close();
         let _ = self.pool.Close();
+    }
+}
+
+/// Half a frame period in 100 ns units, so WGC can keep up with `fps` on any refresh rate.
+fn min_update_interval(fps: u32) -> i64 {
+    5_000_000 / i64::from(fps.max(1))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::min_update_interval;
+
+    #[test]
+    fn capture_interval_keeps_up_with_the_share_rate_on_common_refresh_rates() {
+        for fps in [30, 60] {
+            let interval = min_update_interval(fps) as f64 / 10_000_000.0;
+            for hz in [60.0, 75.0, 120.0, 144.0, 165.0, 240.0] {
+                let refreshes_per_frame = (interval * hz).ceil().max(1.0);
+                let delivered = hz / refreshes_per_frame;
+                assert!(
+                    delivered >= f64::from(fps),
+                    "{fps} fps at {hz} Hz delivers {delivered:.1}"
+                );
+            }
+        }
     }
 }
