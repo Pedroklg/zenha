@@ -1,6 +1,6 @@
-//! Checagens rápidas de arquitetura e regras do Zenha (`cargo review`), só com `std`.
+//! Quick architecture and Zenha rule checks (`cargo review`), with `std` only.
 //!
-//! As de fronteira também rodam no `cargo ci`; as demais só no `cargo review`.
+//! Boundary ones also run in `cargo ci`; the rest only in `cargo review`.
 
 use std::fmt;
 use std::fs;
@@ -97,7 +97,7 @@ struct Workspace {
     files: Vec<Source>,
 }
 
-/// Checagens de fronteira para o `cargo ci`; imprime os achados e diz se passou.
+/// Boundary checks for `cargo ci`; prints the findings and says whether it passed.
 pub fn boundaries() -> bool {
     match Workspace::load() {
         Ok(ws) => report(&boundary_findings(&ws), &[]),
@@ -108,7 +108,7 @@ pub fn boundaries() -> bool {
     }
 }
 
-/// `cargo review [base]`: todas as checagens; `base` (padrão `HEAD`) só serve à CORE-12.
+/// `cargo review [base]`: all checks; `base` (default `HEAD`) only serves CORE-12.
 pub fn run(base: &str) -> ExitCode {
     let start = Instant::now();
     let ws = match Workspace::load() {
@@ -237,7 +237,7 @@ fn boundary_findings(ws: &Workspace) -> Vec<Finding> {
     out
 }
 
-/// Linhas antes do primeiro `#[cfg(test)]`, numeradas a partir de 1, sem linhas de comentário.
+/// Lines before the first `#[cfg(test)]`, numbered from 1, without comment lines.
 fn code_lines(text: &str) -> impl Iterator<Item = (usize, &str)> {
     text.lines()
         .enumerate()
@@ -246,7 +246,7 @@ fn code_lines(text: &str) -> impl Iterator<Item = (usize, &str)> {
         .filter(|(_, line)| !line.trim_start().starts_with("//"))
 }
 
-/// Dependências declaradas no manifesto: (número da linha, seção, nome, linha inteira).
+/// Dependencies declared in the manifest: (line number, section, name, line).
 fn manifest_deps(text: &str) -> Vec<(usize, String, &str, &str)> {
     let mut section = String::new();
     let mut deps = Vec::new();
@@ -530,7 +530,7 @@ fn macro_args_start(text: &str, name: &str) -> Option<usize> {
     })
 }
 
-/// Primeiro literal de string que não é valor de campo (`campo = "..."`).
+/// First string literal that is not a field value (`campo = "..."`).
 fn tracing_message(call: &str) -> Option<&str> {
     let mut rest = call;
     loop {

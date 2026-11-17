@@ -1,4 +1,4 @@
-//! Automação do repositório: verificação local e geração de assets.
+//! Repository automation: local verification and asset generation.
 
 mod icon;
 mod review_checks;
