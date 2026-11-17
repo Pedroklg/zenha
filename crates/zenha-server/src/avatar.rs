@@ -9,9 +9,9 @@ use image::{
     DynamicImage, ExtendedColorType, ImageDecoder as _, ImageEncoder as _, ImageFormat,
     ImageReader, Limits,
 };
-use zenha_protocol::{AVATAR_SIZE_PX, MAX_AVATAR_UPLOAD_BYTES};
 use sha2::{Digest as _, Sha256};
 use thiserror::Error;
+use zenha_protocol::{AVATAR_SIZE_PX, MAX_AVATAR_UPLOAD_BYTES};
 
 const MAX_AVATAR_DECODE_SIDE: u32 = 8_192;
 const MAX_AVATAR_DECODE_ALLOC_BYTES: u64 = 256 * 1024 * 1024;

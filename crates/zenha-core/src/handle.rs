@@ -7,8 +7,8 @@ use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use crate::api::{Command, Event, SessionConfig, SessionError};
 use crate::backend::MediaBackend;
 use crate::net::backoff::ReconnectPolicy;
-use crate::session;
 use crate::net::token::{HttpTokenClient, TokenClient, UnavailableTokenClient};
+use crate::session;
 
 pub type WakeCallback = Box<dyn Fn() + Send + Sync>;
 type SharedWake = Arc<RwLock<Option<Arc<dyn Fn() + Send + Sync>>>>;

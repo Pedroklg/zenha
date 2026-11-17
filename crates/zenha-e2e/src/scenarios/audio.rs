@@ -107,7 +107,10 @@ pub(super) fn maximum_mic(ctx: &mut Ctx<'_>) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub(super) fn own_capture_mic(ctx: &mut Ctx<'_>, mode: NoiseKind) -> anyhow::Result<Arc<BotProcess>> {
+pub(super) fn own_capture_mic(
+    ctx: &mut Ctx<'_>,
+    mode: NoiseKind,
+) -> anyhow::Result<Arc<BotProcess>> {
     const SPEAKER_BOT: &str = "speaker";
     let room = ctx.room();
     let baseline = ctx.baseline()?;
@@ -283,4 +286,3 @@ pub(super) fn cue(ctx: &mut Ctx<'_>) -> anyhow::Result<()> {
     }
     Ok(())
 }
-

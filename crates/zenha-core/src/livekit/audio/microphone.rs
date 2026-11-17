@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use livekit::options::{self, TrackPublishOptions};
 use livekit::prelude::{LocalAudioTrack, LocalTrack, PlatformAudio, Room, TrackSource};
@@ -14,15 +14,17 @@ use livekit::webrtc::stats::RtcStats;
 use tokio::sync::mpsc::{self, UnboundedSender};
 use tokio::time::MissedTickBehavior;
 
+use super::{EnhancedMic, Microphone, Selection};
 use crate::api::NoiseSuppression;
 use crate::audio::deep_filter::DeepFilterDenoiser;
 use crate::audio::mic_capture::{CAPTURE_SAMPLE_RATE, MicCapture};
 use crate::audio::noise::{Denoiser, NoiseGate, RnnoiseDenoiser};
 use crate::backend::BackendEvent;
 use crate::backend::options::{TONE_FRAME_SAMPLES, TONE_SAMPLE_RATE, ToneGenerator};
-use crate::backend::support::{enhanced_voice, gate_threshold, LevelMeter, LocalSpeech, SPEAKING_AUDIO_LEVEL};
+use crate::backend::support::{
+    LevelMeter, LocalSpeech, SPEAKING_AUDIO_LEVEL, enhanced_voice, gate_threshold,
+};
 use crate::livekit::{Flags, TaskGuard};
-use super::{EnhancedMic, Microphone, Selection};
 
 const MICROPHONE_TRACK_NAME: &str = "microphone";
 const TONE_QUEUE_MS: u32 = 100;
@@ -110,7 +112,10 @@ impl Drop for LocalSpeaker {
 }
 
 /// The platform microphone hands no samples to the app, so its level comes from the sender stats.
-pub(in crate::livekit) fn watch_speech(track: LocalAudioTrack, mut speaker: LocalSpeaker) -> TaskGuard {
+pub(in crate::livekit) fn watch_speech(
+    track: LocalAudioTrack,
+    mut speaker: LocalSpeaker,
+) -> TaskGuard {
     TaskGuard(tokio::spawn(async move {
         let mut ticks = tokio::time::interval(SPEECH_POLL);
         ticks.set_missed_tick_behavior(MissedTickBehavior::Delay);
@@ -326,5 +331,3 @@ async fn tone_loop(source: NativeAudioSource, hz: f64, amplitude: f64) {
         }
     }
 }
-
-/// Diagnostic: logs once per second the level and dominant frequency of the decoded remote audio.

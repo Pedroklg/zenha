@@ -14,8 +14,8 @@ use tokio::sync::mpsc::UnboundedReceiver;
 use crate::api::{
     AudioDevices, FileTransfer, NoiseSuppression, Participant, RemovalReason, SessionError,
 };
-use crate::video::capture::CaptureEnd;
 use crate::audio::cue::Cue;
+use crate::video::capture::CaptureEnd;
 use crate::video::{CaptureTarget, FrameSlot, SharePreset, VideoFrame};
 
 #[derive(Debug, Clone, PartialEq, Eq)]

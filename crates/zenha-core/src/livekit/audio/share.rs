@@ -9,7 +9,9 @@ use livekit::webrtc::audio_source::native::NativeAudioSource;
 use livekit::webrtc::audio_source::{AudioSourceOptions, RtcAudioSource};
 use tokio::sync::mpsc;
 
-use crate::audio::share_audio::{AudioScope, SHARE_AUDIO_CHANNELS, SHARE_AUDIO_SAMPLE_RATE, ShareAudioCapture};
+use crate::audio::share_audio::{
+    AudioScope, SHARE_AUDIO_CHANNELS, SHARE_AUDIO_SAMPLE_RATE, ShareAudioCapture,
+};
 use crate::livekit::TaskGuard;
 
 const SHARE_AUDIO_TRACK_NAME: &str = "screen-audio";
@@ -24,8 +26,10 @@ pub(in crate::livekit) struct ShareAudio {
     _capture: ShareAudioCapture,
 }
 
-
-pub(in crate::livekit) async fn publish_share_audio(room: Arc<Room>, scope: AudioScope) -> Option<ShareAudio> {
+pub(in crate::livekit) async fn publish_share_audio(
+    room: Arc<Room>,
+    scope: AudioScope,
+) -> Option<ShareAudio> {
     let source = NativeAudioSource::new(
         AudioSourceOptions::default(),
         SHARE_AUDIO_SAMPLE_RATE,

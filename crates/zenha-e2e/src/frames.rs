@@ -1,7 +1,7 @@
 //! Estatísticas de quadros de vídeo recebidos e critérios de aceitação do padrão de teste.
 
-use zenha_core::{TestPatternSource, VideoFrame};
 use serde::{Deserialize, Serialize};
+use zenha_core::{TestPatternSource, VideoFrame};
 
 pub const MIN_PLAUSIBLE_FPS: f64 = 8.0;
 pub const COLOUR_TOLERANCE: f64 = 30.0;

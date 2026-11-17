@@ -16,11 +16,11 @@ use zenha_protocol::{
     validate_room_name, validate_room_password, validate_room_title,
 };
 
+use crate::directory::ModerationError;
+use crate::room_access::{lock_owners, room_key};
 use crate::store::{
     CreateRoomOutcome, DeleteRoomCheck, DeleteRoomOutcome, RoomUpdate, UpdateRoomOutcome,
 };
-use crate::directory::ModerationError;
-use crate::room_access::{lock_owners, room_key};
 
 use super::chat::validate_chat_id;
 use super::{ApiError, AppState, authenticate_admin, room_records, verify_password_hash};

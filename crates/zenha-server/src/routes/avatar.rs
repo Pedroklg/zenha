@@ -155,8 +155,8 @@ mod tests {
     use axum::body::Body;
     use axum::http::{Request, StatusCode, header};
     use image::{ImageFormat, ImageReader, Rgba, RgbaImage};
-    use zenha_protocol::{AVATAR_SIZE_PX, AvatarUploadResponse, MAX_AVATAR_UPLOAD_BYTES};
     use tower::ServiceExt;
+    use zenha_protocol::{AVATAR_SIZE_PX, AvatarUploadResponse, MAX_AVATAR_UPLOAD_BYTES};
 
     use crate::routes::test_support::{
         app, body_bytes, default_fake_dir, mint_room_jwt, state_with, test_config,

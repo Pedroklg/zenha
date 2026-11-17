@@ -26,7 +26,11 @@ pub(super) fn status_error(status: StatusCode) -> SessionError {
     }
 }
 
-pub(super) fn token_status_error(status: StatusCode, body_error: Option<&str>, room: &str) -> SessionError {
+pub(super) fn token_status_error(
+    status: StatusCode,
+    body_error: Option<&str>,
+    room: &str,
+) -> SessionError {
     if status == StatusCode::FORBIDDEN && body_error == Some(ROOM_LOCKED_ERROR) {
         SessionError::RoomLocked(room.to_owned())
     } else {

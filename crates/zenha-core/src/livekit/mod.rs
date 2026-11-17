@@ -21,13 +21,13 @@ use tokio::task::JoinHandle;
 
 use crate::api::{AudioDevices, FileTransfer, NoiseSuppression, SessionError};
 use crate::audio::audio_render::{RENDER_SAMPLE_RATE, play_once};
-use crate::backend::{ConnectedRoom, MediaBackend};
+use crate::audio::cue::{Cue, cue_samples};
+use crate::audio::participant_volume::ParticipantVolumes;
 use crate::backend::options::LiveKitBackendOptions;
 use crate::backend::support::GATE_OFF;
-use crate::audio::cue::{Cue, cue_samples};
+use crate::backend::{ConnectedRoom, MediaBackend};
 use crate::files::receive::FileReceiver;
 use crate::livekit::video::{LocalShare, Watch};
-use crate::audio::participant_volume::ParticipantVolumes;
 use crate::video::{CaptureTarget, FrameSlot, SharePreset, VideoFrame};
 
 use self::audio::{Selection, ShareAudio};

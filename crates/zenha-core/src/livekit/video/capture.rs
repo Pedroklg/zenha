@@ -6,12 +6,16 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use livekit::webrtc::desktop_capturer::{CaptureError, DesktopCapturer, DesktopCapturerOptions, DesktopCaptureSourceType, DesktopFrame};
+use livekit::webrtc::desktop_capturer::{
+    CaptureError, DesktopCaptureSourceType, DesktopCapturer, DesktopCapturerOptions, DesktopFrame,
+};
 use tokio::time::timeout;
 
 use crate::api::SessionError;
 use crate::backend::support::{CaptureHealth, parse_target_id, target_id, target_name};
-use crate::video::capture::{bgra_to_video_frame, BgraFrame, CaptureEnd, FrameSink, FrameSource, Pacer};
+use crate::video::capture::{
+    BgraFrame, CaptureEnd, FrameSink, FrameSource, Pacer, bgra_to_video_frame,
+};
 use crate::video::{CaptureKind, CaptureTarget, VideoFrame};
 
 struct Worker {

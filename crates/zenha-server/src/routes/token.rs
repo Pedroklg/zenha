@@ -62,8 +62,8 @@ mod tests {
     use axum::Router;
     use axum::http::StatusCode;
     use livekit_api::access_token::TokenVerifier;
-    use zenha_protocol::{ROOM_LOCKED_ERROR, TokenRequest, TokenResponse};
     use tower::ServiceExt;
+    use zenha_protocol::{ROOM_LOCKED_ERROR, TokenRequest, TokenResponse};
 
     use crate::config::Config;
 

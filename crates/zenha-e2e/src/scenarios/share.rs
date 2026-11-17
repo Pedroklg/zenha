@@ -234,4 +234,3 @@ pub(super) fn check_frames(ctx: &mut Ctx<'_>, event: BotEvent) -> anyhow::Result
     }
     Ok(())
 }
-

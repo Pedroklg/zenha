@@ -1,7 +1,10 @@
 //! Eventos que o bot devolve, os tipos de informação que eles carregam e a codificação em linha.
 
 use serde::{Deserialize, Serialize};
-use zenha_core::{AudioDevice, AudioDevices, CaptureKind, CaptureTarget, Event, Participant, RemovalReason, SessionError, TransferState};
+use zenha_core::{
+    AudioDevice, AudioDevices, CaptureKind, CaptureTarget, Event, Participant, RemovalReason,
+    SessionError, TransferState,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ParticipantInfo {

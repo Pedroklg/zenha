@@ -19,6 +19,8 @@ mod video;
 #[cfg(any(test, feature = "test-util"))]
 pub mod testing;
 
+#[cfg(windows)]
+pub use crate::livekit::LiveKitBackend;
 pub use api::{
     AdminAction, AudioDevice, AudioDevices, Command, Event, FileTransfer, NoiseSuppression,
     Participant, RemovalReason, RoomKey, SessionConfig, SessionError, TransferState,
@@ -35,8 +37,6 @@ pub use backend::{BackendEvent, ConnectedRoom, MediaBackend};
 pub use chat::{CHAT_DELETE_TOPIC, CHAT_TOPIC};
 pub use files::{FILE_TOPIC, is_image_mime, mime_for_name, received_path, sanitize_file_name};
 pub use handle::SessionHandle;
-#[cfg(windows)]
-pub use crate::livekit::LiveKitBackend;
 pub use net::backoff::{ReconnectPolicy, backoff_delay};
 pub use net::token::{HttpTokenClient, TokenClient};
 pub use video::capture::{

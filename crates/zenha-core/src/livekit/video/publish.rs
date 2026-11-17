@@ -17,15 +17,17 @@ use tokio::time::timeout;
 use super::convert::BgraToI420Converter;
 use crate::api::SessionError;
 use crate::backend::BackendEvent;
-use crate::backend::support::{parse_target_id, ShareMeter, target_name};
-use crate::video::capture::{bgra_to_rgba_scaled, BgraFrame, CaptureEnd, FrameSink, FrameSource};
-use crate::video::{CaptureTarget, fit_within, FrameSlot, gpu_share, PreviewGate, SHARE_PREVIEW_INTERVAL, SHARE_PREVIEW_MAX_SIDE, SharePreset};
+use crate::backend::support::{ShareMeter, parse_target_id, target_name};
+use crate::video::capture::{BgraFrame, CaptureEnd, FrameSink, FrameSource, bgra_to_rgba_scaled};
+use crate::video::{
+    CaptureTarget, FrameSlot, PreviewGate, SHARE_PREVIEW_INTERVAL, SHARE_PREVIEW_MAX_SIDE,
+    SharePreset, fit_within, gpu_share,
+};
 
 const SHARE_TRACK_NAME: &str = "screen";
 const FIRST_FRAME_TIMEOUT: Duration = Duration::from_secs(5);
 const PUBLISH_TIMEOUT: Duration = Duration::from_secs(15);
 const UNPUBLISH_TIMEOUT: Duration = Duration::from_secs(5);
-
 
 pub(crate) struct PublishSink {
     source: Arc<OnceLock<NativeVideoSource>>,

@@ -1,6 +1,8 @@
 //! Listagem e seleção de dispositivos de áudio da plataforma.
 
-use livekit::prelude::{AudioProcessingOptions, PlatformAudio, PlayoutDeviceInfo, RecordingDeviceInfo};
+use livekit::prelude::{
+    AudioProcessingOptions, PlatformAudio, PlayoutDeviceInfo, RecordingDeviceInfo,
+};
 
 use crate::api::{AudioDevice, NoiseSuppression, SessionError};
 use crate::backend::support::{audio_device, unique_devices};

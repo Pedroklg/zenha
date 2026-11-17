@@ -1,8 +1,8 @@
 //! Testes do protocolo de comandos e eventos.
 
 use zenha_core::{
-    AdminAction, Command, Cue, Event, FrameSlot, RemovalReason, SessionError, TEST_PATTERN_TARGET_ID,
-    TransferState,
+    AdminAction, Command, Cue, Event, FrameSlot, RemovalReason, SessionError,
+    TEST_PATTERN_TARGET_ID, TransferState,
 };
 use zenha_protocol::ChatMessage;
 

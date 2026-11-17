@@ -4,10 +4,10 @@ use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use tokio::sync::mpsc::UnboundedSender;
 use zenha_protocol::{
     MAX_AVATAR_UPLOAD_BYTES, TokenRequest, validate_avatar_version, validate_client_id,
 };
-use tokio::sync::mpsc::UnboundedSender;
 
 use crate::api::{Event, Participant, SessionConfig, SessionError};
 use crate::net::token::TokenClient;
@@ -419,13 +419,13 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::Arc;
 
-    use zenha_protocol::{MAX_AVATAR_UPLOAD_BYTES, RoomSummary};
     use tokio::sync::mpsc;
+    use zenha_protocol::{MAX_AVATAR_UPLOAD_BYTES, RoomSummary};
 
     use crate::api::{Command, Event, Participant, SessionConfig, SessionError};
     use crate::backend::BackendEvent;
-    use crate::net::backoff::ReconnectPolicy;
     use crate::handle::EventSink;
+    use crate::net::backoff::ReconnectPolicy;
     use crate::testing::{BackendCall, FakeBackend, FakeTokenClient};
 
     use super::super::run;

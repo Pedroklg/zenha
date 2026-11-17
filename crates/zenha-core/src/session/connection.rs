@@ -3,9 +3,9 @@
 use std::future::Future;
 use std::pin::Pin;
 
-use zenha_protocol::TokenRequest;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::time::Sleep;
+use zenha_protocol::TokenRequest;
 
 use crate::api::{Event, SessionError};
 use crate::backend::{BackendEvent, ConnectedRoom};

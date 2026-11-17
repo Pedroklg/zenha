@@ -3,12 +3,12 @@
 use std::io;
 
 use anyhow::Context;
+use tracing_subscriber::EnvFilter;
 #[cfg(windows)]
 use zenha_core::LiveKitBackend;
 #[cfg(not(windows))]
 use zenha_core::NoMediaBackend;
 use zenha_core::{LiveKitBackendOptions, MicrophoneSource, SessionConfig, SessionHandle};
-use tracing_subscriber::EnvFilter;
 
 use crate::bot::{BotInfo, run_bot};
 use crate::cli::BotArgs;

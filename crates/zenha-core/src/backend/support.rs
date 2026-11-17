@@ -2,8 +2,8 @@ use std::collections::{HashSet, VecDeque};
 use std::time::{Duration, Instant};
 
 use crate::api::AudioDevice;
-use crate::backend::BackendEvent;
 use crate::audio::noise::GateReading;
+use crate::backend::BackendEvent;
 use crate::video::CaptureKind;
 
 const MAX_ERROR_LEN: usize = 160;

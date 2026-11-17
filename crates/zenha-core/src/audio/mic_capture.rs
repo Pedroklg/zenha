@@ -10,8 +10,8 @@ use wasapi::{
     DeviceEnumerator, Direction, SampleType, StreamMode, WaveFormat, deinitialize, initialize_mta,
 };
 
-use crate::backend::support::drain_f32_le_to_i16;
 use crate::audio::noise::DENOISE_FRAME;
+use crate::backend::support::drain_f32_le_to_i16;
 
 pub(crate) const CAPTURE_SAMPLE_RATE: u32 = 48_000;
 const POLL_INTERVAL: Duration = Duration::from_millis(5);

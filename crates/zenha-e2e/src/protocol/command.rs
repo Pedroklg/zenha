@@ -1,7 +1,9 @@
 //! Comandos que o orquestrador envia ao bot e a leitura deles.
 
 use serde::{Deserialize, Serialize};
-use zenha_core::{AdminAction, Command, Cue, NoiseSuppression, SharePreset, TEST_PATTERN_TARGET_ID};
+use zenha_core::{
+    AdminAction, Command, Cue, NoiseSuppression, SharePreset, TEST_PATTERN_TARGET_ID,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

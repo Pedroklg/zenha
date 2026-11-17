@@ -5,8 +5,8 @@ use tokio::sync::mpsc;
 
 use crate::api::{AudioDevice, Command, Event, Participant, SessionConfig};
 use crate::backend::BackendEvent;
-use crate::net::backoff::ReconnectPolicy;
 use crate::handle::EventSink;
+use crate::net::backoff::ReconnectPolicy;
 use crate::testing::{FakeBackend, FakeTokenClient};
 
 use super::run;

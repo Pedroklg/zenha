@@ -43,7 +43,11 @@ impl HttpTokenClient {
         Ok(self.url(&format!("/rooms/{room}/chat")))
     }
 
-    pub(super) fn chat_history_url(&self, room: &str, before: Option<&str>) -> Result<String, SessionError> {
+    pub(super) fn chat_history_url(
+        &self,
+        room: &str,
+        before: Option<&str>,
+    ) -> Result<String, SessionError> {
         let base = self.chat_url(room)?;
         match before {
             Some(cursor) => {
@@ -78,7 +82,11 @@ impl HttpTokenClient {
         )))
     }
 
-    pub(super) fn admin_chat_delete_url(&self, room: &str, id: &str) -> Result<String, SessionError> {
+    pub(super) fn admin_chat_delete_url(
+        &self,
+        room: &str,
+        id: &str,
+    ) -> Result<String, SessionError> {
         validate_room_name(room).map_err(|err| SessionError::InvalidInput(err.to_string()))?;
         validate_chat_id(id)?;
         Ok(self.url(&format!("/admin/rooms/{room}/chat/{id}")))

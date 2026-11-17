@@ -9,7 +9,9 @@ use async_trait::async_trait;
 use tokio::sync::mpsc::{self, UnboundedSender};
 use tokio::time::Instant;
 
-use crate::api::{AudioDevice, AudioDevices, FileTransfer, NoiseSuppression, Participant, SessionError};
+use crate::api::{
+    AudioDevice, AudioDevices, FileTransfer, NoiseSuppression, Participant, SessionError,
+};
 use crate::audio::cue::Cue;
 use crate::audio::participant_volume::ParticipantVolumes;
 use crate::backend::{BackendEvent, ConnectedRoom, MediaBackend};

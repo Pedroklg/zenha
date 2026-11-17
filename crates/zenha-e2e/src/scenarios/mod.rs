@@ -150,7 +150,6 @@ mod tests {
         }
     }
 
-
     #[test]
     fn registry_matches_the_brief() {
         let names: Vec<_> = ALL.iter().map(|d| d.name).collect();

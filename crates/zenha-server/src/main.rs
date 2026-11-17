@@ -12,13 +12,13 @@ use std::sync::Arc;
 use anyhow::Context;
 use tokio::net::TcpListener;
 
-use crate::store::ChatStore;
 use crate::config::Config;
 use crate::directory::LiveKitDirectory;
 use crate::routes::{
     AdminLoginLimiter, AppState, AvatarRateLimiter, ChatRateLimiter, DEFAULT_ADMIN_FAILURE_DELAY,
     RoomUnlockLimiter, router,
 };
+use crate::store::ChatStore;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

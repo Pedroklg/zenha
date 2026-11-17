@@ -9,14 +9,14 @@ use livekit::prelude::{
     RoomEvent, TrackPublication, TrackSource,
 };
 use livekit::webrtc::audio_stream::native::NativeAudioStream;
-use zenha_protocol::{AVATAR_ATTR, parse_avatar_attribute};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+use zenha_protocol::{AVATAR_ATTR, parse_avatar_attribute};
 
 use crate::api::RemovalReason;
 use crate::backend::BackendEvent;
 use crate::backend::support::{SpeakingTracker, display_name};
-use crate::files::receive::FileReceiver;
 use crate::files::FILE_TOPIC;
+use crate::files::receive::FileReceiver;
 use crate::livekit::files;
 use crate::livekit::video::Watch;
 
@@ -287,12 +287,7 @@ fn translate(
             if topic == FILE_TOPIC
                 && let Some(reader) = reader.take()
             {
-                files::start_receive(
-                    reader,
-                    String::from(participant_identity),
-                    files,
-                    events,
-                );
+                files::start_receive(reader, String::from(participant_identity), files, events);
             }
             Vec::new()
         }

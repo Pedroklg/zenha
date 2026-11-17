@@ -5,11 +5,11 @@ use rusqlite::Connection;
 use super::{BUSY_TIMEOUT, ChatStoreError};
 
 pub(super) fn init_schema(conn: &Connection) -> Result<(), ChatStoreError> {
-        conn.busy_timeout(BUSY_TIMEOUT)?;
-        conn.pragma_update(None, "journal_mode", "WAL")?;
-        conn.pragma_update(None, "synchronous", "NORMAL")?;
-        conn.execute_batch(
-            "CREATE TABLE IF NOT EXISTS chat_messages (
+    conn.busy_timeout(BUSY_TIMEOUT)?;
+    conn.pragma_update(None, "journal_mode", "WAL")?;
+    conn.pragma_update(None, "synchronous", "NORMAL")?;
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS chat_messages (
                 room TEXT NOT NULL,
                 id TEXT NOT NULL,
                 sender_id TEXT NOT NULL,
@@ -37,8 +37,8 @@ pub(super) fn init_schema(conn: &Connection) -> Result<(), ChatStoreError> {
                 png BLOB NOT NULL,
                 version TEXT NOT NULL
             );",
-        )?;
-        migrate_rooms(&conn)?;
+    )?;
+    migrate_rooms(&conn)?;
     migrate_rooms(conn)?;
     Ok(())
 }

@@ -133,11 +133,11 @@ mod tests {
 
     use axum::Router;
     use axum::http::StatusCode;
-    use zenha_protocol::{ROOM_KEYS_HEADER, RoomSummary, RoomsResponse, encode_room_keys};
     use tower::ServiceExt;
+    use zenha_protocol::{ROOM_KEYS_HEADER, RoomSummary, RoomsResponse, encode_room_keys};
 
-    use crate::store::RoomUpdate;
     use crate::directory::FakeDirectory;
+    use crate::store::RoomUpdate;
 
     use super::super::test_support::{locked_app, locked_store, unlock, unlock_request};
 

@@ -5,19 +5,19 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use axum::Router;
 use axum::http::StatusCode;
 use livekit_api::access_token::{AccessToken, VideoGrants};
+use tower::ServiceExt;
 use zenha_protocol::{
     ChatHistoryResponse, ChatMessage, MAX_CHAT_ID_LEN, MAX_CHAT_MESSAGE_LEN, SavedChatMessage,
     TokenResponse,
 };
-use tower::ServiceExt;
 
 use crate::store::ChatStore;
 
 use super::super::router;
 use super::super::test_support::{
-    API_KEY, API_SECRET, INVITE, app, body_bytes, default_fake_dir, delete_chat_req,
-    error_message, get_chat_req, mint_room_jwt, post_chat_req, save_chat_body, state_with,
-    test_config, token_body, token_body_with_id, token_request,
+    API_KEY, API_SECRET, INVITE, app, body_bytes, default_fake_dir, delete_chat_req, error_message,
+    get_chat_req, mint_room_jwt, post_chat_req, save_chat_body, state_with, test_config,
+    token_body, token_body_with_id, token_request,
 };
 
 fn app_with_store(chat: Option<Arc<ChatStore>>) -> Router {
@@ -30,8 +30,7 @@ fn app_with_store(chat: Option<Arc<ChatStore>>) -> Router {
 }
 
 fn base64url_encode(input: &[u8]) -> String {
-    const TABLE: &[u8; 64] =
-        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
     let mut out = String::new();
     for chunk in input.chunks(3) {
         let b0 = u32::from(chunk[0]);
@@ -443,8 +442,7 @@ async fn token_to_post_to_get_uses_token_identity_and_ignores_forged_author() {
         .await
         .unwrap();
     assert_eq!(tok_res.status(), StatusCode::OK);
-    let TokenResponse { token, .. } =
-        serde_json::from_slice(&body_bytes(tok_res).await).unwrap();
+    let TokenResponse { token, .. } = serde_json::from_slice(&body_bytes(tok_res).await).unwrap();
     let ana_auth = format!("Bearer {token}");
 
     let now_ms = u64::try_from(
@@ -506,8 +504,7 @@ async fn token_to_post_to_get_uses_token_identity_and_ignores_forged_author() {
         .await
         .unwrap();
     assert_eq!(get_res.status(), StatusCode::OK);
-    let history: ChatHistoryResponse =
-        serde_json::from_slice(&body_bytes(get_res).await).unwrap();
+    let history: ChatHistoryResponse = serde_json::from_slice(&body_bytes(get_res).await).unwrap();
     assert_eq!(
         history,
         ChatHistoryResponse {
@@ -546,8 +543,7 @@ async fn get_chat_paginates_chronologically_with_before() {
         .await
         .unwrap();
     assert_eq!(page1_res.status(), StatusCode::OK);
-    let page1: ChatHistoryResponse =
-        serde_json::from_slice(&body_bytes(page1_res).await).unwrap();
+    let page1: ChatHistoryResponse = serde_json::from_slice(&body_bytes(page1_res).await).unwrap();
     assert!(page1.has_more);
     assert_eq!(page1.messages.len(), 100);
     assert_eq!(page1.messages[0].message.id, "m-005");
@@ -559,8 +555,7 @@ async fn get_chat_paginates_chronologically_with_before() {
         .await
         .unwrap();
     assert_eq!(page2_res.status(), StatusCode::OK);
-    let page2: ChatHistoryResponse =
-        serde_json::from_slice(&body_bytes(page2_res).await).unwrap();
+    let page2: ChatHistoryResponse = serde_json::from_slice(&body_bytes(page2_res).await).unwrap();
     assert!(!page2.has_more);
     let ids: Vec<&str> = page2
         .messages
@@ -583,8 +578,7 @@ async fn chat_returns_503_when_db_unavailable_while_token_works() {
         .await
         .unwrap();
     assert_eq!(tok_res.status(), StatusCode::OK);
-    let TokenResponse { token, .. } =
-        serde_json::from_slice(&body_bytes(tok_res).await).unwrap();
+    let TokenResponse { token, .. } = serde_json::from_slice(&body_bytes(tok_res).await).unwrap();
     let auth = format!("Bearer {token}");
 
     let post_res = router

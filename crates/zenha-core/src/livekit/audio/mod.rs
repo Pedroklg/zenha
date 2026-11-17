@@ -234,7 +234,6 @@ impl LiveKitBackend {
     }
 }
 
-
 pub(super) async fn audio_tap(identity: String, kind: &'static str, mut stream: NativeAudioStream) {
     let mut samples = 0u64;
     let mut energy = 0f64;

@@ -142,4 +142,3 @@ pub(super) fn room_switch(ctx: &mut Ctx<'_>) -> anyhow::Result<()> {
     ctx.wait_tone_present("second_visit", &baseline, back, TONE_WITHIN)?;
     Ok(())
 }
-

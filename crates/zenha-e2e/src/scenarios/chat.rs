@@ -254,7 +254,6 @@ fn files_in(ctx: &mut Ctx<'_>, dir: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;

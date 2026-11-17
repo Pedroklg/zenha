@@ -82,8 +82,8 @@ impl Session {
 #[cfg(test)]
 mod tests {
     use crate::api::{AudioDevices, Command, Event, SessionError};
-    use crate::backend::BackendEvent;
     use crate::audio::cue::Cue;
+    use crate::backend::BackendEvent;
     use crate::testing::BackendCall;
 
     use super::super::test_support::{Harness, device, harness};

@@ -2,8 +2,15 @@
 
 use std::collections::BTreeMap;
 
+use super::token::AdminTokenCall;
+
 use async_trait::async_trait;
-use zenha_protocol::{AdminLoginRequest, AdminLoginResponse, AdminRoom, AvatarUploadResponse, ChatHistoryResponse, ChatMessage, CreateRoomRequest, MoveParticipantRequest, RoomSummary, SaveChatRequest, TokenRequest, TokenResponse, UnlockRoomRequest, UnlockRoomResponse, UpdateInviteRequest, UpdateRoomRequest};
+use zenha_protocol::{
+    AdminLoginRequest, AdminLoginResponse, AdminRoom, AvatarUploadResponse, ChatHistoryResponse,
+    ChatMessage, CreateRoomRequest, MoveParticipantRequest, RoomSummary, SaveChatRequest,
+    TokenRequest, TokenResponse, UnlockRoomRequest, UnlockRoomResponse, UpdateInviteRequest,
+    UpdateRoomRequest,
+};
 
 use crate::api::SessionError;
 use crate::net::token::TokenClient;

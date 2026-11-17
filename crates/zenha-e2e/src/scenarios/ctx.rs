@@ -122,7 +122,11 @@ impl<'a> Ctx<'a> {
         Ok(bot)
     }
 
-    pub(super) fn spawn_tone(&mut self, name: &str, pattern: bool) -> anyhow::Result<Arc<BotProcess>> {
+    pub(super) fn spawn_tone(
+        &mut self,
+        name: &str,
+        pattern: bool,
+    ) -> anyhow::Result<Arc<BotProcess>> {
         let invite = self.setup.invite.clone();
         self.spawn(name, true, pattern, &invite)
     }
@@ -143,7 +147,11 @@ impl<'a> Ctx<'a> {
         Ok(bot)
     }
 
-    pub(super) fn select_output(&mut self, bot: &BotProcess, device: &RenderDevice) -> anyhow::Result<()> {
+    pub(super) fn select_output(
+        &mut self,
+        bot: &BotProcess,
+        device: &RenderDevice,
+    ) -> anyhow::Result<()> {
         let outputs = self.refresh_devices(bot)?.outputs;
         let Some(chosen) = match_sdk_output(device, &outputs) else {
             bail!(
@@ -323,4 +331,3 @@ impl<'a> Ctx<'a> {
         }
     }
 }
-

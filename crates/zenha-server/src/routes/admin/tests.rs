@@ -7,19 +7,19 @@ use axum::body::Body;
 use axum::extract::ConnectInfo;
 use axum::http::{Request, StatusCode, header};
 use livekit_api::access_token::TokenVerifier;
+use tower::ServiceExt;
 use zenha_protocol::{
     ADMIN_CHAT_DELETE_TOPIC, ADMIN_MOVE_TOPIC, ADMIN_STOP_SHARE_TOPIC, AdminChatDelete,
     AdminLoginRequest, AdminLoginResponse, AdminMove, AdminRoom, AdminStopShare,
-    ChatHistoryResponse, CreateRoomRequest, MAX_ROOMS_COUNT, ROOMS_CHANGED_TOPIC,
-    RoomsResponse, validate_room_name,
+    ChatHistoryResponse, CreateRoomRequest, MAX_ROOMS_COUNT, ROOMS_CHANGED_TOPIC, RoomsResponse,
+    validate_room_name,
 };
-use tower::ServiceExt;
 
-use crate::store::ChatStore;
 use crate::directory::{
     FakeDirectory, ModerationCall, TRACK_SOURCE_MICROPHONE, TRACK_SOURCE_SCREEN_SHARE,
     TRACK_SOURCE_SCREEN_SHARE_AUDIO,
 };
+use crate::store::ChatStore;
 
 use super::super::router;
 use super::super::test_support::{
@@ -894,8 +894,7 @@ async fn admin_delete_chat_removes_other_users_message_and_broadcasts() {
         .oneshot(get_chat_req("/rooms/geral/chat", Some(&pedro_jwt)))
         .await
         .unwrap();
-    let hist: ChatHistoryResponse =
-        serde_json::from_slice(&body_bytes(hist_res).await).unwrap();
+    let hist: ChatHistoryResponse = serde_json::from_slice(&body_bytes(hist_res).await).unwrap();
     assert!(hist.messages.is_empty());
 
     let calls = dir.calls();

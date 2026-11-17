@@ -3,7 +3,11 @@
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 
-use zenha_protocol::{AdminLoginRequest, AdminLoginResponse, AdminRoom, AvatarUploadResponse, ChatHistoryResponse, ChatMessage, CreateRoomRequest, MoveParticipantRequest, RoomSummary, SaveChatRequest, TokenRequest, UpdateInviteRequest, UpdateRoomRequest};
+use zenha_protocol::{
+    AdminLoginRequest, AdminLoginResponse, AdminRoom, AvatarUploadResponse, ChatHistoryResponse,
+    ChatMessage, CreateRoomRequest, MoveParticipantRequest, RoomSummary, SaveChatRequest,
+    TokenRequest, UpdateInviteRequest, UpdateRoomRequest,
+};
 
 use crate::api::SessionError;
 

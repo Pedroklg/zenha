@@ -6,8 +6,8 @@ use async_trait::async_trait;
 use tokio::sync::mpsc::{self, UnboundedSender};
 
 use crate::api::{AudioDevices, FileTransfer, NoiseSuppression, Participant, SessionError};
-use crate::backend::{BackendEvent, ConnectedRoom, MediaBackend};
 use crate::audio::cue::Cue;
+use crate::backend::{BackendEvent, ConnectedRoom, MediaBackend};
 use crate::video::{CaptureTarget, FrameSlot, SharePreset, VideoFrame};
 
 /// Backend sem mídia: conecta sempre e mostra só o participante local.

@@ -4,11 +4,11 @@ use std::collections::BTreeMap;
 use std::pin::Pin;
 use std::time::Duration;
 
+use tokio::time::Sleep;
 use zenha_protocol::{
     RoomSummary, UnlockRoomRequest, validate_client_id, validate_display_name, validate_room_name,
     validate_room_password,
 };
-use tokio::time::Sleep;
 
 use crate::api::{Event, RoomKey, SessionError};
 
@@ -141,13 +141,13 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration;
 
-    use zenha_protocol::{ROOMS_CHANGED_TOPIC, RoomSummary};
     use tokio::sync::mpsc;
+    use zenha_protocol::{ROOMS_CHANGED_TOPIC, RoomSummary};
 
     use crate::api::{Command, Event, RoomKey, SessionError};
     use crate::backend::BackendEvent;
-    use crate::net::backoff::ReconnectPolicy;
     use crate::handle::EventSink;
+    use crate::net::backoff::ReconnectPolicy;
     use crate::testing::{BackendCall, FakeBackend, FakeTokenClient};
 
     use super::super::run;

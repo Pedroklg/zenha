@@ -1,10 +1,10 @@
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use rusqlite::Connection;
 use zenha_protocol::{
     AdminRoom, CHAT_HISTORY_PAGE, ChatMessage, MAX_ROOM_NAME_LEN, MAX_ROOMS_COUNT,
 };
-use rusqlite::Connection;
 
 use super::messages::clamp_sent_at;
 use super::rooms::{slugify_room_title, unique_room_id};
