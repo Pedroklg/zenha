@@ -219,6 +219,7 @@ impl AppState {
             invite_code: self.current_password(),
             avatar_version: self.avatar_version.clone(),
             avatar_cache_dir: self.avatar_cache_dir.clone(),
+            room_keys: self.room_keys.for_server(self.form.server_url.trim()),
         }
     }
 

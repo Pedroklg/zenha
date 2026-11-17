@@ -1,8 +1,9 @@
+use std::collections::BTreeMap;
 use std::fmt;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use rooms_core::{AdminAction, RemovalReason};
+use rooms_core::{AdminAction, RemovalReason, RoomKey};
 use rooms_protocol::{AdminRoom, RoomSummary};
 
 use crate::settings::NoiseMode;
@@ -11,6 +12,10 @@ use crate::settings::NoiseMode;
 pub enum UiCommand {
     Join {
         room: String,
+    },
+    UnlockRoom {
+        room: String,
+        password: String,
     },
     Leave,
     SetMuted(bool),
@@ -70,6 +75,11 @@ impl fmt::Debug for UiCommand {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Join { room } => f.debug_struct("Join").field("room", room).finish(),
+            Self::UnlockRoom { room, .. } => f
+                .debug_struct("UnlockRoom")
+                .field("room", room)
+                .field("password", &"<redacted>")
+                .finish(),
             Self::Leave => f.write_str("Leave"),
             Self::SetMuted(muted) => f.debug_tuple("SetMuted").field(muted).finish(),
             Self::SetDeafened(deafened) => f.debug_tuple("SetDeafened").field(deafened).finish(),
@@ -288,6 +298,18 @@ pub enum UiEvent {
     RoomsFailed {
         message: String,
     },
+    /// Senha aceita; `room` é a sala dona da senha (a pedida ou a sala-mãe dela).
+    RoomUnlocked {
+        room: String,
+        key: RoomKey,
+    },
+    RoomUnlockFailed {
+        message: String,
+    },
+    /// O servidor recusou a entrada sem chave válida para a sala.
+    RoomLocked {
+        room: String,
+    },
     ChatReceived(ChatMessageView),
     ChatHistory {
         messages: Vec<ChatMessageView>,
@@ -367,6 +389,7 @@ pub struct Credentials {
     pub invite_code: String,
     pub avatar_version: Option<String>,
     pub avatar_cache_dir: Option<PathBuf>,
+    pub room_keys: BTreeMap<String, String>,
 }
 
 impl fmt::Debug for Credentials {
@@ -403,6 +426,12 @@ mod tests {
         });
         assert!(!format!("{invite:?}").contains("new-secret-invite-123"));
 
+        let unlock = UiCommand::UnlockRoom {
+            room: "vip".to_owned(),
+            password: "senha-da-sala".to_owned(),
+        };
+        assert!(!format!("{unlock:?}").contains("senha-da-sala"));
+
         let creds = Credentials {
             token_server_url: "https://voz.exemplo".to_owned(),
             client_id: "c1".to_owned(),
@@ -410,9 +439,11 @@ mod tests {
             invite_code: "invite-secret-456".to_owned(),
             avatar_version: None,
             avatar_cache_dir: None,
+            room_keys: BTreeMap::from([("vip".to_owned(), "room-key-789".to_owned())]),
         };
         let creds_dbg = format!("{creds:?}");
         assert!(!creds_dbg.contains("invite-secret-456"));
+        assert!(!creds_dbg.contains("room-key-789"));
         assert!(creds_dbg.contains("https://voz.exemplo"));
         assert!(creds_dbg.contains("<redacted>"));
     }

@@ -11,14 +11,16 @@ mod share;
 #[cfg(test)]
 mod test_support;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::pin::Pin;
 use std::sync::Arc;
 
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio::time::Sleep;
 
-use crate::api::{Command, Event, SessionConfig};
+use rooms_protocol::RoomSummary;
+
+use crate::api::{Command, Event, SessionConfig, SessionError};
 use crate::backend::{BackendEvent, MediaBackend};
 use crate::backoff::ReconnectPolicy;
 use crate::chat::{self as chat_codec, CHAT_DELETE_TOPIC, CHAT_TOPIC};
@@ -52,6 +54,8 @@ struct Session {
     avatar_op_seq: u64,
     avatar_tx: UnboundedSender<AvatarTaskEvent>,
     avatar_downloads: HashSet<(String, String)>,
+    rooms_tx: UnboundedSender<Result<Vec<RoomSummary>, SessionError>>,
+    room_parents: HashMap<String, String>,
 }
 
 pub(crate) async fn run(
@@ -64,6 +68,7 @@ pub(crate) async fn run(
 ) {
     let (thumbnail_tx, mut thumbnail_rx) = mpsc::unbounded_channel();
     let (avatar_tx, mut avatar_rx) = mpsc::unbounded_channel();
+    let (rooms_tx, mut rooms_rx) = mpsc::unbounded_channel();
     let mut session = Session {
         config,
         backend,
@@ -84,6 +89,8 @@ pub(crate) async fn run(
         avatar_op_seq: 0,
         avatar_tx,
         avatar_downloads: HashSet::new(),
+        rooms_tx,
+        room_parents: HashMap::new(),
     };
     loop {
         tokio::select! {
@@ -94,6 +101,7 @@ pub(crate) async fn run(
             input = session.phase.wait() => session.on_input(input).await,
             Some(thumb) = thumbnail_rx.recv() => session.on_thumbnail(thumb),
             Some(avatar_event) = avatar_rx.recv() => session.on_avatar_task_event(avatar_event).await,
+            Some(rooms) = rooms_rx.recv() => session.on_rooms(rooms),
             _ = wait_optional(&mut session.rooms_refresh_sleep) => {
                 session.rooms_refresh_sleep = None;
                 session.refresh_rooms();
@@ -115,6 +123,7 @@ impl Session {
     async fn on_command(&mut self, command: Command) {
         match command {
             Command::Join { room } => self.join(room).await,
+            Command::UnlockRoom { room, password } => self.unlock_room(room, password).await,
             Command::Leave => {
                 if self.teardown().await {
                     self.emit(Event::Left);
@@ -287,8 +296,6 @@ impl Session {
         }
     }
 }
-
-use crate::api::SessionError;
 
 #[cfg(test)]
 mod tests {

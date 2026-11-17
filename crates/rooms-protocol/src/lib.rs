@@ -18,6 +18,11 @@ pub const MAX_CHAT_ID_LEN: usize = 64;
 pub const CHAT_HISTORY_PAGE: usize = 100;
 pub const MIN_INVITE_CODE_LEN: usize = 8;
 pub const MAX_INVITE_CODE_LEN: usize = 128;
+pub const MAX_ROOM_PASSWORD_LEN: usize = 128;
+/// Cabeçalho de `GET /rooms` com as chaves de salas trancadas: `sala=chave,sala=chave`.
+pub const ROOM_KEYS_HEADER: &str = "x-room-keys";
+/// Texto de erro de `POST /token` quando a sala tem senha e a chave falta ou não vale.
+pub const ROOM_LOCKED_ERROR: &str = "room_locked";
 
 pub const ADMIN_STOP_SHARE_TOPIC: &str = "admin.stop_share";
 pub const ADMIN_MOVE_TOPIC: &str = "admin.move";
@@ -34,6 +39,9 @@ pub struct TokenRequest {
     pub display_name: String,
     pub room: String,
     pub invite_code: String,
+    /// Chave de acesso da sala ou da sala-mãe, exigida quando a sala tem senha.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub room_key: Option<String>,
 }
 
 impl fmt::Debug for TokenRequest {
@@ -43,6 +51,7 @@ impl fmt::Debug for TokenRequest {
             .field("display_name", &self.display_name)
             .field("room", &self.room)
             .field("invite_code", &"<redacted>")
+            .field("room_key", &self.room_key.as_ref().map(|_| "<redacted>"))
             .finish()
     }
 }
@@ -62,15 +71,33 @@ impl fmt::Debug for TokenResponse {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RoomSummary {
     pub name: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub title: String,
+    /// Vazio numa sala trancada sem chave válida; a contagem fica em `participant_count`.
     pub participants: Vec<String>,
+    #[serde(default)]
+    pub participant_count: usize,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub locked: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub unlocked: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent: Option<String>,
 }
 
 impl RoomSummary {
+    pub fn occupant_count(&self) -> usize {
+        self.participant_count.max(self.participants.len())
+    }
+
+    /// Sala com senha que este cliente ainda não desbloqueou.
+    pub fn needs_password(&self) -> bool {
+        self.locked && !self.unlocked
+    }
+
     /// Nome exibido da sala, usando o identificador técnico como fallback para payloads antigos.
     pub fn display_title(&self) -> &str {
         if self.title.is_empty() {
@@ -156,24 +183,106 @@ impl fmt::Debug for AdminLoginResponse {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AdminRoom {
     pub id: String,
     pub title: String,
     pub position: usize,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub locked: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CreateRoomRequest {
     pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub password: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent: Option<String>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+impl fmt::Debug for CreateRoomRequest {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CreateRoomRequest")
+            .field("title", &self.title)
+            .field("password", &self.password.as_ref().map(|_| "<redacted>"))
+            .field("parent", &self.parent)
+            .finish()
+    }
+}
+
+/// Campos ausentes ficam como estão. `password` e `parent` vazios (`""`) tiram a senha e a sala-mãe.
+#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UpdateRoomRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub position: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub password: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent: Option<String>,
+}
+
+impl fmt::Debug for UpdateRoomRequest {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("UpdateRoomRequest")
+            .field("title", &self.title)
+            .field("position", &self.position)
+            .field("password", &self.password.as_ref().map(|_| "<redacted>"))
+            .field("parent", &self.parent)
+            .finish()
+    }
+}
+
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UnlockRoomRequest {
+    pub invite_code: String,
+    pub password: String,
+}
+
+impl fmt::Debug for UnlockRoomRequest {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("UnlockRoomRequest")
+            .field("invite_code", &"<redacted>")
+            .field("password", &"<redacted>")
+            .finish()
+    }
+}
+
+/// `room` é a sala dona da senha que bateu: a pedida ou a sala-mãe dela.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UnlockRoomResponse {
+    pub room: String,
+    pub room_key: String,
+}
+
+impl fmt::Debug for UnlockRoomResponse {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("UnlockRoomResponse")
+            .field("room", &self.room)
+            .field("room_key", &"<redacted>")
+            .finish()
+    }
+}
+
+/// Monta o valor do cabeçalho `x-room-keys`.
+pub fn encode_room_keys<'a>(keys: impl IntoIterator<Item = (&'a str, &'a str)>) -> String {
+    keys.into_iter()
+        .map(|(room, key)| format!("{room}={key}"))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+/// Lê o cabeçalho `x-room-keys`, ignorando pares malformados.
+pub fn parse_room_keys(raw: &str) -> Vec<(String, String)> {
+    raw.split(',')
+        .filter_map(|pair| pair.trim().split_once('='))
+        .filter(|(room, key)| validate_room_name(room).is_ok() && !key.is_empty())
+        .map(|(room, key)| (room.to_owned(), key.to_owned()))
+        .collect()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -208,6 +317,9 @@ pub struct AdminStopShare {}
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AdminMove {
     pub to_room: String,
+    /// Chave da sala de destino quando ela tem senha, para o movido entrar sem digitá-la.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unlock: Option<UnlockRoomResponse>,
 }
 
 /// Comando do servidor no tópico `admin.chat_delete` avisando a sala que uma mensagem salva foi removida.
@@ -268,6 +380,18 @@ fn validate_trimmed_text(value: &str, max: usize) -> Result<(), ValidationError>
     let trimmed = value.trim();
     check_len(trimmed, max)?;
     if trimmed.chars().any(char::is_control) {
+        return Err(ValidationError::InvalidCharacter);
+    }
+    Ok(())
+}
+
+/// Senha de sala: 1 a 128 caracteres, não só espaços, sem caracteres de controle.
+pub fn validate_room_password(password: &str) -> Result<(), ValidationError> {
+    check_len(password, MAX_ROOM_PASSWORD_LEN)?;
+    if password.trim().is_empty() {
+        return Err(ValidationError::Empty);
+    }
+    if password.chars().any(char::is_control) {
         return Err(ValidationError::InvalidCharacter);
     }
     Ok(())
@@ -360,6 +484,7 @@ mod tests {
             display_name: "pedro".to_owned(),
             room: "geral".to_owned(),
             invite_code: "codigo".to_owned(),
+            room_key: Some("abc".to_owned()),
         };
         let json = serde_json::to_string(&request).unwrap();
         let parsed: TokenRequest = serde_json::from_str(&json).unwrap();
@@ -504,10 +629,12 @@ mod tests {
             parsed,
             RoomSummary {
                 name: "geral".to_owned(),
-                title: String::new(),
                 participants: vec!["ana".to_owned()],
+                ..RoomSummary::default()
             }
         );
+        assert_eq!(parsed.occupant_count(), 1);
+        assert!(!parsed.needs_password());
         assert_eq!(parsed.display_title(), "geral");
         assert!(!serde_json::to_string(&parsed).unwrap().contains("title"));
 
@@ -515,6 +642,7 @@ mod tests {
             name: "geral".to_owned(),
             title: "Sala Geral".to_owned(),
             participants: vec!["ana".to_owned()],
+            ..RoomSummary::default()
         };
         assert_eq!(with_title.display_title(), "Sala Geral");
         let json = serde_json::to_string(&with_title).unwrap();
@@ -552,6 +680,8 @@ mod tests {
             id: "geral".to_owned(),
             title: "Sala Geral".to_owned(),
             position: 0,
+            locked: true,
+            parent: Some("base".to_owned()),
         };
         let room_json = serde_json::to_string(&admin_room).unwrap();
         assert_eq!(
@@ -561,7 +691,10 @@ mod tests {
 
         let create = CreateRoomRequest {
             title: "Nova Sala".to_owned(),
+            password: Some("senha-da-sala".to_owned()),
+            parent: Some("geral".to_owned()),
         };
+        assert!(!format!("{create:?}").contains("senha-da-sala"));
         let create_json = serde_json::to_string(&create).unwrap();
         assert_eq!(
             serde_json::from_str::<CreateRoomRequest>(&create_json).unwrap(),
@@ -573,7 +706,10 @@ mod tests {
         let patch_full = UpdateRoomRequest {
             title: Some("Renomeada".to_owned()),
             position: Some(2),
+            password: Some("outra-senha".to_owned()),
+            parent: Some(String::new()),
         };
+        assert!(!format!("{patch_full:?}").contains("outra-senha"));
         let patch_json = serde_json::to_string(&patch_full).unwrap();
         assert_eq!(
             serde_json::from_str::<UpdateRoomRequest>(&patch_json).unwrap(),
@@ -611,6 +747,7 @@ mod tests {
 
         let mv = AdminMove {
             to_room: "afk".to_owned(),
+            unlock: None,
         };
         let mv_json = serde_json::to_string(&mv).unwrap();
         assert_eq!(serde_json::from_str::<AdminMove>(&mv_json).unwrap(), mv);
@@ -681,9 +818,11 @@ mod tests {
             display_name: "Ana".to_owned(),
             room: "geral".to_owned(),
             invite_code: "secret-invite-123".to_owned(),
+            room_key: Some("secret-room-key".to_owned()),
         };
         let req_dbg = format!("{req:?}");
         assert!(!req_dbg.contains("secret-invite-123"));
+        assert!(!req_dbg.contains("secret-room-key"));
         assert!(req_dbg.contains("Ana"));
         assert!(req_dbg.contains("<redacted>"));
 
@@ -726,6 +865,81 @@ mod tests {
         assert_eq!(
             parse_avatar_attribute("0123456789abcdef"),
             Some("0123456789abcdef".to_owned())
+        );
+    }
+
+    #[test]
+    fn room_lock_types_round_trip_redact_and_stay_backward_compatible() {
+        let locked = RoomSummary {
+            name: "vip".to_owned(),
+            participant_count: 3,
+            locked: true,
+            parent: Some("geral".to_owned()),
+            ..RoomSummary::default()
+        };
+        let json = serde_json::to_string(&locked).unwrap();
+        assert_eq!(serde_json::from_str::<RoomSummary>(&json).unwrap(), locked);
+        assert_eq!(locked.occupant_count(), 3);
+        assert!(locked.needs_password());
+
+        let old_token = r#"{"client_id":"a","display_name":"b","room":"c","invite_code":"d"}"#;
+        assert_eq!(
+            serde_json::from_str::<TokenRequest>(old_token)
+                .unwrap()
+                .room_key,
+            None
+        );
+
+        let unlock = UnlockRoomRequest {
+            invite_code: "convite-secreto".to_owned(),
+            password: "senha-secreta".to_owned(),
+        };
+        let json = serde_json::to_string(&unlock).unwrap();
+        assert_eq!(
+            serde_json::from_str::<UnlockRoomRequest>(&json).unwrap(),
+            unlock
+        );
+        let dbg = format!("{unlock:?}");
+        assert!(!dbg.contains("convite-secreto") && !dbg.contains("senha-secreta"));
+
+        let unlocked = UnlockRoomResponse {
+            room: "geral".to_owned(),
+            room_key: "chave-secreta".to_owned(),
+        };
+        let json = serde_json::to_string(&unlocked).unwrap();
+        assert_eq!(
+            serde_json::from_str::<UnlockRoomResponse>(&json).unwrap(),
+            unlocked
+        );
+        assert!(!format!("{unlocked:?}").contains("chave-secreta"));
+    }
+
+    #[test]
+    fn room_keys_header_round_trips_and_skips_garbage() {
+        let header = encode_room_keys([("geral", "aa11"), ("vip_2", "bb22")]);
+        assert_eq!(header, "geral=aa11,vip_2=bb22");
+        assert_eq!(
+            parse_room_keys(&format!("{header}, ,Bad=1,semchave=,x")),
+            vec![
+                ("geral".to_owned(), "aa11".to_owned()),
+                ("vip_2".to_owned(), "bb22".to_owned()),
+            ]
+        );
+    }
+
+    #[test]
+    fn room_password_rules() {
+        assert_eq!(validate_room_password("1"), Ok(()));
+        assert_eq!(validate_room_password(""), Err(ValidationError::Empty));
+        assert_eq!(
+            validate_room_password(&"a".repeat(MAX_ROOM_PASSWORD_LEN + 1)),
+            Err(ValidationError::TooLong {
+                max: MAX_ROOM_PASSWORD_LEN
+            })
+        );
+        assert_eq!(
+            validate_room_password("a\tb"),
+            Err(ValidationError::InvalidCharacter)
         );
     }
 }

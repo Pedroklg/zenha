@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use rooms_core::{AdminAction, RemovalReason};
+use rooms_core::{AdminAction, RemovalReason, RoomKey};
 use rooms_protocol::{AdminRoom, RoomSummary};
 
 use crate::core_session::TestFeed;
@@ -33,6 +33,8 @@ pub const DEMO_PASSWORD: &str = "demo";
 pub const DEMO_AVATAR_IDENTITY: &str = "demo-ana";
 pub const DEMO_AVATAR_VERSION: &str = "demo";
 const FAILING_ROOM: &str = "falha";
+/// Senha da sala "VIP" (e da filha "Cantinho") no modo demonstração.
+pub const DEMO_ROOM_PASSWORD: &str = "demo";
 const REPLIES: [&str; 4] = [
     "Boa!",
     "Haha, verdade.",
@@ -95,10 +97,13 @@ struct Scheduled {
     event: UiEvent,
 }
 
+#[derive(Default)]
 struct DemoRoom {
     id: String,
     title: String,
     idle_occupants: Vec<String>,
+    password: Option<String>,
+    parent: Option<String>,
 }
 
 pub struct DemoSession {
@@ -109,6 +114,7 @@ pub struct DemoSession {
     next_seq: u64,
     room: Option<String>,
     rooms_list: Vec<DemoRoom>,
+    unlocked: Vec<String>,
     room_counter: u64,
     admin_active: bool,
     participants: Vec<ParticipantView>,
@@ -176,18 +182,34 @@ impl DemoSession {
                     id: "geral".to_owned(),
                     title: "Geral".to_owned(),
                     idle_occupants: vec!["Ana".to_owned(), "Bruno".to_owned()],
+                    ..DemoRoom::default()
                 },
                 DemoRoom {
                     id: "jogos".to_owned(),
                     title: "Jogos".to_owned(),
                     idle_occupants: vec!["Carla".to_owned()],
+                    ..DemoRoom::default()
                 },
                 DemoRoom {
                     id: "musica".to_owned(),
                     title: "Música".to_owned(),
-                    idle_occupants: Vec::new(),
+                    ..DemoRoom::default()
+                },
+                DemoRoom {
+                    id: "vip".to_owned(),
+                    title: "VIP".to_owned(),
+                    idle_occupants: vec!["Duda".to_owned()],
+                    password: Some(DEMO_ROOM_PASSWORD.to_owned()),
+                    parent: None,
+                },
+                DemoRoom {
+                    id: "cantinho".to_owned(),
+                    title: "Cantinho".to_owned(),
+                    parent: Some("vip".to_owned()),
+                    ..DemoRoom::default()
                 },
             ],
+            unlocked: Vec::new(),
             room_counter: 0,
             admin_active: false,
             participants: Vec::new(),
@@ -245,6 +267,7 @@ impl DemoSession {
     fn handle(&mut self, command: UiCommand) {
         match command {
             UiCommand::Join { room } => self.join(room),
+            UiCommand::UnlockRoom { room, password } => self.unlock(&room, &password),
             UiCommand::Leave => {
                 self.scheduled.clear();
                 self.room = None;
@@ -363,23 +386,31 @@ impl DemoSession {
             return;
         }
         match action {
-            AdminAction::CreateRoom { title } => {
+            AdminAction::CreateRoom {
+                title,
+                password,
+                parent,
+            } => {
                 self.room_counter += 1;
                 let id = format!("demo-sala-{}", self.room_counter);
                 let position = self.rooms_list.len();
-                self.rooms_list.push(DemoRoom {
+                let password = password.filter(|p| !p.is_empty());
+                let parent = parent.filter(|p| !p.is_empty());
+                let created = AdminRoom {
                     id: id.clone(),
                     title: title.clone(),
+                    position,
+                    locked: password.is_some(),
+                    parent: parent.clone(),
+                };
+                self.rooms_list.push(DemoRoom {
+                    id,
+                    title,
                     idle_occupants: Vec::new(),
+                    password,
+                    parent,
                 });
-                self.schedule(
-                    Duration::ZERO,
-                    UiEvent::AdminRoomCreated(AdminRoom {
-                        id,
-                        title,
-                        position,
-                    }),
-                );
+                self.schedule(Duration::ZERO, UiEvent::AdminRoomCreated(created));
                 let rooms = self.rooms();
                 self.schedule(Duration::ZERO, UiEvent::RoomsUpdated(rooms));
             }
@@ -387,6 +418,8 @@ impl DemoSession {
                 id,
                 title,
                 position,
+                password,
+                parent,
             } => {
                 let Some(idx) = self.rooms_list.iter().position(|r| r.id == id) else {
                     self.schedule(
@@ -402,11 +435,20 @@ impl DemoSession {
                 if let Some(title) = title {
                     entry.title = title;
                 }
+                if let Some(password) = password {
+                    entry.password = Some(password).filter(|p| !p.is_empty());
+                    self.unlocked.retain(|owner| *owner != entry.id);
+                }
+                if let Some(parent) = parent {
+                    entry.parent = Some(parent).filter(|p| !p.is_empty());
+                }
                 let final_pos = position.unwrap_or(idx).min(self.rooms_list.len());
                 let updated = AdminRoom {
                     id: entry.id.clone(),
                     title: entry.title.clone(),
                     position: final_pos,
+                    locked: entry.password.is_some(),
+                    parent: entry.parent.clone(),
                 };
                 self.rooms_list.insert(final_pos, entry);
                 self.schedule(Duration::ZERO, UiEvent::AdminRoomUpdated(updated));
@@ -425,6 +467,11 @@ impl DemoSession {
                 }
                 let before = self.rooms_list.len();
                 self.rooms_list.retain(|r| r.id != id);
+                for room in &mut self.rooms_list {
+                    if room.parent.as_deref() == Some(id.as_str()) {
+                        room.parent = None;
+                    }
+                }
                 if self.rooms_list.len() == before {
                     self.schedule(
                         Duration::ZERO,
@@ -585,11 +632,62 @@ impl DemoSession {
         );
     }
 
+    /// Salas cuja senha vale para `room`: ela mesma e a sala-mãe.
+    fn lock_owners(&self, room: &str) -> Vec<&DemoRoom> {
+        let find = |id: &str| self.rooms_list.iter().find(|r| r.id == id);
+        let own = find(room);
+        let parent = own.and_then(|r| r.parent.as_deref()).and_then(find);
+        [own, parent]
+            .into_iter()
+            .flatten()
+            .filter(|r| r.password.is_some())
+            .collect()
+    }
+
+    fn needs_password(&self, room: &str) -> bool {
+        let owners = self.lock_owners(room);
+        !owners.is_empty() && !owners.iter().any(|o| self.unlocked.contains(&o.id))
+    }
+
+    fn unlock(&mut self, room: &str, password: &str) {
+        let owner = self
+            .lock_owners(room)
+            .into_iter()
+            .find(|o| o.password.as_deref() == Some(password))
+            .map(|o| o.id.clone());
+        let Some(owner) = owner else {
+            self.schedule(
+                Duration::ZERO,
+                UiEvent::RoomUnlockFailed {
+                    message: "Senha da sala incorreta.".to_owned(),
+                },
+            );
+            return;
+        };
+        self.unlocked.push(owner.clone());
+        self.schedule(
+            Duration::ZERO,
+            UiEvent::RoomUnlocked {
+                key: RoomKey(format!("demo-key-{owner}")),
+                room: owner,
+            },
+        );
+        let rooms = self.rooms();
+        self.schedule(Duration::ZERO, UiEvent::RoomsUpdated(rooms));
+    }
+
     fn join(&mut self, room: String) {
         self.reset_share();
         self.scheduled.clear();
         self.chat_counter = 0;
         self.file_counter = 0;
+        if self.needs_password(&room) {
+            self.room = None;
+            self.mic_meter = None;
+            self.schedule(Duration::ZERO, UiEvent::Connecting);
+            self.schedule(self.delays.join, UiEvent::RoomLocked { room });
+            return;
+        }
         if room == FAILING_ROOM {
             self.room = None;
             self.mic_meter = None;
@@ -858,10 +956,16 @@ impl DemoSession {
                 } else {
                     room.idle_occupants.clone()
                 };
+                let locked = !self.lock_owners(&room.id).is_empty();
+                let hidden = self.needs_password(&room.id);
                 RoomSummary {
                     name: room.id.clone(),
                     title: room.title.clone(),
-                    participants,
+                    participant_count: participants.len(),
+                    participants: if hidden { Vec::new() } else { participants },
+                    locked,
+                    unlocked: locked && !hidden,
+                    parent: room.parent.clone(),
                 }
             })
             .collect()
@@ -1028,7 +1132,7 @@ mod tests {
     }
 
     #[test]
-    fn refresh_returns_three_rooms_with_live_occupants() {
+    fn refresh_returns_all_rooms_with_live_occupants() {
         let mut session = DemoSession::with_delays(DemoDelays::instant());
         joined(&mut session);
         session.send(UiCommand::RefreshRooms);
@@ -1036,7 +1140,7 @@ mod tests {
         let Some(UiEvent::RoomsUpdated(rooms)) = events.first() else {
             panic!("expected RoomsUpdated, got {events:?}");
         };
-        assert_eq!(rooms.len(), 3);
+        assert_eq!(rooms.len(), 5);
         let geral = &rooms[0];
         assert!(geral.participants.contains(&SELF_NAME.to_owned()));
     }
@@ -1261,6 +1365,8 @@ mod tests {
 
         session.send(UiCommand::Admin(AdminAction::CreateRoom {
             title: "Estudos".to_owned(),
+            password: None,
+            parent: None,
         }));
         let events = drain(&mut session);
         assert!(events.iter().any(|e| matches!(
@@ -1270,7 +1376,7 @@ mod tests {
         assert!(
             events
                 .iter()
-                .any(|e| matches!(e, UiEvent::RoomsUpdated(rooms) if rooms.len() == 4))
+                .any(|e| matches!(e, UiEvent::RoomsUpdated(rooms) if rooms.len() == 6))
         );
 
         session.send(UiCommand::Admin(AdminAction::RotateInvite {
@@ -1352,5 +1458,55 @@ mod tests {
         );
         std::thread::sleep(Duration::from_millis(5));
         assert!(drain(&mut session).is_empty());
+    }
+
+    #[test]
+    fn locked_room_and_sub_room_need_the_password_once() {
+        let mut session = DemoSession::with_delays(DemoDelays::instant());
+        session.send(UiCommand::RefreshRooms);
+        let rooms = drain(&mut session)
+            .into_iter()
+            .find_map(|e| match e {
+                UiEvent::RoomsUpdated(rooms) => Some(rooms),
+                _ => None,
+            })
+            .unwrap();
+        let vip = rooms.iter().find(|r| r.name == "vip").unwrap();
+        assert!(vip.needs_password() && vip.participants.is_empty());
+        assert_eq!(vip.occupant_count(), 1);
+        let child = rooms.iter().find(|r| r.name == "cantinho").unwrap();
+        assert!(child.needs_password());
+        assert_eq!(child.parent.as_deref(), Some("vip"));
+
+        session.send(UiCommand::Join {
+            room: "cantinho".to_owned(),
+        });
+        assert!(drain(&mut session).contains(&UiEvent::RoomLocked {
+            room: "cantinho".to_owned()
+        }));
+
+        session.send(UiCommand::UnlockRoom {
+            room: "cantinho".to_owned(),
+            password: "errada".to_owned(),
+        });
+        assert!(matches!(
+            drain(&mut session)[..],
+            [UiEvent::RoomUnlockFailed { .. }]
+        ));
+
+        session.send(UiCommand::UnlockRoom {
+            room: "cantinho".to_owned(),
+            password: DEMO_ROOM_PASSWORD.to_owned(),
+        });
+        let events = drain(&mut session);
+        assert!(matches!(&events[0], UiEvent::RoomUnlocked { room, .. } if room == "vip"));
+        session.send(UiCommand::Join {
+            room: "cantinho".to_owned(),
+        });
+        assert!(
+            drain(&mut session)
+                .iter()
+                .any(|e| matches!(e, UiEvent::Joined { room, .. } if room == "cantinho"))
+        );
     }
 }

@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::sync::{Arc, PoisonError, RwLock};
 use std::thread::JoinHandle;
 
@@ -84,6 +85,7 @@ impl SessionHandle {
             invite_code: String::new(),
             avatar_version: None,
             avatar_cache_dir: None,
+            room_keys: BTreeMap::new(),
         };
         Self::spawn(config, backend, UnavailableTokenClient)
     }

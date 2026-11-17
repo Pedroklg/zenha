@@ -11,20 +11,23 @@ use axum::http::{HeaderMap, StatusCode};
 use rooms_protocol::{
     ADMIN_CHAT_DELETE_TOPIC, ADMIN_MOVE_TOPIC, ADMIN_STOP_SHARE_TOPIC, AdminChatDelete,
     AdminLoginRequest, AdminLoginResponse, AdminMove, AdminRoom, AdminStopShare, CreateRoomRequest,
-    MoveParticipantRequest, ROOMS_CHANGED_TOPIC, RoomsChanged, UpdateInviteRequest,
-    UpdateRoomRequest, validate_client_id, validate_invite_code, validate_room_name,
-    validate_room_title,
+    MoveParticipantRequest, ROOMS_CHANGED_TOPIC, RoomsChanged, UnlockRoomResponse,
+    UpdateInviteRequest, UpdateRoomRequest, validate_client_id, validate_invite_code,
+    validate_room_name, validate_room_password, validate_room_title,
 };
 
-use crate::chat_store::{CreateRoomOutcome, DeleteRoomCheck, DeleteRoomOutcome};
+use crate::chat_store::{
+    CreateRoomOutcome, DeleteRoomCheck, DeleteRoomOutcome, RoomUpdate, UpdateRoomOutcome,
+};
 use crate::directory::ModerationError;
+use crate::room_access::{lock_owners, room_key};
 
 use super::chat::validate_chat_id;
-use super::{ApiError, AppState, authenticate_admin, room_is_listed, verify_password_hash};
+use super::{ApiError, AppState, authenticate_admin, room_records, verify_password_hash};
 
 pub const DEFAULT_ADMIN_FAILURE_DELAY: Duration = Duration::from_millis(250);
 
-pub(super) struct OptionalPeerIp(Option<IpAddr>);
+pub(super) struct OptionalPeerIp(pub(super) Option<IpAddr>);
 
 impl<S: Send + Sync> FromRequestParts<S> for OptionalPeerIp {
     type Rejection = std::convert::Infallible;
@@ -51,7 +54,7 @@ fn login_rate_limit_keys(
     keys
 }
 
-fn resolved_client_ip(peer_ip: Option<IpAddr>, headers: &HeaderMap) -> Option<IpAddr> {
+pub(super) fn resolved_client_ip(peer_ip: Option<IpAddr>, headers: &HeaderMap) -> Option<IpAddr> {
     match peer_ip {
         // Only trust X-Forwarded-For when the TCP peer is local reverse proxy (Caddy).
         Some(ip) if !ip.is_loopback() => Some(ip),
@@ -73,6 +76,24 @@ fn validate_room_and_identity(room: &str, identity: &str) -> Result<(), ApiError
     validate_room_name(room).map_err(|_| ApiError::Invalid("invalid room name"))?;
     validate_client_id(identity).map_err(|_| ApiError::Invalid("invalid participant identity"))?;
     Ok(())
+}
+
+async fn hash_room_password(password: String) -> Result<String, ApiError> {
+    validate_room_password(&password).map_err(|_| ApiError::Invalid("invalid room password"))?;
+    tokio::task::spawn_blocking(move || crate::config::hash_secret(&password))
+        .await
+        .map_err(|err| {
+            tracing::error!(%err, "room password hashing task failed");
+            ApiError::ChatStoreFailure
+        })?
+        .map_err(|err| {
+            tracing::error!(%err, "room password hashing failed");
+            ApiError::Invalid("invalid room password")
+        })
+}
+
+fn validate_parent(parent: &str) -> Result<(), ApiError> {
+    validate_room_name(parent).map_err(|_| ApiError::Invalid("invalid parent room"))
 }
 
 pub(super) async fn admin_login(
@@ -127,10 +148,18 @@ pub(super) async fn admin_create_room(
     let request: CreateRoomRequest =
         serde_json::from_slice(&body).map_err(|_| ApiError::MalformedBody)?;
     validate_room_title(&request.title).map_err(|_| ApiError::Invalid("invalid room title"))?;
-
+    let parent = request.parent.filter(|p| !p.is_empty());
+    if let Some(parent) = &parent {
+        validate_parent(parent)?;
+    }
     let chat = state.chat.as_ref().ok_or(ApiError::ChatUnavailable)?;
+    let password_hash = match request.password.filter(|p| !p.is_empty()) {
+        Some(password) => Some(hash_room_password(password).await?),
+        None => None,
+    };
+
     let outcome = chat
-        .create_room(request.title.trim().to_owned())
+        .create_room(request.title.trim().to_owned(), password_hash, parent)
         .await
         .map_err(|err| {
             tracing::error!(%err, "room create failed");
@@ -140,6 +169,7 @@ pub(super) async fn admin_create_room(
     let room = match outcome {
         CreateRoomOutcome::Created(room) => room,
         CreateRoomOutcome::LimitReached => return Err(ApiError::RoomLimitReached),
+        CreateRoomOutcome::InvalidParent => return Err(ApiError::Invalid("invalid parent room")),
     };
 
     broadcast_rooms_changed(&state).await;
@@ -157,26 +187,43 @@ pub(super) async fn admin_update_room(
     validate_room_name(&id).map_err(|_| ApiError::Invalid("invalid room id"))?;
     let request: UpdateRoomRequest =
         serde_json::from_slice(&body).map_err(|_| ApiError::MalformedBody)?;
-    if request.title.is_none() && request.position.is_none() {
+    if request.title.is_none()
+        && request.position.is_none()
+        && request.password.is_none()
+        && request.parent.is_none()
+    {
         return Err(ApiError::Invalid("no fields to update"));
     }
     if let Some(title) = &request.title {
         validate_room_title(title).map_err(|_| ApiError::Invalid("invalid room title"))?;
     }
-
+    let parent = request
+        .parent
+        .map(|p| if p.is_empty() { None } else { Some(p) });
+    if let Some(Some(parent)) = &parent {
+        validate_parent(parent)?;
+    }
     let chat = state.chat.as_ref().ok_or(ApiError::ChatUnavailable)?;
-    let room = chat
-        .update_room(
-            id,
-            request.title.map(|t| t.trim().to_owned()),
-            request.position,
-        )
-        .await
-        .map_err(|err| {
-            tracing::error!(%err, "room update failed");
-            ApiError::ChatStoreFailure
-        })?
-        .ok_or(ApiError::RoomNotFound)?;
+    let password_hash = match request.password {
+        None => None,
+        Some(password) if password.is_empty() => Some(None),
+        Some(password) => Some(Some(hash_room_password(password).await?)),
+    };
+
+    let update = RoomUpdate {
+        title: request.title.map(|t| t.trim().to_owned()),
+        position: request.position,
+        password_hash,
+        parent,
+    };
+    let room = match chat.update_room(id, update).await.map_err(|err| {
+        tracing::error!(%err, "room update failed");
+        ApiError::ChatStoreFailure
+    })? {
+        UpdateRoomOutcome::Updated(room) => room,
+        UpdateRoomOutcome::NotFound => return Err(ApiError::RoomNotFound),
+        UpdateRoomOutcome::InvalidParent => return Err(ApiError::Invalid("invalid parent room")),
+    };
 
     broadcast_rooms_changed(&state).await;
     tracing::info!(%admin_id, room = %room.id, "admin updated room");
@@ -300,9 +347,17 @@ pub(super) async fn admin_move_participant(
         return Err(ApiError::Invalid("destination room matches current room"));
     }
 
-    if !room_is_listed(&state, &request.to_room).await? {
-        return Err(ApiError::RoomNotFound);
-    }
+    let rooms = room_records(&state).await?;
+    let target = rooms
+        .iter()
+        .find(|r| r.id == request.to_room)
+        .ok_or(ApiError::RoomNotFound)?;
+    let unlock = lock_owners(&rooms, target)
+        .first()
+        .map(|(owner, hash)| UnlockRoomResponse {
+            room: (*owner).to_owned(),
+            room_key: room_key(&state.config.livekit_api_secret, owner, hash),
+        });
 
     map_moderation_result(
         state.moderator.ensure_participant(&room, &identity).await,
@@ -311,6 +366,7 @@ pub(super) async fn admin_move_participant(
 
     let payload = serde_json::to_vec(&AdminMove {
         to_room: request.to_room.clone(),
+        unlock,
     })
     .map_err(map_signal_err)?;
     map_moderation_result(
@@ -1028,6 +1084,7 @@ mod tests {
         for i in 1..MAX_ROOMS_COUNT {
             let body = serde_json::to_string(&CreateRoomRequest {
                 title: format!("Sala {i}"),
+                ..CreateRoomRequest::default()
             })
             .unwrap();
             let res = app
@@ -1154,7 +1211,8 @@ mod tests {
         assert_eq!(
             decoded,
             AdminMove {
-                to_room: "jogos".to_owned()
+                to_room: "jogos".to_owned(),
+                unlock: None,
             }
         );
 
@@ -1554,5 +1612,105 @@ mod tests {
             let res = app.clone().oneshot(req).await.unwrap();
             assert_eq!(res.status(), StatusCode::SERVICE_UNAVAILABLE);
         }
+    }
+
+    #[tokio::test]
+    async fn admin_sets_room_password_and_parent_without_exposing_the_hash() {
+        let config = test_admin_config();
+        let dir = Arc::new(FakeDirectory::default().with_participants("geral", &["ana-1"]));
+        let store = seeded_store(&config.rooms);
+        let app = admin_app_with(dir.clone(), Some(store.clone()), Duration::ZERO);
+        let auth = login_admin(&app).await;
+        let send = |method: &str, uri: &str, body: &str| {
+            app.clone()
+                .oneshot(json_request(method, uri, Some(&auth), body))
+        };
+
+        let res = send(
+            "POST",
+            "/admin/rooms",
+            r#"{"title":"Filha","password":"senha-filha","parent":"nada"}"#,
+        )
+        .await
+        .unwrap();
+        assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+
+        let res = send(
+            "POST",
+            "/admin/rooms",
+            r#"{"title":"Filha","password":"senha-filha","parent":"geral"}"#,
+        )
+        .await
+        .unwrap();
+        assert_eq!(res.status(), StatusCode::CREATED);
+        let text = String::from_utf8(body_bytes(res).await).unwrap();
+        assert!(!text.contains("argon2") && !text.contains("senha-filha"));
+        let created: AdminRoom = serde_json::from_str(&text).unwrap();
+        assert!(created.locked);
+        assert_eq!(created.parent.as_deref(), Some("geral"));
+
+        for body in [r#"{"parent":"filha"}"#, r#"{"parent":"Bad Room"}"#] {
+            let res = send("PATCH", "/admin/rooms/jogos", body).await.unwrap();
+            assert_eq!(res.status(), StatusCode::BAD_REQUEST, "{body}");
+        }
+        let res = send("PATCH", "/admin/rooms/geral", r#"{"parent":"jogos"}"#)
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+
+        let res = send("PATCH", "/admin/rooms/geral", r#"{"password":"senha-mae"}"#)
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let updated: AdminRoom = serde_json::from_slice(&body_bytes(res).await).unwrap();
+        assert!(updated.locked);
+
+        let res = send(
+            "POST",
+            "/admin/rooms/geral/participants/ana-1/move",
+            r#"{"to_room":"filha"}"#,
+        )
+        .await
+        .unwrap();
+        assert_eq!(res.status(), StatusCode::NO_CONTENT);
+        let sent = dir.calls().into_iter().rev().find_map(|call| match call {
+            ModerationCall::SendData { topic, payload, .. } if topic == ADMIN_MOVE_TOPIC => {
+                serde_json::from_slice::<AdminMove>(&payload).ok()
+            }
+            _ => None,
+        });
+        let unlock = sent.and_then(|mv| mv.unlock).unwrap();
+        assert_eq!(unlock.room, "filha");
+        let token_body = serde_json::to_string(&rooms_protocol::TokenRequest {
+            client_id: "client-ana".to_owned(),
+            display_name: "Ana".to_owned(),
+            room: "filha".to_owned(),
+            invite_code: INVITE.to_owned(),
+            room_key: Some(unlock.room_key),
+        })
+        .unwrap();
+        let res = app
+            .clone()
+            .oneshot(token_request(&token_body))
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+
+        let res = send(
+            "PATCH",
+            "/admin/rooms/filha",
+            r#"{"password":"","parent":""}"#,
+        )
+        .await
+        .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let cleared: AdminRoom = serde_json::from_slice(&body_bytes(res).await).unwrap();
+        assert!(!cleared.locked);
+        assert!(cleared.parent.is_none());
+
+        let res = send("PATCH", "/admin/rooms/filha", r#"{"password":"a\u0007"}"#)
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::BAD_REQUEST);
     }
 }

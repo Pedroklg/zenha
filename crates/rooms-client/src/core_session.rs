@@ -77,6 +77,7 @@ impl SessionPort for CoreSession {
             invite_code: credentials.invite_code,
             avatar_version: credentials.avatar_version,
             avatar_cache_dir: credentials.avatar_cache_dir,
+            room_keys: credentials.room_keys,
         };
         match SessionHandle::spawn_with_http_tokens(config, backend) {
             Ok(handle) => self.install(handle),
@@ -109,6 +110,7 @@ impl SessionPort for CoreSession {
 fn to_core(command: UiCommand) -> Command {
     match command {
         UiCommand::Join { room } => Command::Join { room },
+        UiCommand::UnlockRoom { room, password } => Command::UnlockRoom { room, password },
         UiCommand::Leave => Command::Leave,
         UiCommand::SetMuted(muted) => Command::SetMuted(muted),
         UiCommand::SetDeafened(deafened) => Command::SetDeafened(deafened),
@@ -235,6 +237,11 @@ impl Drop for TestFeed {
 fn describe(error: &SessionError) -> String {
     match error {
         SessionError::InviteRejected => "Senha recusada pelo servidor.".to_owned(),
+        SessionError::RoomLocked(_) => "Esta sala tem senha.".to_owned(),
+        SessionError::RoomPasswordRejected => "Senha da sala incorreta.".to_owned(),
+        SessionError::RoomUnlockRateLimited => {
+            "Muitas tentativas de senha. Espere um pouco e tente de novo.".to_owned()
+        }
         SessionError::TokenServer(reason) => {
             format!("Não foi possível falar com o servidor de tokens: {reason}")
         }
@@ -418,6 +425,8 @@ impl Translator {
                 self.participants.clear();
                 if matches!(error, SessionError::InviteRejected) {
                     vec![UiEvent::InviteRejected]
+                } else if let SessionError::RoomLocked(room) = error {
+                    vec![UiEvent::RoomLocked { room }]
                 } else {
                     vec![UiEvent::Failed {
                         message: describe(&error),
@@ -486,6 +495,7 @@ impl Translator {
                 })]
             }
             Event::RoomsUpdated(rooms) => vec![UiEvent::RoomsUpdated(rooms)],
+            Event::RoomUnlocked { room, key } => vec![UiEvent::RoomUnlocked { room, key }],
             Event::AudioDevicesUpdated(devices) => vec![UiEvent::AudioDevicesUpdated {
                 inputs: devices.inputs.into_iter().map(device_view).collect(),
                 outputs: devices.outputs.into_iter().map(device_view).collect(),
@@ -574,6 +584,11 @@ impl Translator {
                 tracing::warn!(%error, "command failed");
                 match &error {
                     SessionError::InviteRejected => vec![UiEvent::InviteRejected],
+                    SessionError::RoomPasswordRejected | SessionError::RoomUnlockRateLimited => {
+                        vec![UiEvent::RoomUnlockFailed {
+                            message: describe(&error),
+                        }]
+                    }
                     SessionError::Avatar(_) => vec![UiEvent::AvatarFailed {
                         message: describe(&error),
                     }],
@@ -842,6 +857,34 @@ mod tests {
             events,
             vec![UiEvent::Failed {
                 message: "Não foi possível falar com o servidor de tokens: 500".to_owned()
+            }]
+        );
+    }
+
+    #[test]
+    fn room_lock_events_translate_to_ui_events() {
+        let mut translator = Translator::default();
+        assert_eq!(
+            translator.translate(Event::Failed(SessionError::RoomLocked("vip".into()))),
+            vec![UiEvent::RoomLocked {
+                room: "vip".to_owned()
+            }]
+        );
+        assert_eq!(
+            translator.translate(Event::CommandFailed(SessionError::RoomPasswordRejected)),
+            vec![UiEvent::RoomUnlockFailed {
+                message: "Senha da sala incorreta.".to_owned()
+            }]
+        );
+        let key = rooms_core::RoomKey("k".to_owned());
+        assert_eq!(
+            translator.translate(Event::RoomUnlocked {
+                room: "vip".to_owned(),
+                key: key.clone(),
+            }),
+            vec![UiEvent::RoomUnlocked {
+                room: "vip".to_owned(),
+                key
             }]
         );
     }
@@ -1330,6 +1373,8 @@ mod tests {
             id: "sala-2".to_owned(),
             title: "Sala Dois".to_owned(),
             position: 1,
+            locked: false,
+            parent: None,
         };
         assert_eq!(
             translator.translate(Event::AdminChanged { active: true }),

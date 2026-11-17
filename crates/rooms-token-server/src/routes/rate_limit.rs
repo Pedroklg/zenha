@@ -126,6 +126,8 @@ impl AvatarRateLimiter {
 
 pub struct AdminLoginLimiter(SlidingWindowLimiter);
 
+pub type RoomUnlockLimiter = AdminLoginLimiter;
+
 impl Default for AdminLoginLimiter {
     fn default() -> Self {
         Self(SlidingWindowLimiter::new(

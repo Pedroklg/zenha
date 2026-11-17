@@ -1,12 +1,16 @@
 //! Entrada, troca e atualização da lista de salas.
 
+use std::collections::BTreeMap;
 use std::pin::Pin;
 use std::time::Duration;
 
-use rooms_protocol::{validate_client_id, validate_display_name, validate_room_name};
+use rooms_protocol::{
+    RoomSummary, UnlockRoomRequest, validate_client_id, validate_display_name, validate_room_name,
+    validate_room_password,
+};
 use tokio::time::Sleep;
 
-use crate::api::{Event, SessionError};
+use crate::api::{Event, RoomKey, SessionError};
 
 use super::Session;
 
@@ -19,7 +23,57 @@ pub(super) async fn wait_optional(sleep: &mut Option<Pin<Box<Sleep>>>) {
     }
 }
 
+/// Chave para entrar em `room`: a dela ou, se não houver, a da sala-mãe.
+pub(super) fn room_key_for(
+    keys: &BTreeMap<String, String>,
+    parent: Option<&str>,
+    room: &str,
+) -> Option<String> {
+    keys.get(room)
+        .or_else(|| parent.and_then(|p| keys.get(p)))
+        .cloned()
+}
+
 impl Session {
+    pub(super) fn room_key(&self, room: &str) -> Option<String> {
+        let parent = self.room_parents.get(room).map(String::as_str);
+        room_key_for(&self.config.room_keys, parent, room)
+    }
+
+    pub(super) fn forget_room_key(&mut self, room: &str) {
+        self.config.room_keys.remove(room);
+        if let Some(parent) = self.room_parents.get(room) {
+            self.config.room_keys.remove(parent);
+        }
+    }
+
+    pub(super) async fn unlock_room(&mut self, room: String, password: String) {
+        let valid = validate_room_name(&room).and_then(|()| validate_room_password(&password));
+        if let Err(err) = valid {
+            self.emit(Event::CommandFailed(SessionError::InvalidInput(
+                err.to_string(),
+            )));
+            return;
+        }
+        let request = UnlockRoomRequest {
+            invite_code: self.config.invite_code.clone(),
+            password,
+        };
+        match self.tokens.unlock_room(&room, request).await {
+            Ok(unlocked) => {
+                self.config
+                    .room_keys
+                    .insert(unlocked.room.clone(), unlocked.room_key.clone());
+                self.emit(Event::RoomUnlocked {
+                    room: unlocked.room,
+                    key: RoomKey(unlocked.room_key),
+                });
+                self.refresh_rooms();
+            }
+            Err(err) => self.emit(Event::CommandFailed(err)),
+        }
+    }
+
     pub(super) async fn join(&mut self, room: String) {
         let valid = validate_room_name(&room)
             .and_then(|()| validate_display_name(&self.config.display_name))
@@ -55,14 +109,25 @@ impl Session {
 
     pub(super) fn refresh_rooms(&self) {
         let tokens = self.tokens.clone();
-        let sink = self.sink.clone();
+        let rooms_tx = self.rooms_tx.clone();
         let invite_code = self.config.invite_code.clone();
+        let room_keys = self.config.room_keys.clone();
         tokio::spawn(async move {
-            match tokens.fetch_rooms(&invite_code).await {
-                Ok(rooms) => sink.emit(Event::RoomsUpdated(rooms)),
-                Err(err) => sink.emit(Event::CommandFailed(err)),
-            }
+            let _ = rooms_tx.send(tokens.fetch_rooms(&invite_code, &room_keys).await);
         });
+    }
+
+    pub(super) fn on_rooms(&mut self, result: Result<Vec<RoomSummary>, SessionError>) {
+        match result {
+            Ok(rooms) => {
+                self.room_parents = rooms
+                    .iter()
+                    .filter_map(|r| Some((r.name.clone(), r.parent.clone()?)))
+                    .collect();
+                self.emit(Event::RoomsUpdated(rooms));
+            }
+            Err(err) => self.emit(Event::CommandFailed(err)),
+        }
     }
 
     pub(super) fn schedule_rooms_refresh(&mut self) {
@@ -72,21 +137,22 @@ impl Session {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
     use std::sync::Arc;
     use std::time::Duration;
 
     use rooms_protocol::{ROOMS_CHANGED_TOPIC, RoomSummary};
     use tokio::sync::mpsc;
 
-    use crate::api::{Command, Event, SessionError};
+    use crate::api::{Command, Event, RoomKey, SessionError};
     use crate::backend::BackendEvent;
     use crate::backoff::ReconnectPolicy;
     use crate::handle::EventSink;
     use crate::testing::{BackendCall, FakeBackend, FakeTokenClient};
 
     use super::super::run;
-    use super::super::test_support::{config, harness};
-    use super::ROOMS_CHANGED_DEBOUNCE;
+    use super::super::test_support::{config, harness, harness_with};
+    use super::{ROOMS_CHANGED_DEBOUNCE, room_key_for};
 
     #[tokio::test(start_paused = true)]
     async fn invalid_room_name_is_rejected_without_connecting() {
@@ -136,6 +202,7 @@ mod tests {
             name: "geral".to_owned(),
             title: String::new(),
             participants: vec!["ana".to_owned()],
+            ..RoomSummary::default()
         }];
         h.tokens.set_rooms(rooms.clone());
         h.send(Command::RefreshRooms);
@@ -149,6 +216,7 @@ mod tests {
             name: "geral".to_owned(),
             title: "Sala Geral".to_owned(),
             participants: vec!["ana".to_owned()],
+            ..RoomSummary::default()
         }]);
         h.join("geral").await;
 
@@ -222,5 +290,96 @@ mod tests {
                 name: "Ana Paula".to_owned(),
             }
         );
+    }
+
+    #[tokio::test]
+    async fn unlocking_stores_the_key_and_the_parent_key_opens_children() {
+        let mut h = harness();
+        h.tokens.set_rooms(vec![
+            RoomSummary {
+                name: "vip".to_owned(),
+                locked: true,
+                ..RoomSummary::default()
+            },
+            RoomSummary {
+                name: "filha".to_owned(),
+                locked: true,
+                parent: Some("vip".to_owned()),
+                ..RoomSummary::default()
+            },
+        ]);
+        h.tokens.lock_room("vip", "vip", "senha", "chave-vip");
+        h.tokens.lock_room("filha", "vip", "senha", "chave-vip");
+
+        h.send(Command::UnlockRoom {
+            room: "filha".to_owned(),
+            password: "errada".to_owned(),
+        });
+        assert_eq!(
+            h.next().await,
+            Event::CommandFailed(SessionError::RoomPasswordRejected)
+        );
+
+        h.send(Command::UnlockRoom {
+            room: "filha".to_owned(),
+            password: "senha".to_owned(),
+        });
+        assert_eq!(
+            h.next().await,
+            Event::RoomUnlocked {
+                room: "vip".to_owned(),
+                key: RoomKey("chave-vip".to_owned()),
+            }
+        );
+        assert!(matches!(h.next().await, Event::RoomsUpdated(_)));
+        assert_eq!(
+            h.tokens
+                .rooms_keys()
+                .last()
+                .and_then(|k| k.get("vip"))
+                .map(String::as_str),
+            Some("chave-vip")
+        );
+
+        h.join("filha").await;
+        let request = h.tokens.requests().last().cloned().unwrap();
+        assert_eq!(request.room, "filha");
+        assert_eq!(request.room_key.as_deref(), Some("chave-vip"));
+    }
+
+    #[tokio::test]
+    async fn locked_room_fails_without_retry_and_drops_the_stale_key() {
+        let mut config = config();
+        config
+            .room_keys
+            .insert("vip".to_owned(), "velha".to_owned());
+        let mut h = harness_with(config);
+        h.tokens.lock_room("vip", "vip", "senha", "nova");
+
+        h.send(Command::Join {
+            room: "vip".to_owned(),
+        });
+        assert_eq!(h.next().await, Event::Connecting);
+        assert_eq!(
+            h.next().await,
+            Event::Failed(SessionError::RoomLocked("vip".to_owned()))
+        );
+        assert_eq!(h.tokens.requests().len(), 1);
+        assert_eq!(h.tokens.requests()[0].room_key.as_deref(), Some("velha"));
+
+        h.send(Command::RefreshRooms);
+        assert!(matches!(h.next().await, Event::RoomsUpdated(_)));
+        assert!(h.tokens.rooms_keys().last().unwrap().is_empty());
+    }
+
+    #[test]
+    fn room_key_falls_back_to_the_parent() {
+        let keys = BTreeMap::from([("mae".to_owned(), "k".to_owned())]);
+        assert_eq!(room_key_for(&keys, None, "mae").as_deref(), Some("k"));
+        assert_eq!(
+            room_key_for(&keys, Some("mae"), "filha").as_deref(),
+            Some("k")
+        );
+        assert_eq!(room_key_for(&keys, None, "filha"), None);
     }
 }

@@ -71,6 +71,7 @@ pub fn bot_main(args: &BotArgs) -> anyhow::Result<()> {
         invite_code: args.invite.clone(),
         avatar_version: None,
         avatar_cache_dir: None,
+        room_keys: Default::default(),
     };
     #[cfg(windows)]
     let backend = LiveKitBackend::with_options(options);

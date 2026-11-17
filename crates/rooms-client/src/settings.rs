@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 use std::collections::hash_map::RandomState;
+use std::fmt;
 use std::hash::{BuildHasher, Hasher};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -84,6 +85,51 @@ pub struct Settings {
     pub dismissed_update_version: Option<String>,
     /// Versão da foto de perfil enviada ao servidor; ausente significa sem foto.
     pub avatar_version: Option<String>,
+    /// Chaves das salas com senha já desbloqueadas, por servidor e sala.
+    pub room_keys: RoomKeys,
+}
+
+/// Chaves de acesso a salas com senha, por servidor e sala; nunca guarda a senha.
+#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct RoomKeys(BTreeMap<String, BTreeMap<String, String>>);
+
+impl RoomKeys {
+    pub fn for_server(&self, server: &str) -> BTreeMap<String, String> {
+        self.0.get(server).cloned().unwrap_or_default()
+    }
+
+    pub fn insert(&mut self, server: &str, room: &str, key: &str) {
+        self.0
+            .entry(server.to_owned())
+            .or_default()
+            .insert(room.to_owned(), key.to_owned());
+    }
+
+    /// Remove as chaves das salas dadas; devolve `true` se alguma existia.
+    pub fn remove(&mut self, server: &str, rooms: &[&str]) -> bool {
+        let Some(keys) = self.0.get_mut(server) else {
+            return false;
+        };
+        let before = keys.len();
+        keys.retain(|room, _| !rooms.contains(&room.as_str()));
+        let removed = keys.len() != before;
+        if keys.is_empty() {
+            self.0.remove(server);
+        }
+        removed
+    }
+}
+
+impl fmt::Debug for RoomKeys {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let rooms: BTreeMap<&str, Vec<&str>> = self
+            .0
+            .iter()
+            .map(|(server, keys)| (server.as_str(), keys.keys().map(String::as_str).collect()))
+            .collect();
+        f.debug_tuple("RoomKeys").field(&rooms).finish()
+    }
 }
 
 impl Default for Settings {
@@ -108,6 +154,7 @@ impl Default for Settings {
             room_sounds: true,
             dismissed_update_version: None,
             avatar_version: None,
+            room_keys: RoomKeys::default(),
         }
     }
 }
@@ -282,6 +329,7 @@ mod tests {
             room_sounds: false,
             dismissed_update_version: Some("0.2.0".to_owned()),
             avatar_version: Some("0123456789abcdef".to_owned()),
+            room_keys: RoomKeys::default(),
         };
         save(&path, &settings).unwrap();
         assert_eq!(load(&path), settings);
@@ -462,5 +510,42 @@ mod tests {
             Some("0.3.1")
         );
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn room_keys_round_trip_per_server_and_stay_out_of_debug() {
+        let mut settings = Settings::default();
+        settings
+            .room_keys
+            .insert("https://voz.exemplo", "vip", "chave-secreta");
+        settings
+            .room_keys
+            .insert("https://outro.exemplo", "geral", "outra-chave");
+        assert!(!format!("{settings:?}").contains("chave-secreta"));
+        assert!(format!("{settings:?}").contains("vip"));
+
+        let json = serde_json::to_string(&settings).unwrap();
+        let back: Settings = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, settings);
+        assert_eq!(
+            back.room_keys.for_server("https://voz.exemplo"),
+            BTreeMap::from([("vip".to_owned(), "chave-secreta".to_owned())])
+        );
+
+        let old: Settings = serde_json::from_str("{}").unwrap();
+        assert_eq!(old.room_keys, RoomKeys::default());
+
+        assert!(
+            settings
+                .room_keys
+                .remove("https://voz.exemplo", &["vip", "x"])
+        );
+        assert!(!settings.room_keys.remove("https://voz.exemplo", &["vip"]));
+        assert!(
+            settings
+                .room_keys
+                .for_server("https://voz.exemplo")
+                .is_empty()
+        );
     }
 }

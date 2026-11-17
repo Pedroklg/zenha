@@ -23,14 +23,16 @@ use livekit_api::access_token::{Claims, TokenVerifier};
 use rooms_protocol::{ErrorResponse, MAX_AVATAR_UPLOAD_BYTES, validate_room_name};
 use subtle::ConstantTimeEq;
 
-use crate::chat_store::ChatStore;
+use crate::chat_store::{ChatStore, RoomRecord};
 use crate::config::Config;
 use crate::directory::{RoomDirectory, RoomModerator};
 
 pub use self::admin::DEFAULT_ADMIN_FAILURE_DELAY;
 #[cfg(test)]
 use self::rate_limit::AVATAR_RATE_LIMIT;
-pub use self::rate_limit::{AdminLoginLimiter, AvatarRateLimiter, ChatRateLimiter};
+pub use self::rate_limit::{
+    AdminLoginLimiter, AvatarRateLimiter, ChatRateLimiter, RoomUnlockLimiter,
+};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -41,6 +43,7 @@ pub struct AppState {
     pub chat_limiter: Arc<ChatRateLimiter>,
     pub avatar_limiter: Arc<AvatarRateLimiter>,
     pub admin_login_limiter: Arc<AdminLoginLimiter>,
+    pub unlock_limiter: Arc<RoomUnlockLimiter>,
     pub admin_failure_delay: Duration,
 }
 
@@ -49,6 +52,7 @@ pub fn router(state: AppState) -> Router {
         .route("/health", get(health))
         .route("/token", post(token::issue_token))
         .route("/rooms", get(rooms::list_rooms))
+        .route("/rooms/{room}/unlock", post(rooms::unlock_room))
         .route(
             "/avatar",
             put(avatar::put_avatar)
@@ -105,6 +109,10 @@ enum ApiError {
     ForbiddenAdmin,
     #[error("token does not grant access to this room")]
     ForbiddenRoom,
+    #[error("room_locked")]
+    RoomLocked,
+    #[error("invalid room password")]
+    WrongRoomPassword,
     #[error("cannot delete another user's message")]
     ForbiddenMessage,
     #[error("not found")]
@@ -152,9 +160,11 @@ impl IntoResponse for ApiError {
             Self::Unauthorized | Self::InvalidAdminPassword | Self::InvalidToken => {
                 StatusCode::UNAUTHORIZED
             }
-            Self::ForbiddenAdmin | Self::ForbiddenRoom | Self::ForbiddenMessage => {
-                StatusCode::FORBIDDEN
-            }
+            Self::ForbiddenAdmin
+            | Self::ForbiddenRoom
+            | Self::ForbiddenMessage
+            | Self::RoomLocked
+            | Self::WrongRoomPassword => StatusCode::FORBIDDEN,
             Self::AdminNotConfigured
             | Self::RoomNotFound
             | Self::TargetNotFound
@@ -233,13 +243,26 @@ fn authenticate_admin(config: &Config, headers: &HeaderMap) -> Result<String, Ap
     Ok(claims.sub)
 }
 
-async fn room_is_listed(state: &AppState, room: &str) -> Result<bool, ApiError> {
+/// Salas na ordem da lista; sem banco, vêm de `ROOMS_ROOM_LIST`, sem senha nem sala-mãe.
+async fn room_records(state: &AppState) -> Result<Vec<RoomRecord>, ApiError> {
     match &state.chat {
-        Some(chat) => chat.room_exists(room.to_owned()).await.map_err(|err| {
-            tracing::error!(%err, "room lookup failed");
+        Some(chat) => chat.room_records().await.map_err(|err| {
+            tracing::error!(%err, "room list lookup failed");
             ApiError::ChatStoreFailure
         }),
-        None => Ok(state.config.rooms.iter().any(|r| r == room)),
+        None => Ok(state
+            .config
+            .rooms
+            .iter()
+            .enumerate()
+            .map(|(position, name)| RoomRecord {
+                id: name.clone(),
+                title: name.clone(),
+                position,
+                parent: None,
+                password_hash: None,
+            })
+            .collect()),
     }
 }
 
@@ -294,8 +317,15 @@ mod tests {
     use axum::http::{Request, StatusCode};
     use tower::ServiceExt;
 
-    use super::invite_matches;
+    use rooms_protocol::ROOM_LOCKED_ERROR;
+
     use super::test_support::app;
+    use super::{ApiError, invite_matches};
+
+    #[test]
+    fn room_locked_error_text_matches_the_protocol() {
+        assert_eq!(ApiError::RoomLocked.to_string(), ROOM_LOCKED_ERROR);
+    }
 
     #[tokio::test]
     async fn health_returns_ok() {

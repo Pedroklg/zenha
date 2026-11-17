@@ -5,6 +5,7 @@ mod audio;
 mod chat;
 mod onboarding;
 mod room;
+mod room_lock;
 mod share;
 mod update;
 
@@ -14,7 +15,7 @@ use std::time::Instant;
 use rooms_core::{AdminAction, RemovalReason};
 use rooms_protocol::RoomSummary;
 
-pub use admin::{AdminDialog, AdminState};
+pub use admin::{AdminDialog, AdminState, parent_options};
 pub use audio::{
     AudioState, DEFAULT_DEVICE_LABEL, DEFAULT_PARTICIPANT_VOLUME, FULL_VOLUME, HotkeyState,
     LobbyVoiceState, MAX_PARTICIPANT_VOLUME, MicLevelView, participant_volume_for,
@@ -22,12 +23,13 @@ pub use audio::{
 pub use chat::{ChatEntry, ChatState, ImageViewer, PendingPastedImage};
 pub use onboarding::{CredentialOp, LoginForm, OnboardingState, display_name_error};
 pub use room::{ConnectionStatus, RoomState, room_display_title};
+pub use room_lock::{RoomPasswordDialog, SecretText, sidebar_order};
 pub use share::{LocalShare, SharePicker, ShareState, WatchState, aspect_fit};
 pub use update::{UpdateBanner, UpdateEffect, UpdatePhase};
 
 use crate::cli::{compile_time_default_server, resolve_initial_server};
 use crate::hotkeys::HotkeyAction;
-use crate::settings::{NoiseMode, Settings, VoiceMode};
+use crate::settings::{NoiseMode, RoomKeys, Settings, VoiceMode};
 use crate::ui_model::{SharePresetView, UiCommand, UiEvent};
 use admin::upsert_admin_room;
 use audio::{saved_volume_commands, update_participant_volume};
@@ -48,6 +50,8 @@ pub enum UserAction {
     ToggleInviteLink,
     PasteInviteLink(String),
     JoinRoom(String),
+    SubmitRoomPassword,
+    CancelRoomPassword,
     CancelConnect,
     ChangeServer,
     SaveDisplayName,
@@ -129,7 +133,7 @@ pub enum UserAction {
     RotateInvite,
     DismissAdminNotice,
     OpenCreateRoom,
-    OpenRenameRoom(String),
+    OpenEditRoom(String),
     OpenDeleteRoom(String),
     MoveRoomUp(String),
     MoveRoomDown(String),
@@ -169,6 +173,8 @@ pub struct AppState {
     pub admin: AdminState,
     pub avatar_version: Option<String>,
     pub avatar_notice: Option<String>,
+    pub room_password: Option<RoomPasswordDialog>,
+    room_keys: RoomKeys,
     avatar_cache_dir: Option<PathBuf>,
     client_id: String,
     last_room: String,
@@ -234,6 +240,8 @@ impl AppState {
             admin: AdminState::default(),
             avatar_version: settings.avatar_version.clone(),
             avatar_notice: None,
+            room_password: None,
+            room_keys: settings.room_keys.clone(),
             avatar_cache_dir: None,
             client_id: settings.client_id.clone(),
             last_room: settings.last_room.clone(),
@@ -305,6 +313,7 @@ impl AppState {
             room_sounds: self.room_sounds,
             dismissed_update_version: self.update.dismissed_version.clone(),
             avatar_version: self.avatar_version.clone(),
+            room_keys: self.room_keys.clone(),
             ..self.form.to_settings()
         }
     }
@@ -322,6 +331,11 @@ impl AppState {
                 Vec::new()
             }
             UserAction::JoinRoom(room) => self.join_room(room),
+            UserAction::SubmitRoomPassword => self.submit_room_password(),
+            UserAction::CancelRoomPassword => {
+                self.room_password = None;
+                Vec::new()
+            }
             UserAction::CancelConnect => self.cancel_connect(),
             UserAction::ChangeServer => self.change_server(),
             UserAction::SaveDisplayName => self.save_display_name(),
@@ -594,19 +608,16 @@ impl AppState {
                 if self.admin.active {
                     self.admin.dialog = Some(AdminDialog::CreateRoom {
                         title: String::new(),
+                        password: SecretText::default(),
+                        parent: None,
                         error: None,
                     });
                 }
                 Vec::new()
             }
-            UserAction::OpenRenameRoom(id) => {
-                if self.admin.active && self.rooms.iter().any(|r| r.name == id) {
-                    let title = room_display_title(&self.rooms, &id).to_owned();
-                    self.admin.dialog = Some(AdminDialog::RenameRoom {
-                        id,
-                        title,
-                        error: None,
-                    });
+            UserAction::OpenEditRoom(id) => {
+                if self.admin.active {
+                    self.open_edit_room(id);
                 }
                 Vec::new()
             }
@@ -696,10 +707,18 @@ impl AppState {
                 }
             }
             UiEvent::RoomsFailed { message } => {
-                if matches!(self.screen, Screen::Lobby | Screen::Connecting { .. }) {
+                if self.room_password.as_ref().is_some_and(|d| d.busy) {
+                    self.on_room_unlock_failed(message);
+                } else if matches!(self.screen, Screen::Lobby | Screen::Connecting { .. }) {
                     self.lobby_error = Some(message);
                 }
             }
+            UiEvent::RoomUnlocked { room, key } => {
+                let commands = self.on_room_unlocked(&room, &key.0);
+                self.pending_commands.extend(commands);
+            }
+            UiEvent::RoomUnlockFailed { message } => self.on_room_unlock_failed(message),
+            UiEvent::RoomLocked { room } => self.on_room_locked(room),
             UiEvent::InviteRejected => self.on_invite_rejected(),
             UiEvent::AudioDevicesUpdated {
                 inputs, outputs, ..

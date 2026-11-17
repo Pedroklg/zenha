@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use tokio::sync::mpsc;
@@ -25,6 +26,7 @@ pub(super) fn config() -> SessionConfig {
         invite_code: "secret".to_owned(),
         avatar_version: None,
         avatar_cache_dir: None,
+        room_keys: BTreeMap::new(),
     }
 }
 
@@ -46,12 +48,16 @@ pub(super) fn participant(identity: &str) -> Participant {
 }
 
 pub(super) fn harness() -> Harness {
+    harness_with(config())
+}
+
+pub(super) fn harness_with(config: SessionConfig) -> Harness {
     let backend = FakeBackend::new();
     let tokens = FakeTokenClient::new();
     let (command_tx, command_rx) = mpsc::unbounded_channel();
     let (event_tx, event_rx) = mpsc::unbounded_channel();
     tokio::spawn(run(
-        config(),
+        config,
         Arc::new(backend.clone()),
         Arc::new(tokens.clone()),
         command_rx,

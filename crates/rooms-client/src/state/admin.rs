@@ -8,6 +8,7 @@ use rooms_protocol::{
     validate_room_title,
 };
 
+use super::room_lock::{SecretText, room_password_error};
 use super::{AppState, Screen};
 use crate::ui_model::UiCommand;
 
@@ -15,11 +16,19 @@ use crate::ui_model::UiCommand;
 pub enum AdminDialog {
     CreateRoom {
         title: String,
+        password: SecretText,
+        parent: Option<String>,
         error: Option<String>,
     },
-    RenameRoom {
+    /// Edita nome, senha e sala-mãe; senha vazia mantém a atual, salvo com `remove_password`.
+    EditRoom {
         id: String,
         title: String,
+        password: SecretText,
+        remove_password: bool,
+        locked: bool,
+        parent: Option<String>,
+        original_parent: Option<String>,
         error: Option<String>,
     },
     DeleteRoom {
@@ -134,7 +143,25 @@ impl AppState {
             id: id.to_owned(),
             title: None,
             position: Some(target as usize),
+            password: None,
+            parent: None,
         })]
+    }
+
+    pub(super) fn open_edit_room(&mut self, id: String) {
+        let Some(room) = self.rooms.iter().find(|r| r.name == id) else {
+            return;
+        };
+        self.admin.dialog = Some(AdminDialog::EditRoom {
+            title: room.display_title().to_owned(),
+            password: SecretText::default(),
+            remove_password: false,
+            locked: room.locked,
+            parent: room.parent.clone(),
+            original_parent: room.parent.clone(),
+            error: None,
+            id,
+        });
     }
 
     pub(super) fn confirm_admin_dialog(&mut self) -> Vec<UiCommand> {
@@ -146,33 +173,72 @@ impl AppState {
             return Vec::new();
         };
         match dialog {
-            AdminDialog::CreateRoom { title, .. } => match validate_room_title_pt(&title) {
-                Ok(trimmed) => {
-                    vec![UiCommand::Admin(AdminAction::CreateRoom { title: trimmed })]
+            AdminDialog::CreateRoom {
+                title,
+                password,
+                parent,
+                ..
+            } => {
+                let checked = validate_room_title_pt(&title)
+                    .and_then(|trimmed| Ok((trimmed, new_password(&password.0, false)?)));
+                match checked {
+                    Ok((trimmed, password)) => {
+                        vec![UiCommand::Admin(AdminAction::CreateRoom {
+                            title: trimmed,
+                            password,
+                            parent,
+                        })]
+                    }
+                    Err(message) => {
+                        self.admin.dialog = Some(AdminDialog::CreateRoom {
+                            title,
+                            password,
+                            parent,
+                            error: Some(message),
+                        });
+                        Vec::new()
+                    }
                 }
-                Err(message) => {
-                    self.admin.dialog = Some(AdminDialog::CreateRoom {
-                        title,
-                        error: Some(message),
-                    });
-                    Vec::new()
+            }
+            AdminDialog::EditRoom {
+                id,
+                title,
+                password,
+                remove_password,
+                locked,
+                parent,
+                original_parent,
+                ..
+            } => {
+                let checked = validate_room_title_pt(&title)
+                    .and_then(|trimmed| Ok((trimmed, new_password(&password.0, remove_password)?)));
+                match checked {
+                    Ok((trimmed, new_pw)) => {
+                        let parent_change =
+                            (parent != original_parent).then(|| parent.unwrap_or_default());
+                        vec![UiCommand::Admin(AdminAction::UpdateRoom {
+                            id,
+                            title: Some(trimmed),
+                            position: None,
+                            password: new_pw,
+                            parent: parent_change,
+                        })]
+                    }
+                    Err(message) => {
+                        self.admin.dialog = Some(AdminDialog::EditRoom {
+                            id,
+                            title,
+                            password,
+                            remove_password,
+                            locked,
+                            parent,
+                            original_parent,
+                            error: Some(message),
+                        });
+                        Vec::new()
+                    }
                 }
-            },
-            AdminDialog::RenameRoom { id, title, .. } => match validate_room_title_pt(&title) {
-                Ok(trimmed) => vec![UiCommand::Admin(AdminAction::UpdateRoom {
-                    id,
-                    title: Some(trimmed),
-                    position: None,
-                })],
-                Err(message) => {
-                    self.admin.dialog = Some(AdminDialog::RenameRoom {
-                        id,
-                        title,
-                        error: Some(message),
-                    });
-                    Vec::new()
-                }
-            },
+            }
             AdminDialog::DeleteRoom { id, .. } => {
                 vec![UiCommand::Admin(AdminAction::DeleteRoom { id })]
             }
@@ -212,7 +278,7 @@ impl AppState {
 
     pub(super) fn prune_admin_dialog_for_rooms(&mut self) {
         let missing = match &self.admin.dialog {
-            Some(AdminDialog::RenameRoom { id, .. } | AdminDialog::DeleteRoom { id, .. }) => {
+            Some(AdminDialog::EditRoom { id, .. } | AdminDialog::DeleteRoom { id, .. }) => {
                 !self.rooms.iter().any(|r| &r.name == id)
             }
             _ => false,
@@ -232,10 +298,38 @@ pub(super) fn upsert_admin_room(rooms: &mut Vec<RoomSummary>, room: AdminRoom) {
             name: room.id,
             title: String::new(),
             participants: Vec::new(),
+            ..RoomSummary::default()
         });
     entry.title = room.title;
+    entry.locked = room.locked;
+    entry.parent = room.parent;
     let pos = room.position.min(rooms.len());
     rooms.insert(pos, entry);
+}
+
+/// Salas que podem ser mãe de `editing`: as de primeiro nível, se `editing` não tiver filhas.
+pub fn parent_options<'a>(rooms: &'a [RoomSummary], editing: Option<&str>) -> Vec<&'a RoomSummary> {
+    if editing.is_some_and(|id| rooms.iter().any(|r| r.parent.as_deref() == Some(id))) {
+        return Vec::new();
+    }
+    rooms
+        .iter()
+        .filter(|r| r.parent.is_none() && Some(r.name.as_str()) != editing)
+        .collect()
+}
+
+/// Senha a enviar: `Some("")` remove, `None` mantém a atual.
+fn new_password(password: &str, remove: bool) -> Result<Option<String>, String> {
+    if remove {
+        return Ok(Some(String::new()));
+    }
+    if password.is_empty() {
+        return Ok(None);
+    }
+    match room_password_error(password) {
+        Some(message) => Err(message),
+        None => Ok(Some(password.to_owned())),
+    }
 }
 
 fn validate_room_title_pt(title: &str) -> Result<String, String> {
@@ -342,11 +436,13 @@ mod tests {
                 name: "sala-1".to_owned(),
                 title: "Café".to_owned(),
                 participants: Vec::new(),
+                ..RoomSummary::default()
             },
             RoomSummary {
                 name: "sala-2".to_owned(),
                 title: "Jogos".to_owned(),
                 participants: Vec::new(),
+                ..RoomSummary::default()
             },
         ]));
 
@@ -379,13 +475,15 @@ mod tests {
             state.handle_action(UserAction::ConfirmAdminDialog),
             vec![UiCommand::Admin(AdminAction::CreateRoom {
                 title: "Música".to_owned(),
+                password: None,
+                parent: None,
             })]
         );
         assert!(state.admin.dialog.is_none());
 
         // Rename room preserves id and sends trimmed title.
-        state.handle_action(UserAction::OpenRenameRoom("sala-1".to_owned()));
-        if let Some(AdminDialog::RenameRoom { title, .. }) = &mut state.admin.dialog {
+        state.handle_action(UserAction::OpenEditRoom("sala-1".to_owned()));
+        if let Some(AdminDialog::EditRoom { title, .. }) = &mut state.admin.dialog {
             *title = "Café Novo".to_owned();
         }
         assert_eq!(
@@ -394,6 +492,8 @@ mod tests {
                 id: "sala-1".to_owned(),
                 title: Some("Café Novo".to_owned()),
                 position: None,
+                password: None,
+                parent: None,
             })]
         );
 
@@ -414,6 +514,8 @@ mod tests {
                 id: "sala-1".to_owned(),
                 title: None,
                 position: Some(1),
+                password: None,
+                parent: None,
             })]
         );
         assert_eq!(
@@ -422,6 +524,8 @@ mod tests {
                 id: "sala-2".to_owned(),
                 title: None,
                 position: Some(0),
+                password: None,
+                parent: None,
             })]
         );
 
@@ -451,11 +555,13 @@ mod tests {
                 name: "geral".to_owned(),
                 title: "Geral".to_owned(),
                 participants: Vec::new(),
+                ..RoomSummary::default()
             },
             RoomSummary {
                 name: "sala-2".to_owned(),
                 title: "Sala Dois".to_owned(),
                 participants: Vec::new(),
+                ..RoomSummary::default()
             },
         ]));
         state.apply_event(UiEvent::RemoteScreenShareStarted {
@@ -641,11 +747,13 @@ mod tests {
                 name: "geral".to_owned(),
                 title: "Geral".to_owned(),
                 participants: Vec::new(),
+                ..RoomSummary::default()
             },
             RoomSummary {
                 name: "sala-2".to_owned(),
                 title: "Reunião".to_owned(),
                 participants: Vec::new(),
+                ..RoomSummary::default()
             },
         ]));
         state.handle_action(UserAction::JoinRoom("geral".to_owned()));
@@ -698,6 +806,7 @@ mod tests {
             name: "sala-2".to_owned(),
             title: "Reunião".to_owned(),
             participants: Vec::new(),
+            ..RoomSummary::default()
         }]));
         state.handle_action(UserAction::JoinRoom("sala-2".to_owned()));
         state.apply_event(UiEvent::Joined {
@@ -710,5 +819,101 @@ mod tests {
         });
         assert!(matches!(state.screen, Screen::Lobby));
         assert_eq!(state.lobby_notice.as_deref(), Some("A sala foi apagada"));
+    }
+
+    #[test]
+    fn edit_room_sets_password_and_parent_and_redacts_the_password() {
+        let mut state = state_with_code();
+        state.handle_action(UserAction::SubmitOnboarding);
+        let room = |name: &str, parent: Option<&str>, locked: bool| RoomSummary {
+            name: name.to_owned(),
+            title: name.to_owned(),
+            locked,
+            parent: parent.map(str::to_owned),
+            ..RoomSummary::default()
+        };
+        state.apply_event(UiEvent::RoomsUpdated(vec![
+            room("geral", None, false),
+            room("vip", None, true),
+            room("cantinho", Some("vip"), false),
+        ]));
+        state.apply_event(UiEvent::AdminChanged { active: true });
+
+        let names = |rooms: Vec<&RoomSummary>| -> Vec<String> {
+            rooms.into_iter().map(|r| r.name.clone()).collect()
+        };
+        assert_eq!(names(parent_options(&state.rooms, Some("geral"))), ["vip"]);
+        assert!(parent_options(&state.rooms, Some("vip")).is_empty());
+        assert_eq!(names(parent_options(&state.rooms, None)), ["geral", "vip"]);
+
+        state.handle_action(UserAction::OpenEditRoom("geral".to_owned()));
+        if let Some(AdminDialog::EditRoom {
+            password, parent, ..
+        }) = &mut state.admin.dialog
+        {
+            password.0 = "senha-nova".to_owned();
+            *parent = Some("vip".to_owned());
+        }
+        assert!(!format!("{:?}", state.admin).contains("senha-nova"));
+        assert_eq!(
+            state.handle_action(UserAction::ConfirmAdminDialog),
+            vec![UiCommand::Admin(AdminAction::UpdateRoom {
+                id: "geral".to_owned(),
+                title: Some("geral".to_owned()),
+                position: None,
+                password: Some("senha-nova".to_owned()),
+                parent: Some("vip".to_owned()),
+            })]
+        );
+
+        state.handle_action(UserAction::OpenEditRoom("cantinho".to_owned()));
+        if let Some(AdminDialog::EditRoom {
+            remove_password,
+            parent,
+            ..
+        }) = &mut state.admin.dialog
+        {
+            *remove_password = true;
+            *parent = None;
+        }
+        assert_eq!(
+            state.handle_action(UserAction::ConfirmAdminDialog),
+            vec![UiCommand::Admin(AdminAction::UpdateRoom {
+                id: "cantinho".to_owned(),
+                title: Some("cantinho".to_owned()),
+                position: None,
+                password: Some(String::new()),
+                parent: Some(String::new()),
+            })]
+        );
+
+        state.handle_action(UserAction::OpenCreateRoom);
+        if let Some(AdminDialog::CreateRoom {
+            title, password, ..
+        }) = &mut state.admin.dialog
+        {
+            *title = "Nova".to_owned();
+            password.0 = "   ".to_owned();
+        }
+        assert!(
+            state
+                .handle_action(UserAction::ConfirmAdminDialog)
+                .is_empty()
+        );
+        assert!(matches!(
+            state.admin.dialog,
+            Some(AdminDialog::CreateRoom { error: Some(_), .. })
+        ));
+
+        state.apply_event(UiEvent::AdminRoomUpdated(rooms_protocol::AdminRoom {
+            id: "geral".to_owned(),
+            title: "geral".to_owned(),
+            position: 0,
+            locked: true,
+            parent: Some("vip".to_owned()),
+        }));
+        let geral = state.rooms.iter().find(|r| r.name == "geral").unwrap();
+        assert!(geral.locked);
+        assert_eq!(geral.parent.as_deref(), Some("vip"));
     }
 }
