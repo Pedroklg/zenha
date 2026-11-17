@@ -1,4 +1,4 @@
-//! Cenários de transmissão de tela e do som que a acompanha.
+//! Screen sharing scenarios and the accompanying sound.
 
 use std::time::{Duration, Instant};
 

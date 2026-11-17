@@ -1,4 +1,4 @@
-//! Cenários de áudio: saída, microfone, mute, deafen, volume e sons de confirmação.
+//! Audio scenarios: output, microphone, mute, deafen, volume and confirmation sounds.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};

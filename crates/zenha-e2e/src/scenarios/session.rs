@@ -1,4 +1,4 @@
-//! Cenários de convite, presença e troca de sala.
+//! Invite, presence and room switching scenarios.
 
 use std::time::Instant;
 

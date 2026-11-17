@@ -1,4 +1,4 @@
-//! Eventos que o bot devolve, os tipos de informação que eles carregam e a codificação em linha.
+//! Events the bot returns, the kinds of information they carry and the line encoding.
 
 use serde::{Deserialize, Serialize};
 use zenha_core::{

@@ -1,4 +1,4 @@
-//! Comandos que o orquestrador envia ao bot e a leitura deles.
+//! Commands the orchestrator sends to the bot and their parsing.
 
 use serde::{Deserialize, Serialize};
 use zenha_core::{

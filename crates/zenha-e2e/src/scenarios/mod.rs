@@ -1,4 +1,4 @@
-//! Os dezesseis cenários, o registro deles e as ferramentas que compartilham.
+//! The sixteen scenarios, their registry and the tools they share.
 
 mod audio;
 mod chat;
