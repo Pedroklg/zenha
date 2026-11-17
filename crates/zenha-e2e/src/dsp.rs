@@ -1,4 +1,4 @@
-//! Análise de tom com filtro de Goertzel, sem dependência de plataforma.
+//! Tone analysis with the Goertzel filter, platform independent.
 
 use std::f64::consts::TAU;
 

@@ -1,4 +1,4 @@
-//! Emissão de token JWT de sala via `POST /token`.
+//! Room JWT token issuance via `POST /token`.
 
 use axum::Json;
 use axum::body::Bytes;

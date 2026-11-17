@@ -1,4 +1,4 @@
-//! Roteador HTTP, autenticação de convite/JWT, erros de API e estado compartilhado.
+//! HTTP router, invite/JWT authentication, API errors and shared state.
 
 mod admin;
 mod avatar;
@@ -243,7 +243,7 @@ fn authenticate_admin(config: &Config, headers: &HeaderMap) -> Result<String, Ap
     Ok(claims.sub)
 }
 
-/// Salas na ordem da lista; sem banco, vêm de `ZENHA_ROOM_LIST`, sem senha nem sala-mãe.
+/// Rooms in list order; without a database, they come from `ZENHA_ROOM_LIST`, with no password or parent room.
 async fn room_records(state: &AppState) -> Result<Vec<RoomRecord>, ApiError> {
     match &state.chat {
         Some(chat) => chat.room_records().await.map_err(|err| {

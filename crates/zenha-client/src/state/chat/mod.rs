@@ -1,4 +1,4 @@
-//! Estado do chat, histórico, transferências de arquivo e visualizador de imagens.
+//! Chat state, history, file transfers and image viewer.
 
 use std::collections::{HashSet, VecDeque};
 use std::path::PathBuf;

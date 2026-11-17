@@ -1,4 +1,4 @@
-//! Estado local de mudo, ensurdecimento e sons de eventos da sala.
+//! Local mute and deafen state and room event sounds.
 
 use zenha_core::Cue;
 

@@ -1,4 +1,4 @@
-//! Relatório final em Markdown (português) e JSON.
+//! Final report in Markdown (Portuguese) and JSON.
 
 use std::fmt::Write as _;
 use std::time::{SystemTime, UNIX_EPOCH};

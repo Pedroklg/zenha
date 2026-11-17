@@ -1,4 +1,4 @@
-//! Esquema do SQLite e migrações.
+//! SQLite schema and migrations.
 
 use rusqlite::Connection;
 

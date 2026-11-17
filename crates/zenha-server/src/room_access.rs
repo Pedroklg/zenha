@@ -1,4 +1,4 @@
-//! Senha por sala: chave de acesso (HMAC-SHA256) e regra de herança da sala-mãe.
+//! Per-room password: access key (HMAC-SHA256) and parent room inheritance rule.
 
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
@@ -7,7 +7,7 @@ use crate::store::RoomRecord;
 
 const KEY_LABEL: &[u8] = b"zenha.room_key.v1";
 
-/// Chave de acesso de `room` enquanto a senha dela tiver o hash `password_hash`.
+/// Access key of `room` while its password has hash `password_hash`.
 pub fn room_key(secret: &str, room: &str, password_hash: &str) -> String {
     let message = [
         KEY_LABEL,
@@ -30,7 +30,7 @@ pub fn key_matches(secret: &str, room: &str, password_hash: &str, provided: &str
         .into()
 }
 
-/// Salas cuja senha vale para `room`: ela mesma e a sala-mãe, quando têm senha.
+/// Rooms whose password applies to `room`: itself and the parent room, when they have a password.
 pub fn lock_owners<'a>(rooms: &'a [RoomRecord], room: &'a RoomRecord) -> Vec<(&'a str, &'a str)> {
     let parent = room
         .parent

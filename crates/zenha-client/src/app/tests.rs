@@ -1,4 +1,4 @@
-//! Testes da `App` com `egui_kittest`.
+//! `App` tests with `egui_kittest`.
 
 use std::sync::mpsc::channel;
 use std::time::Duration;

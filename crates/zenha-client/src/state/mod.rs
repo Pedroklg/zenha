@@ -1,4 +1,4 @@
-//! Estado da interface, ações do usuário e transições de tela do cliente.
+//! Interface state, user actions and client screen transitions.
 
 mod admin;
 mod audio;

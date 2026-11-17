@@ -1,4 +1,4 @@
-//! Diálogos de arquivo do sistema (só no Windows; nas demais plataformas não abrem nada).
+//! System file dialogs (Windows only; on other platforms they open nothing).
 
 use std::path::PathBuf;
 

@@ -1,4 +1,4 @@
-//! Registro dos resultados de cada cenário: passos, medições, falha e trechos de log.
+//! Recording of each scenario's results: steps, measurements, failure and log excerpts.
 
 use std::time::{Duration, Instant};
 

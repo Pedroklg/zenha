@@ -1,4 +1,4 @@
-//! Integração com o sistema: bandeja, instância única, atalhos globais, área de transferência, credenciais e configurações.
+//! System integration: tray, single instance, global hotkeys, clipboard, credentials and settings.
 
 pub mod clipboard_image;
 pub mod credentials;

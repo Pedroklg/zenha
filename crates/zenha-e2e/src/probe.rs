@@ -1,4 +1,4 @@
-//! Sonda de áudio de saída: interface comum e correspondência entre dispositivos.
+//! Output audio probe: common interface and device matching.
 
 use std::time::Duration;
 

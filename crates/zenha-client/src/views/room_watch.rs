@@ -1,4 +1,4 @@
-//! Área da sala durante visualização ou prévia de transmissão de tela.
+//! Room area while watching or previewing a screen share.
 
 use std::collections::BTreeMap;
 

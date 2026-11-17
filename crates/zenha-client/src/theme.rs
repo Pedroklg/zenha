@@ -1,4 +1,4 @@
-//! Tema visual, tipografia, paleta de cores e avatares do Zenha.
+//! Visual theme, typography, color palette and Zenha avatars.
 
 use std::sync::Arc;
 

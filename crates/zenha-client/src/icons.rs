@@ -1,4 +1,4 @@
-//! Ícones vetoriais desenhados via `egui::Painter`.
+//! Vector icons drawn via `egui::Painter`.
 
 use std::f32::consts::PI;
 

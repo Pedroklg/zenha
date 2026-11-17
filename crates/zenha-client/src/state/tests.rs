@@ -1,4 +1,4 @@
-//! Testes das transições do `AppState`.
+//! Tests for `AppState` transitions.
 
 use crate::ui_model::UiEvent;
 

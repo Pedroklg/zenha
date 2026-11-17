@@ -1,4 +1,4 @@
-//! Estatísticas de quadros de vídeo recebidos e critérios de aceitação do padrão de teste.
+//! Received video frame statistics and acceptance criteria for the test pattern.
 
 use serde::{Deserialize, Serialize};
 use zenha_core::{TestPatternSource, VideoFrame};

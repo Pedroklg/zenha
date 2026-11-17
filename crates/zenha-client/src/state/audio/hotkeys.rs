@@ -1,4 +1,4 @@
-//! Estado e configuração de atalhos globais de teclado.
+//! State and configuration of global keyboard shortcuts.
 
 use crate::platform::hotkeys::HotkeyAction;
 use crate::platform::settings::Settings;

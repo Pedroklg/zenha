@@ -1,4 +1,4 @@
-//! Seção de administração das configurações.
+//! Admin section of the settings.
 
 use super::*;
 

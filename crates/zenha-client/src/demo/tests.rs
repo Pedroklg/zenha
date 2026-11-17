@@ -1,4 +1,4 @@
-//! Testes da sessão de demonstração.
+//! Tests for the demo session.
 
 use std::path::PathBuf;
 use std::time::{Duration, Instant};

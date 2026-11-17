@@ -1,4 +1,4 @@
-//! Orquestrador: sobe os servidores que faltam, roda os cenários e grava o relatório.
+//! Orchestrator: starts the missing servers, runs the scenarios and writes the report.
 
 use std::env::consts::EXE_SUFFIX;
 use std::fs;

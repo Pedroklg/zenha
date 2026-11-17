@@ -8,7 +8,7 @@ use crate::state::{ChatEntry, ChatState, ImageViewer, PendingPastedImage, UserAc
 use crate::theme;
 use crate::ui_model::{ChatMessageView, FileTransferView, ParticipantView, TransferStateView};
 
-/// Exibe o visualizador modal com a imagem selecionada do chat.
+/// Shows the modal viewer with the selected chat image.
 pub fn viewer(
     ctx: &egui::Context,
     viewer: Option<&ImageViewer>,

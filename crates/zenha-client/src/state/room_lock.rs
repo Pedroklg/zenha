@@ -1,4 +1,4 @@
-//! Salas com senha: diálogo de senha, chaves salvas e ordem das salas-filhas na lista.
+//! Password-protected rooms: password dialog, saved keys and ordering of child rooms in the list.
 
 use std::fmt;
 
@@ -7,7 +7,7 @@ use zenha_protocol::{RoomSummary, ValidationError, validate_room_password};
 use super::{AppState, Screen};
 use crate::ui_model::UiCommand;
 
-/// Texto digitado que não pode aparecer em `Debug` (senhas).
+/// Typed text that must not appear in `Debug` (passwords).
 #[derive(Clone, Default, PartialEq, Eq)]
 pub struct SecretText(pub String);
 
@@ -26,7 +26,7 @@ pub struct RoomPasswordDialog {
     pub busy: bool,
 }
 
-/// Salas na ordem da lista lateral: cada sala de primeiro nível seguida das filhas (nível 1).
+/// Rooms in sidebar list order: each top-level room followed by its children (level 1).
 pub fn sidebar_order(rooms: &[RoomSummary]) -> Vec<(usize, &RoomSummary, u8)> {
     let is_top = |r: &RoomSummary| {
         r.parent

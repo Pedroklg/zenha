@@ -1,4 +1,4 @@
-//! Contexto compartilhado dos cenários: ambiente, bots, sonda e esperas.
+//! Shared scenario context: environment, bots, probe and waits.
 
 use std::net::SocketAddr;
 use std::path::PathBuf;

@@ -1,4 +1,4 @@
-//! Lista de salas da barra lateral e suas linhas de ocupantes.
+//! Sidebar room list and its occupant rows.
 
 use std::collections::BTreeMap;
 

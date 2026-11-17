@@ -1,4 +1,4 @@
-//! Leitura dos canais assíncronos: sessão, atualização, links encaminhados, salvamentos e imagens coladas.
+//! Draining the async channels: session, update, forwarded links, saves and pasted images.
 
 use std::path::PathBuf;
 use std::sync::mpsc::TryRecvError;

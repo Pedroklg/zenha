@@ -1,4 +1,4 @@
-//! Transição de estado a partir de cada `UiEvent` vindo da sessão.
+//! State transition for each `UiEvent` coming from the session.
 
 use zenha_core::RemovalReason;
 

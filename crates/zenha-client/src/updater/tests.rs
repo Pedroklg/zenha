@@ -1,4 +1,4 @@
-//! Testes da atualização automática.
+//! Tests for the automatic update.
 
 use std::fs;
 use std::io::{Read, Write};

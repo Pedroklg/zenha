@@ -1,4 +1,4 @@
-//! Geração do ícone do aplicativo (`zenha.ico`) a partir do desenho da bandeja.
+//! Generation of the app icon (`zenha.ico`) from the tray drawing.
 
 use std::error::Error;
 use std::fs;

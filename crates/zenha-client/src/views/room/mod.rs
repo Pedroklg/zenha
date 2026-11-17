@@ -1,4 +1,4 @@
-//! Telas de lobby e de sala ativa; cartões, avisos e diálogos ficam nos módulos filhos.
+//! Lobby and active room screens; cards, notices and dialogs live in the child modules.
 
 mod banners;
 mod center;

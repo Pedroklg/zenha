@@ -1,4 +1,4 @@
-//! Protocolo de linhas JSON entre o orquestrador e os bots: comandos no stdin, eventos no stdout.
+//! JSON line protocol between orchestrator and bots: commands on stdin, events on stdout.
 
 mod command;
 mod event;

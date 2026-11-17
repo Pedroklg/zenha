@@ -1,4 +1,4 @@
-//! Ações que o usuário dispara na interface.
+//! Actions the user triggers in the interface.
 
 use std::path::PathBuf;
 

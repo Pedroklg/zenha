@@ -1,4 +1,4 @@
-//! Estado de transmissão e visualização de tela.
+//! Screen sharing and viewing state.
 
 use std::collections::BTreeMap;
 

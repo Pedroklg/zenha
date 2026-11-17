@@ -1,4 +1,4 @@
-//! Estado de entrada no servidor, formulário de login e credenciais.
+//! Server join state, login form and credentials.
 
 use std::fmt;
 

@@ -1,4 +1,4 @@
-//! Armazenamento SQLite para mensagens de chat salvas, salas e configurações.
+//! SQLite storage for saved chat messages, rooms and settings.
 
 mod avatars;
 mod messages;

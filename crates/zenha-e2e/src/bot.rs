@@ -1,4 +1,4 @@
-//! Participante sem janela: lê comandos JSON do stdin e escreve eventos JSON no stdout.
+//! Windowless participant: reads JSON commands from stdin and writes JSON events to stdout.
 
 use std::io::{self, BufRead, Write};
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};

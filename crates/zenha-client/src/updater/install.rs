@@ -1,4 +1,4 @@
-//! Caminhos temporários, detecção da instalação e execução do instalador.
+//! Temporary paths, installation detection and installer execution.
 
 use std::fs;
 use std::path::{Path, PathBuf};
