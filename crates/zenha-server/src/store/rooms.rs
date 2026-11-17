@@ -284,6 +284,7 @@ fn commit_delete_room_sync(
         params![id],
     )?;
     tx.execute("DELETE FROM chat_messages WHERE room = ?1", params![id])?;
+    super::webhooks::delete_room_webhooks(&tx, id)?;
     let remaining = rooms.into_iter().filter(|(room_id, _)| room_id != id);
     for (pos, (room_id, _)) in remaining.enumerate() {
         let pos_i64 = i64::try_from(pos).unwrap_or(i64::MAX);
