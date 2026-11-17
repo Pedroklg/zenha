@@ -2,7 +2,10 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::path::PathBuf;
 
-use zenha_protocol::{AdminRoom, ChatMessage, RoomSummary, SavedChatMessage};
+use zenha_protocol::{
+    AdminRoom, AdminWebhook, ChatMessage, CreatedWebhook, RoomSummary, SavedChatMessage,
+    WebhookPost,
+};
 
 use crate::audio::cue::Cue;
 use crate::video::capture::CaptureEnd;
@@ -163,6 +166,14 @@ pub enum AdminAction {
     RotateInvite {
         new_code: String,
     },
+    ListWebhooks,
+    CreateWebhook {
+        room: String,
+        name: String,
+    },
+    DeleteWebhook {
+        id: String,
+    },
 }
 
 impl fmt::Debug for AdminAction {
@@ -227,6 +238,13 @@ impl fmt::Debug for AdminAction {
                 .debug_struct("RotateInvite")
                 .field("new_code", &"<redacted>")
                 .finish(),
+            Self::ListWebhooks => f.write_str("ListWebhooks"),
+            Self::CreateWebhook { room, name } => f
+                .debug_struct("CreateWebhook")
+                .field("room", room)
+                .field("name", name)
+                .finish(),
+            Self::DeleteWebhook { id } => f.debug_struct("DeleteWebhook").field("id", id).finish(),
         }
     }
 }
@@ -484,6 +502,16 @@ pub enum Event {
     },
     /// Invite code updated via administrative action.
     AdminInviteRotated,
+    /// Webhooks listed via administrative action.
+    AdminWebhooks(Vec<AdminWebhook>),
+    /// Webhook created; `url` is absolute and shown only this once.
+    AdminWebhookCreated(CreatedWebhook),
+    /// Webhook revoked via administrative action.
+    AdminWebhookDeleted {
+        id: String,
+    },
+    /// Message from an integration, received from the server on topic `webhook`.
+    WebhookPosted(WebhookPost),
     /// An administrator ended the local screen share.
     AdminStoppedScreenShare,
     /// An administrator moved the user to another room.

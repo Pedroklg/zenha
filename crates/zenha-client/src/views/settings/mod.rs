@@ -2,6 +2,8 @@ use eframe::egui::{self, RichText};
 
 use crate::platform::hotkeys::{HotkeyAction, binding_from_key, binding_label, binding_warning};
 use crate::platform::settings::{NoiseMode, VoiceMode};
+use zenha_protocol::RoomSummary;
+
 use crate::state::{
     AdminState, AudioState, DEFAULT_DEVICE_LABEL, HotkeyState, MicLevelView, UserAction,
 };
@@ -11,6 +13,7 @@ use crate::ui_model::AudioDeviceView;
 mod admin;
 mod hotkeys;
 mod mic;
+mod webhooks;
 
 use admin::admin_section;
 use hotkeys::hotkeys_section;
@@ -56,6 +59,7 @@ pub struct SettingsView<'a> {
     pub invite_copied: bool,
     pub can_admin: bool,
     pub admin: &'a mut AdminState,
+    pub rooms: &'a [RoomSummary],
     pub avatar_identity: &'a str,
     pub avatar_version: Option<&'a str>,
     pub avatar_notice: Option<&'a str>,
@@ -252,7 +256,7 @@ fn content(ui: &mut egui::Ui, view: &mut SettingsView<'_>, actions: &mut Vec<Use
         ui.small(RichText::new("Link copiado.").color(theme::ACCENT_TEXT));
     }
 
-    admin_section(ui, view.can_admin, view.admin, actions);
+    admin_section(ui, view.can_admin, view.admin, view.rooms, actions);
 }
 
 fn can_remove_avatar(version: Option<&str>) -> bool {

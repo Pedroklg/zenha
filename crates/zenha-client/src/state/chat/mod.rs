@@ -4,7 +4,7 @@ use std::collections::{HashSet, VecDeque};
 use std::path::PathBuf;
 
 use zenha_core::AdminAction;
-use zenha_protocol::{MAX_CHAT_MESSAGE_LEN, validate_chat_text};
+use zenha_protocol::{MAX_CHAT_MESSAGE_LEN, WebhookPost, validate_chat_text};
 
 use super::room::RoomState;
 use super::{AppState, Screen};
@@ -17,6 +17,7 @@ pub const CHAT_COUNTER_THRESHOLD: usize = MAX_CHAT_MESSAGE_LEN * 8 / 10;
 pub enum ChatEntry {
     Text(ChatMessageView),
     File(FileTransferView),
+    Webhook(WebhookPost),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -95,6 +96,10 @@ impl ChatState {
         self.push(ChatEntry::Text(message), true);
     }
 
+    pub(super) fn push_webhook(&mut self, post: WebhookPost) {
+        self.push(ChatEntry::Webhook(post), true);
+    }
+
     pub(super) fn apply_history(&mut self, messages: Vec<ChatMessageView>, has_more: bool) {
         self.history_loading = false;
         self.has_more = has_more;
@@ -103,7 +108,7 @@ impl ChatState {
             .iter()
             .filter_map(|entry| match entry {
                 ChatEntry::Text(message) => Some(message.id.clone()),
-                ChatEntry::File(_) => None,
+                ChatEntry::File(_) | ChatEntry::Webhook(_) => None,
             })
             .collect();
         let mut seen = HashSet::new();
@@ -130,7 +135,7 @@ impl ChatState {
             ChatEntry::Text(message) => {
                 !(message.id == id && (sender.is_empty() || message.sender_id == sender))
             }
-            ChatEntry::File(_) => true,
+            ChatEntry::File(_) | ChatEntry::Webhook(_) => true,
         });
     }
 

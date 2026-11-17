@@ -242,6 +242,21 @@ fn admin_urls_build_and_validate() {
 }
 
 #[test]
+fn webhook_urls_build_and_validate() {
+    let client = HttpTokenClient::new("http://host:8080/").unwrap();
+    assert_eq!(
+        client.admin_webhook_url("abc123").as_deref(),
+        Ok("http://host:8080/admin/webhooks/abc123")
+    );
+    assert!(client.admin_webhook_url("../bad").is_err());
+    assert!(client.admin_webhook_url("").is_err());
+    assert_eq!(
+        client.url("/hooks/abc123/tok"),
+        "http://host:8080/hooks/abc123/tok"
+    );
+}
+
+#[test]
 fn avatar_urls_and_status_errors_validate() {
     let client = HttpTokenClient::new("http://host:8080/").unwrap();
     assert_eq!(

@@ -4,9 +4,10 @@ use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 
 use zenha_protocol::{
-    AdminLoginRequest, AdminLoginResponse, AdminRoom, AvatarUploadResponse, ChatHistoryResponse,
-    ChatMessage, CreateRoomRequest, MoveParticipantRequest, RoomSummary, SaveChatRequest,
-    TokenRequest, UpdateInviteRequest, UpdateRoomRequest,
+    AdminLoginRequest, AdminLoginResponse, AdminRoom, AdminWebhook, AvatarUploadResponse,
+    ChatHistoryResponse, ChatMessage, CreateRoomRequest, CreateWebhookRequest, CreatedWebhook,
+    MoveParticipantRequest, RoomSummary, SaveChatRequest, TokenRequest, UpdateInviteRequest,
+    UpdateRoomRequest,
 };
 
 use crate::api::SessionError;
@@ -59,6 +60,17 @@ pub enum AdminTokenCall {
         jwt: String,
         request: UpdateInviteRequest,
     },
+    ListWebhooks {
+        jwt: String,
+    },
+    CreateWebhook {
+        jwt: String,
+        request: CreateWebhookRequest,
+    },
+    DeleteWebhook {
+        jwt: String,
+        id: String,
+    },
 }
 
 #[derive(Debug)]
@@ -81,6 +93,8 @@ pub(super) struct TokenState {
     pub(super) admin_login_results: VecDeque<Result<AdminLoginResponse, SessionError>>,
     pub(super) admin_room_results: VecDeque<Result<AdminRoom, SessionError>>,
     pub(super) admin_unit_results: VecDeque<Result<(), SessionError>>,
+    pub(super) admin_webhook_list_results: VecDeque<Result<Vec<AdminWebhook>, SessionError>>,
+    pub(super) admin_webhook_created_results: VecDeque<Result<CreatedWebhook, SessionError>>,
     pub(super) avatars: HashMap<(String, String), Vec<u8>>,
     pub(super) upload_avatar_calls: Vec<(String, Vec<u8>)>,
     pub(super) delete_avatar_calls: Vec<String>,
@@ -129,6 +143,8 @@ impl FakeTokenClient {
                 admin_login_results: VecDeque::new(),
                 admin_room_results: VecDeque::new(),
                 admin_unit_results: VecDeque::new(),
+                admin_webhook_list_results: VecDeque::new(),
+                admin_webhook_created_results: VecDeque::new(),
                 avatars: HashMap::new(),
                 upload_avatar_calls: Vec::new(),
                 delete_avatar_calls: Vec::new(),
@@ -218,6 +234,18 @@ impl FakeTokenClient {
 
     pub fn push_admin_unit_result(&self, result: Result<(), SessionError>) {
         lock(&self.state).admin_unit_results.push_back(result);
+    }
+
+    pub fn push_admin_webhook_list_result(&self, result: Result<Vec<AdminWebhook>, SessionError>) {
+        lock(&self.state)
+            .admin_webhook_list_results
+            .push_back(result);
+    }
+
+    pub fn push_admin_webhook_created_result(&self, result: Result<CreatedWebhook, SessionError>) {
+        lock(&self.state)
+            .admin_webhook_created_results
+            .push_back(result);
     }
 
     pub fn set_avatar_bytes(&self, identity: &str, version: &str, bytes: Vec<u8>) {

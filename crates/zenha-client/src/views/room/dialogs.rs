@@ -163,6 +163,17 @@ pub fn admin_dialog(
                         &mut actions,
                     );
                 }
+                AdminDialog::RevokeWebhook { name, .. } => {
+                    confirm_danger_dialog_ui(
+                        ui,
+                        "Revogar webhook",
+                        &format!(
+                            "Revogar o webhook \"{name}\"? A integração deixa de funcionar e a URL antiga para de valer."
+                        ),
+                        "Revogar",
+                        &mut actions,
+                    );
+                }
             }
         });
 

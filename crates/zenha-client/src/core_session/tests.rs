@@ -783,3 +783,45 @@ fn admin_events_translate_cleanly() {
         vec![UiEvent::AdminStoppedScreenShare]
     );
 }
+
+#[test]
+fn webhook_events_translate_cleanly() {
+    let mut translator = Translator::default();
+    let post = zenha_protocol::WebhookPost {
+        id: "abc".to_owned(),
+        name: "Gamers Club".to_owned(),
+        sent_at_unix_ms: 1,
+        content: Some("oi".to_owned()),
+        embeds: Vec::new(),
+    };
+    assert_eq!(
+        translator.translate(Event::WebhookPosted(post.clone())),
+        vec![UiEvent::WebhookPosted(post)]
+    );
+    let webhook = zenha_protocol::AdminWebhook {
+        id: "abc".to_owned(),
+        room: "geral".to_owned(),
+        name: "Gamers Club".to_owned(),
+        created_at_unix_ms: 2,
+    };
+    assert_eq!(
+        translator.translate(Event::AdminWebhooks(vec![webhook.clone()])),
+        vec![UiEvent::AdminWebhooks(vec![webhook.clone()])]
+    );
+    let created = zenha_protocol::CreatedWebhook {
+        webhook,
+        url: "https://voz.exemplo/hooks/abc/tok".to_owned(),
+    };
+    assert_eq!(
+        translator.translate(Event::AdminWebhookCreated(created.clone())),
+        vec![UiEvent::AdminWebhookCreated(created)]
+    );
+    assert_eq!(
+        translator.translate(Event::AdminWebhookDeleted {
+            id: "abc".to_owned(),
+        }),
+        vec![UiEvent::AdminWebhookDeleted {
+            id: "abc".to_owned(),
+        }]
+    );
+}

@@ -6,10 +6,10 @@ use super::token::AdminTokenCall;
 
 use async_trait::async_trait;
 use zenha_protocol::{
-    AdminLoginRequest, AdminLoginResponse, AdminRoom, AvatarUploadResponse, ChatHistoryResponse,
-    ChatMessage, CreateRoomRequest, MoveParticipantRequest, RoomSummary, SaveChatRequest,
-    TokenRequest, TokenResponse, UnlockRoomRequest, UnlockRoomResponse, UpdateInviteRequest,
-    UpdateRoomRequest,
+    AdminLoginRequest, AdminLoginResponse, AdminRoom, AdminWebhook, AvatarUploadResponse,
+    ChatHistoryResponse, ChatMessage, CreateRoomRequest, CreateWebhookRequest, CreatedWebhook,
+    MoveParticipantRequest, RoomSummary, SaveChatRequest, TokenRequest, TokenResponse,
+    UnlockRoomRequest, UnlockRoomResponse, UpdateInviteRequest, UpdateRoomRequest,
 };
 
 use crate::api::SessionError;
@@ -286,6 +286,50 @@ impl TokenClient for FakeTokenClient {
         state.admin_calls.push(AdminTokenCall::RotateInvite {
             jwt: jwt.to_owned(),
             request,
+        });
+        state.admin_unit_results.pop_front().unwrap_or(Ok(()))
+    }
+
+    async fn admin_list_webhooks(&self, jwt: &str) -> Result<Vec<AdminWebhook>, SessionError> {
+        let mut state = lock(&self.state);
+        state.admin_calls.push(AdminTokenCall::ListWebhooks {
+            jwt: jwt.to_owned(),
+        });
+        state
+            .admin_webhook_list_results
+            .pop_front()
+            .unwrap_or(Ok(Vec::new()))
+    }
+
+    async fn admin_create_webhook(
+        &self,
+        jwt: &str,
+        request: &CreateWebhookRequest,
+    ) -> Result<CreatedWebhook, SessionError> {
+        let mut state = lock(&self.state);
+        state.admin_calls.push(AdminTokenCall::CreateWebhook {
+            jwt: jwt.to_owned(),
+            request: request.clone(),
+        });
+        if let Some(result) = state.admin_webhook_created_results.pop_front() {
+            return result;
+        }
+        Ok(CreatedWebhook {
+            webhook: AdminWebhook {
+                id: "hook1".to_owned(),
+                room: request.room.clone(),
+                name: request.name.clone(),
+                created_at_unix_ms: 1,
+            },
+            url: "http://fake.invalid/hooks/hook1/fake-token".to_owned(),
+        })
+    }
+
+    async fn admin_delete_webhook(&self, jwt: &str, id: &str) -> Result<(), SessionError> {
+        let mut state = lock(&self.state);
+        state.admin_calls.push(AdminTokenCall::DeleteWebhook {
+            jwt: jwt.to_owned(),
+            id: id.to_owned(),
         });
         state.admin_unit_results.pop_front().unwrap_or(Ok(()))
     }

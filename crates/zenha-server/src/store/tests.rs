@@ -4,6 +4,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use rusqlite::Connection;
 use zenha_protocol::{
     AdminRoom, CHAT_HISTORY_PAGE, ChatMessage, MAX_ROOM_NAME_LEN, MAX_ROOMS_COUNT,
+    MAX_WEBHOOKS_COUNT,
 };
 
 use super::messages::clamp_sent_at;
@@ -685,4 +686,103 @@ async fn migration_adds_room_columns_to_an_existing_database() {
     assert!(matches!(updated, UpdateRoomOutcome::Updated(room) if room.locked));
     drop(store);
     assert!(ChatStore::open(&temp.path).is_ok());
+}
+
+#[tokio::test]
+async fn webhooks_create_list_get_and_delete() {
+    let store = ChatStore::open_in_memory().unwrap();
+    let created = store
+        .create_webhook(
+            "w1".to_owned(),
+            "geral".to_owned(),
+            "GC".to_owned(),
+            "hash1".to_owned(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (created.id.as_str(), created.room.as_str()),
+        ("w1", "geral")
+    );
+    assert!(created.created_at_unix_ms > 0);
+    assert_eq!(store.list_webhooks().await.unwrap(), vec![created]);
+
+    let record = store.get_webhook("w1".to_owned()).await.unwrap().unwrap();
+    assert_eq!(
+        (
+            record.room.as_str(),
+            record.name.as_str(),
+            record.token_hash.as_str()
+        ),
+        ("geral", "GC", "hash1")
+    );
+    assert!(
+        store
+            .get_webhook("nope".to_owned())
+            .await
+            .unwrap()
+            .is_none()
+    );
+
+    assert!(store.delete_webhook("w1".to_owned()).await.unwrap());
+    assert!(!store.delete_webhook("w1".to_owned()).await.unwrap());
+    assert!(store.list_webhooks().await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn webhook_quota_is_enforced() {
+    let store = ChatStore::open_in_memory().unwrap();
+    for i in 0..MAX_WEBHOOKS_COUNT {
+        let made = store
+            .create_webhook(
+                format!("w{i}"),
+                "geral".to_owned(),
+                "GC".to_owned(),
+                "h".to_owned(),
+            )
+            .await
+            .unwrap();
+        assert!(made.is_some());
+    }
+    let over = store
+        .create_webhook(
+            "extra".to_owned(),
+            "geral".to_owned(),
+            "GC".to_owned(),
+            "h".to_owned(),
+        )
+        .await
+        .unwrap();
+    assert!(over.is_none());
+    assert_eq!(
+        store.list_webhooks().await.unwrap().len(),
+        MAX_WEBHOOKS_COUNT
+    );
+}
+
+#[tokio::test]
+async fn deleting_a_room_removes_its_webhooks() {
+    let store = ChatStore::open_in_memory().unwrap();
+    store
+        .seed_rooms_if_empty_sync(&["geral".to_owned(), "jogos".to_owned()])
+        .unwrap();
+    for (id, room) in [("a", "geral"), ("b", "jogos")] {
+        store
+            .create_webhook(
+                id.to_owned(),
+                room.to_owned(),
+                "GC".to_owned(),
+                "h".to_owned(),
+            )
+            .await
+            .unwrap();
+    }
+    assert_eq!(
+        store.commit_delete_room("geral".to_owned()).await.unwrap(),
+        DeleteRoomOutcome::Deleted
+    );
+    let left = store.list_webhooks().await.unwrap();
+    assert_eq!(left.len(), 1);
+    assert_eq!(left[0].id, "b");
 }

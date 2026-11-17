@@ -3,6 +3,7 @@
 mod admin;
 mod avatar;
 mod chat;
+mod hooks;
 mod rate_limit;
 mod rooms;
 #[cfg(test)]
@@ -21,7 +22,9 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, patch, post, put};
 use livekit_api::access_token::{Claims, TokenVerifier};
 use subtle::ConstantTimeEq;
-use zenha_protocol::{ErrorResponse, MAX_AVATAR_UPLOAD_BYTES, validate_room_name};
+use zenha_protocol::{
+    ErrorResponse, MAX_AVATAR_UPLOAD_BYTES, MAX_WEBHOOK_BODY_BYTES, validate_room_name,
+};
 
 use crate::config::Config;
 use crate::directory::{RoomDirectory, RoomModerator};
@@ -92,6 +95,18 @@ pub fn router(state: AppState) -> Router {
             delete(admin::admin_delete_chat),
         )
         .route("/admin/invite", post(admin::admin_rotate_invite))
+        .route(
+            "/admin/webhooks",
+            get(admin::admin_list_webhooks).post(admin::admin_create_webhook),
+        )
+        .route("/admin/webhooks/{id}", delete(admin::admin_delete_webhook))
+        .route(
+            "/hooks/{id}/{token}",
+            post(hooks::post_hook)
+                .options(hooks::hook_preflight)
+                .layer(DefaultBodyLimit::max(MAX_WEBHOOK_BODY_BYTES))
+                .layer(axum::middleware::map_response(hooks::allow_any_origin)),
+        )
         .with_state(state)
 }
 
@@ -125,6 +140,10 @@ enum ApiError {
     MessageNotFound,
     #[error("avatar not found")]
     AvatarNotFound,
+    #[error("webhook not found")]
+    WebhookNotFound,
+    #[error("maximum webhook limit reached")]
+    WebhookLimitReached,
     #[error("message id already exists")]
     MessageConflict,
     #[error("maximum room limit reached")]
@@ -169,10 +188,12 @@ impl IntoResponse for ApiError {
             | Self::RoomNotFound
             | Self::TargetNotFound
             | Self::MessageNotFound
-            | Self::AvatarNotFound => StatusCode::NOT_FOUND,
-            Self::MessageConflict | Self::RoomLimitReached | Self::CannotDeleteLastRoom => {
-                StatusCode::CONFLICT
-            }
+            | Self::AvatarNotFound
+            | Self::WebhookNotFound => StatusCode::NOT_FOUND,
+            Self::MessageConflict
+            | Self::RoomLimitReached
+            | Self::WebhookLimitReached
+            | Self::CannotDeleteLastRoom => StatusCode::CONFLICT,
             Self::PayloadTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
             Self::RateLimited => StatusCode::TOO_MANY_REQUESTS,
             Self::TokenFailure | Self::ChatStoreFailure => StatusCode::INTERNAL_SERVER_ERROR,

@@ -4,10 +4,10 @@ use std::collections::BTreeMap;
 
 use async_trait::async_trait;
 use zenha_protocol::{
-    AdminLoginRequest, AdminLoginResponse, AdminRoom, AvatarUploadResponse, ChatHistoryResponse,
-    ChatMessage, CreateRoomRequest, MoveParticipantRequest, RoomSummary, SaveChatRequest,
-    TokenRequest, TokenResponse, UnlockRoomRequest, UnlockRoomResponse, UpdateInviteRequest,
-    UpdateRoomRequest,
+    AdminLoginRequest, AdminLoginResponse, AdminRoom, AdminWebhook, AvatarUploadResponse,
+    ChatHistoryResponse, ChatMessage, CreateRoomRequest, CreateWebhookRequest, CreatedWebhook,
+    MoveParticipantRequest, RoomSummary, SaveChatRequest, TokenRequest, TokenResponse,
+    UnlockRoomRequest, UnlockRoomResponse, UpdateInviteRequest, UpdateRoomRequest,
 };
 
 use super::TokenClient;
@@ -139,6 +139,22 @@ impl TokenClient for UnavailableTokenClient {
         _jwt: &str,
         _request: UpdateInviteRequest,
     ) -> Result<(), SessionError> {
+        Err(SessionError::TokenServer("not signed in".to_owned()))
+    }
+
+    async fn admin_list_webhooks(&self, _jwt: &str) -> Result<Vec<AdminWebhook>, SessionError> {
+        Err(SessionError::TokenServer("not signed in".to_owned()))
+    }
+
+    async fn admin_create_webhook(
+        &self,
+        _jwt: &str,
+        _request: &CreateWebhookRequest,
+    ) -> Result<CreatedWebhook, SessionError> {
+        Err(SessionError::TokenServer("not signed in".to_owned()))
+    }
+
+    async fn admin_delete_webhook(&self, _jwt: &str, _id: &str) -> Result<(), SessionError> {
         Err(SessionError::TokenServer("not signed in".to_owned()))
     }
 

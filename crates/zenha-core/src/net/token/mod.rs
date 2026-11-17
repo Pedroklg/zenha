@@ -6,10 +6,11 @@ use std::time::Duration;
 use async_trait::async_trait;
 use reqwest::{StatusCode, header};
 use zenha_protocol::{
-    AdminLoginRequest, AdminLoginResponse, AdminRoom, AvatarUploadResponse, ChatHistoryResponse,
-    ChatMessage, CreateRoomRequest, MoveParticipantRequest, RoomSummary, RoomsResponse,
-    SaveChatRequest, TokenRequest, TokenResponse, UnlockRoomRequest, UnlockRoomResponse,
-    UpdateInviteRequest, UpdateRoomRequest, validate_room_name,
+    AdminLoginRequest, AdminLoginResponse, AdminRoom, AdminWebhook, AvatarUploadResponse,
+    ChatHistoryResponse, ChatMessage, CreateRoomRequest, CreateWebhookRequest, CreatedWebhook,
+    MoveParticipantRequest, RoomSummary, RoomsResponse, SaveChatRequest, TokenRequest,
+    TokenResponse, UnlockRoomRequest, UnlockRoomResponse, UpdateInviteRequest, UpdateRoomRequest,
+    WebhooksResponse, validate_room_name,
 };
 
 use crate::api::SessionError;
@@ -103,6 +104,13 @@ pub trait TokenClient: Send + Sync + 'static {
         jwt: &str,
         request: UpdateInviteRequest,
     ) -> Result<(), SessionError>;
+    async fn admin_list_webhooks(&self, jwt: &str) -> Result<Vec<AdminWebhook>, SessionError>;
+    async fn admin_create_webhook(
+        &self,
+        jwt: &str,
+        request: &CreateWebhookRequest,
+    ) -> Result<CreatedWebhook, SessionError>;
+    async fn admin_delete_webhook(&self, jwt: &str, id: &str) -> Result<(), SessionError>;
     async fn upload_avatar(
         &self,
         jwt: &str,
@@ -373,6 +381,48 @@ impl TokenClient for HttpTokenClient {
             false,
         )
         .await?;
+        Ok(())
+    }
+
+    async fn admin_list_webhooks(&self, jwt: &str) -> Result<Vec<AdminWebhook>, SessionError> {
+        let response = send_admin_request(
+            self.http.get(self.url("/admin/webhooks")).bearer_auth(jwt),
+            false,
+            false,
+        )
+        .await?;
+        let body = response
+            .json::<WebhooksResponse>()
+            .await
+            .map_err(|err| transport_error(&err))?;
+        Ok(body.webhooks)
+    }
+
+    async fn admin_create_webhook(
+        &self,
+        jwt: &str,
+        request: &CreateWebhookRequest,
+    ) -> Result<CreatedWebhook, SessionError> {
+        let response = send_admin_request(
+            self.http
+                .post(self.url("/admin/webhooks"))
+                .bearer_auth(jwt)
+                .json(request),
+            false,
+            false,
+        )
+        .await?;
+        let mut created = response
+            .json::<CreatedWebhook>()
+            .await
+            .map_err(|err| transport_error(&err))?;
+        created.url = self.url(&created.url);
+        Ok(created)
+    }
+
+    async fn admin_delete_webhook(&self, jwt: &str, id: &str) -> Result<(), SessionError> {
+        let url = self.admin_webhook_url(id)?;
+        let _ = send_admin_request(self.http.delete(url).bearer_auth(jwt), false, true).await?;
         Ok(())
     }
 

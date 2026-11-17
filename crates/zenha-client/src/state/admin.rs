@@ -9,6 +9,7 @@ use zenha_protocol::{
 };
 
 use super::room_lock::{SecretText, room_password_error};
+use super::webhooks::WebhooksState;
 use super::{AppState, Screen};
 use crate::ui_model::UiCommand;
 
@@ -40,6 +41,10 @@ pub enum AdminDialog {
         identity: String,
         name: String,
     },
+    RevokeWebhook {
+        id: String,
+        name: String,
+    },
 }
 
 #[derive(Clone, PartialEq, Eq, Default)]
@@ -51,17 +56,12 @@ pub struct AdminState {
     pub error: Option<String>,
     pub notice: Option<String>,
     pub dialog: Option<AdminDialog>,
+    pub webhooks: WebhooksState,
 }
 
 impl AdminState {
     pub fn reset(&mut self) {
-        self.active = false;
-        self.logging_in = false;
-        self.password_input.clear();
-        self.new_invite_input.clear();
-        self.error = None;
-        self.notice = None;
-        self.dialog = None;
+        *self = Self::default();
     }
 
     pub(super) fn set_error(&mut self, message: String) {
@@ -85,6 +85,7 @@ impl fmt::Debug for AdminState {
             .field("error", &self.error)
             .field("notice", &self.notice)
             .field("dialog", &self.dialog)
+            .field("webhooks", &self.webhooks)
             .finish()
     }
 }
@@ -109,6 +110,7 @@ impl AppState {
         }
         self.admin.new_invite_input.clear();
         self.admin.dialog = None;
+        self.admin.webhooks.created = None;
         self.admin.error = None;
         self.admin.notice = None;
         vec![UiCommand::AdminLogout]
@@ -241,6 +243,9 @@ impl AppState {
             }
             AdminDialog::DeleteRoom { id, .. } => {
                 vec![UiCommand::Admin(AdminAction::DeleteRoom { id })]
+            }
+            AdminDialog::RevokeWebhook { id, .. } => {
+                vec![UiCommand::Admin(AdminAction::DeleteWebhook { id })]
             }
             AdminDialog::KickParticipant { room, identity, .. } => {
                 let valid = matches!(

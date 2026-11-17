@@ -96,6 +96,11 @@ impl AppState {
                     self.admin.active = true;
                     self.admin.logging_in = false;
                     self.admin.error = None;
+                    if self.audio.open
+                        && let Some(command) = self.request_webhooks()
+                    {
+                        self.pending_commands.push(command);
+                    }
                 } else {
                     self.admin.reset();
                 }
@@ -129,6 +134,9 @@ impl AppState {
                 self.admin
                     .set_notice("Código de convite atualizado.".to_owned());
             }
+            UiEvent::AdminWebhooks(webhooks) => self.on_webhooks_listed(webhooks),
+            UiEvent::AdminWebhookCreated(created) => self.on_webhook_created(created),
+            UiEvent::AdminWebhookDeleted { id } => self.on_webhook_deleted(&id),
             UiEvent::AdminStoppedScreenShare => {
                 self.set_chat_notice("Um admin parou sua transmissão".to_owned());
             }
@@ -159,6 +167,7 @@ impl AppState {
             }
             UiEvent::AdminFailed { message } => {
                 self.admin.logging_in = false;
+                self.admin.webhooks.creating = false;
                 self.admin.set_error(message.clone());
                 if !self.audio.open {
                     match &mut self.screen {
