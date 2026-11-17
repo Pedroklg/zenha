@@ -1,4 +1,4 @@
-//! Cliente de token usado antes do login: toda chamada falha com "not signed in".
+//! Token client used before sign-in: every call fails with "not signed in".
 
 use std::collections::BTreeMap;
 

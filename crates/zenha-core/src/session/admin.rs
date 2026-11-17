@@ -1,4 +1,4 @@
-//! Autenticação administrativa, ações de moderação e pacotes de dados do servidor.
+//! Administrative authentication, moderation actions and server data packets.
 
 use std::fmt;
 

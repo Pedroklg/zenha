@@ -1,4 +1,4 @@
-//! Tradução de eventos da sala do LiveKit para `BackendEvent`.
+//! Translation of LiveKit room events into `BackendEvent`.
 
 use std::collections::HashSet;
 use std::sync::Arc;

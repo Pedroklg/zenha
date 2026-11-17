@@ -1,4 +1,4 @@
-//! Envio e recebimento de arquivos pelos byte streams do LiveKit.
+//! Sending and receiving files through LiveKit byte streams.
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};

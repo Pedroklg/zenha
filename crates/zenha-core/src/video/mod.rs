@@ -1,4 +1,4 @@
-//! Vídeo: tipos de quadro e alvo, captura de tela e compartilhamento por GPU.
+//! Video: frame and target types, screen capture and GPU sharing.
 
 pub(crate) mod capture;
 #[cfg(windows)]
@@ -12,16 +12,16 @@ pub type Waker = Arc<dyn Fn() + Send + Sync>;
 
 const MIN_WAKE_INTERVAL: Duration = Duration::from_millis(8);
 
-/// Maior lado permitido para a prévia local da própria transmissão, em pixels.
+/// Longest side allowed for the local preview of one's own stream, in pixels.
 pub const SHARE_PREVIEW_MAX_SIDE: u32 = 480;
-/// Intervalo mínimo entre quadros da prévia local (~10 fps).
+/// Minimum interval between local preview frames (~10 fps).
 pub const SHARE_PREVIEW_INTERVAL: Duration = Duration::from_millis(100);
-/// Maior lado permitido para miniaturas na escolha de tela, em pixels.
+/// Longest side allowed for thumbnails in the screen picker, in pixels.
 pub const CAPTURE_THUMBNAIL_MAX_SIDE: u32 = 320;
-/// Tempo máximo de captura para gerar a miniatura de cada alvo.
+/// Maximum capture time to generate each target's thumbnail.
 pub const CAPTURE_THUMBNAIL_TIMEOUT: Duration = Duration::from_secs(1);
 
-/// Limita a cadência da prévia sem acumular fila nem bloquear o produtor.
+/// Limits the preview rate without building a queue or blocking the producer.
 #[derive(Debug, Clone)]
 pub struct PreviewGate {
     min_interval: Duration,
@@ -36,7 +36,7 @@ impl PreviewGate {
         }
     }
 
-    /// Retorna `true` quando já passou o intervalo mínimo desde a última emissão.
+    /// Returns `true` when the minimum interval since the last emission has passed.
     pub fn take(&mut self, now: Instant) -> bool {
         let due = self
             .last_emitted

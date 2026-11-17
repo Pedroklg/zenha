@@ -1,4 +1,4 @@
-//! Reprodução dedicada do áudio de uma transmissão assistida.
+//! Dedicated playback of a watched stream's audio.
 
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU8, Ordering};

@@ -1,4 +1,4 @@
-//! Listagem e seleção de dispositivos de áudio da plataforma.
+//! Listing and selection of platform audio devices.
 
 use livekit::prelude::{
     AudioProcessingOptions, PlatformAudio, PlayoutDeviceInfo, RecordingDeviceInfo,

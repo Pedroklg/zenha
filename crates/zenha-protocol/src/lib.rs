@@ -1,6 +1,6 @@
-//! Tipos trocados entre `zenha-client` e `zenha-server`.
+//! Types exchanged between `zenha-client` and `zenha-server`.
 //!
-//! Esta crate não faz I/O nem depende de runtime assíncrono.
+//! This crate does no I/O and does not depend on an async runtime.
 
 use std::fmt;
 
@@ -19,9 +19,9 @@ pub const CHAT_HISTORY_PAGE: usize = 100;
 pub const MIN_INVITE_CODE_LEN: usize = 8;
 pub const MAX_INVITE_CODE_LEN: usize = 128;
 pub const MAX_ROOM_PASSWORD_LEN: usize = 128;
-/// Cabeçalho de `GET /rooms` com as chaves de salas trancadas: `sala=chave,sala=chave`.
+/// Header of `GET /rooms` with the keys of locked rooms: `room=key,room=key`.
 pub const ROOM_KEYS_HEADER: &str = "x-room-keys";
-/// Texto de erro de `POST /token` quando a sala tem senha e a chave falta ou não vale.
+/// Error text of `POST /token` when the room has a password and the key is missing or invalid.
 pub const ROOM_LOCKED_ERROR: &str = "room_locked";
 
 pub const ADMIN_STOP_SHARE_TOPIC: &str = "admin.stop_share";
@@ -39,7 +39,7 @@ pub struct TokenRequest {
     pub display_name: String,
     pub room: String,
     pub invite_code: String,
-    /// Chave de acesso da sala ou da sala-mãe, exigida quando a sala tem senha.
+    /// Access key of the room or its parent room, required when the room has a password.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub room_key: Option<String>,
 }
@@ -76,7 +76,7 @@ pub struct RoomSummary {
     pub name: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub title: String,
-    /// Vazio numa sala trancada sem chave válida; a contagem fica em `participant_count`.
+    /// Empty in a locked room without a valid key; the count stays in `participant_count`.
     pub participants: Vec<String>,
     #[serde(default)]
     pub participant_count: usize,
@@ -93,12 +93,12 @@ impl RoomSummary {
         self.participant_count.max(self.participants.len())
     }
 
-    /// Sala com senha que este cliente ainda não desbloqueou.
+    /// Room with a password that this client has not unlocked yet.
     pub fn needs_password(&self) -> bool {
         self.locked && !self.unlocked
     }
 
-    /// Nome exibido da sala, usando o identificador técnico como fallback para payloads antigos.
+    /// Display name of the room, using the technical identifier as fallback for old payloads.
     pub fn display_title(&self) -> &str {
         if self.title.is_empty() {
             &self.name
@@ -170,7 +170,7 @@ impl fmt::Debug for AdminLoginRequest {
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AdminLoginResponse {
     pub token: String,
-    /// Expiração do token em segundos desde a época Unix (igual à claim `exp` do JWT).
+    /// Token expiry in seconds since the Unix epoch (same as the JWT `exp` claim).
     pub expires_at: u64,
 }
 
@@ -213,7 +213,7 @@ impl fmt::Debug for CreateRoomRequest {
     }
 }
 
-/// Campos ausentes ficam como estão. `password` e `parent` vazios (`""`) tiram a senha e a sala-mãe.
+/// Absent fields are left as they are. Empty `password` and `parent` (`""`) clear the password and the parent room.
 #[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UpdateRoomRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -252,7 +252,7 @@ impl fmt::Debug for UnlockRoomRequest {
     }
 }
 
-/// `room` é a sala dona da senha que bateu: a pedida ou a sala-mãe dela.
+/// `room` is the room that owns the password that matched: the requested one or its parent.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UnlockRoomResponse {
     pub room: String,
@@ -268,7 +268,7 @@ impl fmt::Debug for UnlockRoomResponse {
     }
 }
 
-/// Monta o valor do cabeçalho `x-room-keys`.
+/// Builds the value of the `x-room-keys` header.
 pub fn encode_room_keys<'a>(keys: impl IntoIterator<Item = (&'a str, &'a str)>) -> String {
     keys.into_iter()
         .map(|(room, key)| format!("{room}={key}"))
@@ -276,7 +276,7 @@ pub fn encode_room_keys<'a>(keys: impl IntoIterator<Item = (&'a str, &'a str)>) 
         .join(",")
 }
 
-/// Lê o cabeçalho `x-room-keys`, ignorando pares malformados.
+/// Reads the `x-room-keys` header, ignoring malformed pairs.
 pub fn parse_room_keys(raw: &str) -> Vec<(String, String)> {
     raw.split(',')
         .filter_map(|pair| pair.trim().split_once('='))
@@ -303,42 +303,42 @@ impl fmt::Debug for UpdateInviteRequest {
     }
 }
 
-/// Comando do servidor no tópico `admin.stop_share` para o cliente encerrar a captura e transmissão de tela.
+/// Server command on topic `admin.stop_share` for the client to end screen capture and sharing.
 ///
-/// Segurança: o cliente só deve aceitar mensagens deste tópico quando vierem do servidor (sem
-/// participante remetente), nunca de outro participante.
+/// Security: the client must only accept messages on this topic when they come from the server (no
+/// sender participant), never from another participant.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AdminStopShare {}
 
-/// Comando do servidor no tópico `admin.move` para o cliente trocar de sala.
+/// Server command on topic `admin.move` for the client to switch rooms.
 ///
-/// Segurança: o cliente só deve aceitar mensagens deste tópico quando vierem do servidor (sem
-/// participante remetente), nunca de outro participante.
+/// Security: the client must only accept messages on this topic when they come from the server (no
+/// sender participant), never from another participant.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AdminMove {
     pub to_room: String,
-    /// Chave da sala de destino quando ela tem senha, para o movido entrar sem digitá-la.
+    /// Key of the destination room when it has a password, so the moved user joins without typing it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unlock: Option<UnlockRoomResponse>,
 }
 
-/// Comando do servidor no tópico `admin.chat_delete` avisando a sala que uma mensagem salva foi removida.
+/// Server command on topic `admin.chat_delete` telling the room that a saved message was removed.
 ///
-/// Segurança: o cliente só deve aceitar mensagens deste tópico quando vierem do servidor (sem
-/// participante remetente), nunca de outro participante.
+/// Security: the client must only accept messages on this topic when they come from the server (no
+/// sender participant), never from another participant.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AdminChatDelete {
     pub id: String,
 }
 
-/// Aviso do servidor no tópico `rooms.changed` indicando que a lista ou ordem de salas mudou.
+/// Server notice on topic `rooms.changed` that the room list or order changed.
 ///
-/// Segurança: o cliente só deve aceitar mensagens deste tópico quando vierem do servidor (sem
-/// participante remetente), nunca de outro participante.
+/// Security: the client must only accept messages on this topic when they come from the server (no
+/// sender participant), never from another participant.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RoomsChanged {}
 
-/// Resposta do servidor ao enviar uma foto de perfil com `PUT /avatar`.
+/// Server response to uploading a profile picture with `PUT /avatar`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AvatarUploadResponse {
     pub version: String,
@@ -366,12 +366,12 @@ pub enum InviteCodeError {
     InvalidCharacter,
 }
 
-/// Nome de exibição: 1 a 32 caracteres depois de aparar, sem caracteres de controle.
+/// Display name: 1 to 32 characters after trimming, no control characters.
 pub fn validate_display_name(name: &str) -> Result<(), ValidationError> {
     validate_trimmed_text(name, MAX_DISPLAY_NAME_LEN)
 }
 
-/// Título exibido da sala: 1 a 64 caracteres depois de aparar, sem caracteres de controle.
+/// Room display title: 1 to 64 characters after trimming, no control characters.
 pub fn validate_room_title(title: &str) -> Result<(), ValidationError> {
     validate_trimmed_text(title, MAX_ROOM_TITLE_LEN)
 }
@@ -385,7 +385,7 @@ fn validate_trimmed_text(value: &str, max: usize) -> Result<(), ValidationError>
     Ok(())
 }
 
-/// Senha de sala: 1 a 128 caracteres, não só espaços, sem caracteres de controle.
+/// Room password: 1 to 128 characters, not only whitespace, no control characters.
 pub fn validate_room_password(password: &str) -> Result<(), ValidationError> {
     check_len(password, MAX_ROOM_PASSWORD_LEN)?;
     if password.trim().is_empty() {
@@ -397,7 +397,7 @@ pub fn validate_room_password(password: &str) -> Result<(), ValidationError> {
     Ok(())
 }
 
-/// Código de convite: 8 a 128 caracteres, não vazio depois de aparar, sem caracteres de controle.
+/// Invite code: 8 to 128 characters, non-empty after trimming, no control characters.
 pub fn validate_invite_code(code: &str) -> Result<(), InviteCodeError> {
     if code.trim().is_empty() {
         return Err(InviteCodeError::Empty);
@@ -419,7 +419,7 @@ pub fn validate_invite_code(code: &str) -> Result<(), InviteCodeError> {
     Ok(())
 }
 
-/// Nome de sala: 1 a 32 caracteres entre `a-z`, `0-9`, `-` e `_`.
+/// Room name: 1 to 32 characters among `a-z`, `0-9`, `-` and `_`.
 pub fn validate_room_name(room: &str) -> Result<(), ValidationError> {
     check_len(room, MAX_ROOM_NAME_LEN)?;
     let allowed = |c: char| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_';
@@ -429,7 +429,7 @@ pub fn validate_room_name(room: &str) -> Result<(), ValidationError> {
     Ok(())
 }
 
-/// Identificador do cliente: 1 a 64 caracteres entre `a-z`, `0-9` e `-`.
+/// Client identifier: 1 to 64 characters among `a-z`, `0-9` and `-`.
 pub fn validate_client_id(id: &str) -> Result<(), ValidationError> {
     check_len(id, MAX_CLIENT_ID_LEN)?;
     let allowed = |c: char| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-';
@@ -439,12 +439,12 @@ pub fn validate_client_id(id: &str) -> Result<(), ValidationError> {
     Ok(())
 }
 
-/// Texto de chat: não vazio depois de aparar e com até 2000 caracteres.
+/// Chat text: non-empty after trimming and up to 2000 characters.
 pub fn validate_chat_text(text: &str) -> Result<(), ValidationError> {
     check_len(text.trim(), MAX_CHAT_MESSAGE_LEN)
 }
 
-/// Versão de foto de perfil: 1 a 32 caracteres ASCII seguros para URL e nome de arquivo.
+/// Profile picture version: 1 to 32 ASCII characters safe for URLs and file names.
 pub fn validate_avatar_version(version: &str) -> Result<(), ValidationError> {
     check_len(version, MAX_AVATAR_VERSION_LEN)?;
     let allowed = |c: char| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_';
@@ -454,7 +454,7 @@ pub fn validate_avatar_version(version: &str) -> Result<(), ValidationError> {
     Ok(())
 }
 
-/// Interpreta o atributo `zenha.avatar`, tratando vazio ou inválido como ausência de foto.
+/// Parses the `zenha.avatar` attribute, treating empty or invalid as no picture.
 pub fn parse_avatar_attribute(raw: &str) -> Option<String> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {

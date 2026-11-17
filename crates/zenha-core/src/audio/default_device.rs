@@ -1,6 +1,6 @@
-//! Ids dos dispositivos padrão do Windows (papel "console"), no formato que o ADM do WebRTC lista.
+//! Windows default device ids ("console" role), in the format the WebRTC ADM lists them.
 //!
-//! O WebRTC, sem escolha explícita, usa o padrão de *comunicações*, que pode ser outro aparelho.
+//! Without an explicit choice, WebRTC uses the *communications* default, which may be a different device.
 
 use std::thread;
 

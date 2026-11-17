@@ -1,4 +1,4 @@
-//! Implementação de `TokenClient` para `FakeTokenClient`.
+//! `TokenClient` implementation for `FakeTokenClient`.
 
 use std::collections::BTreeMap;
 

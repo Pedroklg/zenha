@@ -16,7 +16,7 @@ pub struct SessionConfig {
     pub invite_code: String,
     pub avatar_version: Option<String>,
     pub avatar_cache_dir: Option<PathBuf>,
-    /// Chaves de salas com senha, por nome da sala dona da senha.
+    /// Access keys of password-protected rooms, by the name of the room that owns the password.
     pub room_keys: BTreeMap<String, String>,
 }
 
@@ -34,7 +34,7 @@ impl fmt::Debug for SessionConfig {
     }
 }
 
-/// Chave de acesso a uma sala com senha; o `Debug` não mostra o valor.
+/// Access key to a password-protected room; `Debug` does not show the value.
 #[derive(Clone, PartialEq, Eq)]
 pub struct RoomKey(pub String);
 
@@ -59,16 +59,16 @@ pub struct AudioDevice {
     pub name: String,
 }
 
-/// Tratamento de ruído do microfone.
+/// Microphone noise handling.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum NoiseSuppression {
     Off,
-    /// Supressão embutida do WebRTC.
+    /// Built-in WebRTC suppression.
     #[default]
     Standard,
-    /// Rede neural (RNNoise) num caminho de captura próprio; sem cancelamento de eco.
+    /// Neural network (RNNoise) on a dedicated capture path; no echo cancellation.
     Enhanced,
-    /// Rede DeepFilterNet 3 no mesmo caminho de captura próprio do modo Reforçada; mais pesada.
+    /// DeepFilterNet 3 network on the same dedicated capture path as Enhanced mode; heavier.
     Maximum,
 }
 
@@ -81,7 +81,7 @@ impl NoiseSuppression {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileTransfer {
     pub id: String,
-    /// Identidade de quem envia (como em `ChatMessage::sender` recebido).
+    /// Identity of the sender (as in a received `ChatMessage::sender`).
     pub sender: String,
     pub name: String,
     pub size: u64,
@@ -96,7 +96,7 @@ pub enum TransferState {
     InProgress {
         bytes: u64,
     },
-    /// Onde o arquivo está neste computador: o original (envio) ou a cópia recebida.
+    /// Where the file is on this computer: the original (upload) or the received copy.
     Done {
         path: PathBuf,
     },
@@ -111,16 +111,16 @@ pub struct AudioDevices {
     pub selected_output: Option<String>,
 }
 
-/// Motivo pelo qual o usuário foi removido de uma sala pelo servidor.
+/// Reason the user was removed from a room by the server.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RemovalReason {
-    /// Removido por um administrador.
+    /// Removed by an administrator.
     Kicked,
-    /// A sala em que estava foi apagada.
+    /// The room they were in was deleted.
     RoomDeleted,
 }
 
-/// Ações administrativas executadas no servidor de tokens.
+/// Administrative actions run on the token server.
 #[derive(Clone, PartialEq, Eq)]
 pub enum AdminAction {
     CreateRoom {
@@ -128,7 +128,7 @@ pub enum AdminAction {
         password: Option<String>,
         parent: Option<String>,
     },
-    /// Em `password` e `parent`, `Some("")` remove a senha ou a sala-mãe.
+    /// For `password` and `parent`, `Some("")` removes the password or the parent room.
     UpdateRoom {
         id: String,
         title: Option<String>,
@@ -236,7 +236,7 @@ pub enum Command {
     Join {
         room: String,
     },
-    /// Troca a senha de uma sala por uma chave de acesso, guardada na sessão.
+    /// Exchanges a room password for an access key, kept in the session.
     UnlockRoom {
         room: String,
         password: String,
@@ -244,15 +244,15 @@ pub enum Command {
     Leave,
     SetMuted(bool),
     SetDeafened(bool),
-    /// Troca o nome exibido: vale para os próximos tokens e, numa sala, para os outros na hora.
+    /// Changes the display name: applies to the next tokens and, in a room, to others immediately.
     SetDisplayName {
         name: String,
     },
-    /// Envia uma nova foto de perfil para o servidor e propaga a versão pela sala.
+    /// Uploads a new profile picture to the server and propagates the version through the room.
     SetAvatar {
         path: PathBuf,
     },
-    /// Remove a foto de perfil no servidor e limpa o atributo na sala.
+    /// Removes the profile picture on the server and clears the attribute in the room.
     ClearAvatar,
     SendChat {
         text: String,
@@ -272,17 +272,17 @@ pub enum Command {
     SetInputDevice(Option<String>),
     SetOutputDevice(Option<String>),
     SetNoiseSuppression(NoiseSuppression),
-    /// Volume do som da transmissão assistida, de 0 a 100.
+    /// Volume of the watched stream's sound, from 0 to 100.
     SetStreamVolume(u8),
-    /// Volume de um participante remoto, de 0 a 200 (100 é o padrão).
+    /// Volume of a remote participant, from 0 to 200 (100 is the default).
     SetParticipantVolume {
         identity: String,
         percent: u16,
     },
-    /// Limiar da porta de ruído em dBFS, de -70 a -20; `None` a desliga.
+    /// Noise gate threshold in dBFS, from -70 to -20; `None` turns it off.
     SetNoiseGate(Option<i8>),
     RefreshCaptureTargets,
-    /// Interrompe a geração de miniaturas de captura em andamento.
+    /// Stops any capture thumbnail generation in progress.
     CancelCaptureTargets,
     StartScreenShare {
         target_id: String,
@@ -293,17 +293,17 @@ pub enum Command {
         identity: String,
     },
     StopWatching,
-    /// Informa ao núcleo se a janela está visível para pular conversões de vídeo ocultas.
+    /// Tells the core whether the window is visible, to skip hidden video conversions.
     SetUiVisible(bool),
-    /// Som curto de confirmação, só para quem usa o app.
+    /// Short confirmation sound, only for the app user.
     PlayCue(Cue),
-    /// Autentica como administrador no servidor de tokens (token mantido só em memória).
+    /// Authenticates as administrator on the token server (token kept in memory only).
     AdminLogin {
         password: String,
     },
-    /// Encerra a sessão administrativa local sem sair da sala atual.
+    /// Ends the local administrative session without leaving the current room.
     AdminLogout,
-    /// Executa uma ação administrativa autenticada.
+    /// Runs an authenticated administrative action.
     Admin(AdminAction),
 }
 
@@ -419,38 +419,38 @@ pub enum Event {
         path: PathBuf,
     },
     ChatReceived(ChatMessage),
-    /// Página do histórico de mensagens salvas retornada pelo servidor.
+    /// Page of the saved message history returned by the server.
     ChatHistory {
         messages: Vec<SavedChatMessage>,
         has_more: bool,
         before: Option<String>,
     },
-    /// Indica que uma mensagem salva foi removida.
+    /// A saved message was removed.
     ///
-    /// A interface (T31c) deve conferir a autoria comparando `sender` com o
-    /// `sender_id` ou identidade local que já possui antes de remover o item.
-    /// Quando `sender` é vazio (`""`), a remoção veio de um comando administrativo do servidor.
+    /// The UI (T31c) must check authorship by comparing `sender` with the
+    /// `sender_id` or local identity it already has before removing the item.
+    /// When `sender` is empty (`""`), the removal came from a server administrative command.
     ChatDeleted {
         id: String,
         sender: String,
     },
     FileTransfer(FileTransfer),
     RoomsUpdated(Vec<RoomSummary>),
-    /// Senha aceita; `room` é a sala dona da senha, que pode ser a sala-mãe da pedida.
+    /// Password accepted; `room` is the room that owns the password, which may be the parent of the requested one.
     RoomUnlocked {
         room: String,
         key: RoomKey,
     },
     AudioDevicesUpdated(AudioDevices),
     CaptureTargetsUpdated(Vec<CaptureTarget>),
-    /// Miniatura RGBA de um alvo de captura, emitida assim que ficar pronta.
+    /// RGBA thumbnail of a capture target, emitted as soon as it is ready.
     CaptureThumbnail {
         id: String,
         width: u32,
         height: u32,
         rgba: Vec<u8>,
     },
-    /// Nível do microfone no modo Reforçada, cerca de dez vezes por segundo.
+    /// Microphone level in Enhanced mode, about ten times per second.
     MicLevel {
         level_db: i8,
         gate_open: bool,
@@ -470,27 +470,27 @@ pub enum Event {
         frames: FrameSlot,
     },
     WatchingStopped,
-    /// Indica mudança no estado da sessão administrativa em memória.
+    /// The in-memory administrative session state changed.
     AdminChanged {
         active: bool,
     },
-    /// Sala criada via ação administrativa.
+    /// Room created via administrative action.
     AdminRoomCreated(AdminRoom),
-    /// Sala atualizada via ação administrativa.
+    /// Room updated via administrative action.
     AdminRoomUpdated(AdminRoom),
-    /// Sala removida via ação administrativa.
+    /// Room removed via administrative action.
     AdminRoomDeleted {
         id: String,
     },
-    /// Código de convite atualizado via ação administrativa.
+    /// Invite code updated via administrative action.
     AdminInviteRotated,
-    /// Um administrador encerrou a transmissão de tela local.
+    /// An administrator ended the local screen share.
     AdminStoppedScreenShare,
-    /// Um administrador moveu o usuário para outra sala.
+    /// An administrator moved the user to another room.
     MovedByAdmin {
         to_room: String,
     },
-    /// O servidor removeu o usuário da sala sem permitir reconexão automática.
+    /// The server removed the user from the room without allowing automatic reconnection.
     RemovedFromRoom {
         reason: RemovalReason,
     },

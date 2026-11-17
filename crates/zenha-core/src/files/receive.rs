@@ -1,4 +1,4 @@
-//! Gravação segura de arquivos recebidos: limite de tamanho, arquivo parcial apagado e andamento espaçado.
+//! Safe writing of received files: size limit, partial file deleted and spaced-out progress.
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufWriter, Write};
