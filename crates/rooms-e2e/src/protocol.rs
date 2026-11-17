@@ -481,6 +481,9 @@ pub enum BotEvent {
         height: u32,
         mean_rgb: [f64; 3],
         luma_stddev: f64,
+        gap_p95_ms: f64,
+        gap_max_ms: f64,
+        stutters: u32,
     },
     FrameMeasurementFailed {
         reason: String,
@@ -824,6 +827,9 @@ mod tests {
                 height: 360,
                 mean_rgb: [1.0, 2.0, 3.0],
                 luma_stddev: 4.0,
+                gap_p95_ms: 17.0,
+                gap_max_ms: 34.0,
+                stutters: 1,
             },
             BotEvent::Bye,
         ];
