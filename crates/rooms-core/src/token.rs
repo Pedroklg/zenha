@@ -1,12 +1,14 @@
+use std::collections::BTreeMap;
 use std::time::Duration;
 
 use async_trait::async_trait;
 use reqwest::{StatusCode, header};
 use rooms_protocol::{
     AdminLoginRequest, AdminLoginResponse, AdminRoom, AvatarUploadResponse, ChatHistoryResponse,
-    ChatMessage, CreateRoomRequest, ErrorResponse, MoveParticipantRequest, RoomSummary,
-    RoomsResponse, SaveChatRequest, TokenRequest, TokenResponse, UpdateInviteRequest,
-    UpdateRoomRequest, validate_avatar_version, validate_client_id, validate_room_name,
+    ChatMessage, CreateRoomRequest, ErrorResponse, MoveParticipantRequest, ROOM_KEYS_HEADER,
+    ROOM_LOCKED_ERROR, RoomSummary, RoomsResponse, SaveChatRequest, TokenRequest, TokenResponse,
+    UnlockRoomRequest, UnlockRoomResponse, UpdateInviteRequest, UpdateRoomRequest,
+    encode_room_keys, validate_avatar_version, validate_client_id, validate_room_name,
 };
 
 use crate::api::SessionError;
@@ -19,7 +21,16 @@ const MAX_AVATAR_DOWNLOAD_BYTES: usize = 512 * 1024;
 #[async_trait]
 pub trait TokenClient: Send + Sync + 'static {
     async fn fetch_token(&self, request: TokenRequest) -> Result<TokenResponse, SessionError>;
-    async fn fetch_rooms(&self, invite_code: &str) -> Result<Vec<RoomSummary>, SessionError>;
+    async fn fetch_rooms(
+        &self,
+        invite_code: &str,
+        room_keys: &BTreeMap<String, String>,
+    ) -> Result<Vec<RoomSummary>, SessionError>;
+    async fn unlock_room(
+        &self,
+        room: &str,
+        request: UnlockRoomRequest,
+    ) -> Result<UnlockRoomResponse, SessionError>;
     async fn save_chat(
         &self,
         jwt: &str,
@@ -116,6 +127,27 @@ impl HttpTokenClient {
         format!("{}{}", self.base_url, path)
     }
 
+    fn token_http_request(&self, request: &TokenRequest) -> reqwest::RequestBuilder {
+        self.http.post(self.url("/token")).json(request)
+    }
+
+    fn rooms_http_request(
+        &self,
+        invite_code: &str,
+        room_keys: &BTreeMap<String, String>,
+    ) -> reqwest::RequestBuilder {
+        let request = self
+            .http
+            .get(self.url("/rooms"))
+            .header(INVITE_HEADER, invite_code)
+            .header(header::ACCEPT, "application/json");
+        if room_keys.is_empty() {
+            return request;
+        }
+        let keys = encode_room_keys(room_keys.iter().map(|(r, k)| (r.as_str(), k.as_str())));
+        request.header(ROOM_KEYS_HEADER, keys)
+    }
+
     fn chat_url(&self, room: &str) -> Result<String, SessionError> {
         validate_room_name(room).map_err(|err| SessionError::InvalidInput(err.to_string()))?;
         Ok(self.url(&format!("/rooms/{room}/chat")))
@@ -198,6 +230,24 @@ fn status_error(status: StatusCode) -> SessionError {
         SessionError::InviteRejected
     } else {
         SessionError::TokenServer(format!("server returned HTTP {}", status.as_u16()))
+    }
+}
+
+fn token_status_error(status: StatusCode, body_error: Option<&str>, room: &str) -> SessionError {
+    if status == StatusCode::FORBIDDEN && body_error == Some(ROOM_LOCKED_ERROR) {
+        SessionError::RoomLocked(room.to_owned())
+    } else {
+        status_error(status)
+    }
+}
+
+fn unlock_status_error(status: StatusCode) -> SessionError {
+    match status {
+        StatusCode::FORBIDDEN => SessionError::RoomPasswordRejected,
+        StatusCode::TOO_MANY_REQUESTS => SessionError::RoomUnlockRateLimited,
+        StatusCode::NOT_FOUND => SessionError::TokenServer("room not found".to_owned()),
+        StatusCode::BAD_REQUEST => SessionError::TokenServer("room has no password".to_owned()),
+        other => status_error(other),
     }
 }
 
@@ -339,14 +389,18 @@ async fn send_admin_request(
 impl TokenClient for HttpTokenClient {
     async fn fetch_token(&self, request: TokenRequest) -> Result<TokenResponse, SessionError> {
         let response = self
-            .http
-            .post(self.url("/token"))
-            .json(&request)
+            .token_http_request(&request)
             .send()
             .await
             .map_err(|err| transport_error(&err))?;
-        if !response.status().is_success() {
-            return Err(status_error(response.status()));
+        let status = response.status();
+        if !status.is_success() {
+            let body_error = read_error_message(response).await;
+            return Err(token_status_error(
+                status,
+                body_error.as_deref(),
+                &request.room,
+            ));
         }
         response
             .json::<TokenResponse>()
@@ -354,12 +408,13 @@ impl TokenClient for HttpTokenClient {
             .map_err(|err| transport_error(&err))
     }
 
-    async fn fetch_rooms(&self, invite_code: &str) -> Result<Vec<RoomSummary>, SessionError> {
+    async fn fetch_rooms(
+        &self,
+        invite_code: &str,
+        room_keys: &BTreeMap<String, String>,
+    ) -> Result<Vec<RoomSummary>, SessionError> {
         let response = self
-            .http
-            .get(self.url("/rooms"))
-            .header(INVITE_HEADER, invite_code)
-            .header(header::ACCEPT, "application/json")
+            .rooms_http_request(invite_code, room_keys)
             .send()
             .await
             .map_err(|err| transport_error(&err))?;
@@ -371,6 +426,28 @@ impl TokenClient for HttpTokenClient {
             .await
             .map_err(|err| transport_error(&err))?;
         Ok(body.rooms)
+    }
+
+    async fn unlock_room(
+        &self,
+        room: &str,
+        request: UnlockRoomRequest,
+    ) -> Result<UnlockRoomResponse, SessionError> {
+        validate_room_name(room).map_err(|err| SessionError::InvalidInput(err.to_string()))?;
+        let response = self
+            .http
+            .post(self.url(&format!("/rooms/{room}/unlock")))
+            .json(&request)
+            .send()
+            .await
+            .map_err(|err| transport_error(&err))?;
+        if !response.status().is_success() {
+            return Err(unlock_status_error(response.status()));
+        }
+        response
+            .json::<UnlockRoomResponse>()
+            .await
+            .map_err(|err| transport_error(&err))
     }
 
     async fn save_chat(
@@ -621,7 +698,19 @@ impl TokenClient for UnavailableTokenClient {
         Err(SessionError::TokenServer("not signed in".to_owned()))
     }
 
-    async fn fetch_rooms(&self, _invite_code: &str) -> Result<Vec<RoomSummary>, SessionError> {
+    async fn fetch_rooms(
+        &self,
+        _invite_code: &str,
+        _room_keys: &BTreeMap<String, String>,
+    ) -> Result<Vec<RoomSummary>, SessionError> {
+        Err(SessionError::TokenServer("not signed in".to_owned()))
+    }
+
+    async fn unlock_room(
+        &self,
+        _room: &str,
+        _request: UnlockRoomRequest,
+    ) -> Result<UnlockRoomResponse, SessionError> {
         Err(SessionError::TokenServer("not signed in".to_owned()))
     }
 
@@ -754,6 +843,62 @@ impl TokenClient for UnavailableTokenClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn room_keys_go_in_the_rooms_header_and_the_token_body() {
+        let client = HttpTokenClient::new("http://server.invalid/").unwrap();
+        let keys = BTreeMap::from([
+            ("geral".to_owned(), "k1".to_owned()),
+            ("vip".to_owned(), "k2".to_owned()),
+        ]);
+        let rooms = client.rooms_http_request("convite", &keys).build().unwrap();
+        assert_eq!(rooms.url().as_str(), "http://server.invalid/rooms");
+        assert_eq!(rooms.headers()[ROOM_KEYS_HEADER], "geral=k1,vip=k2");
+        assert_eq!(rooms.headers()[INVITE_HEADER], "convite");
+        let plain = client
+            .rooms_http_request("convite", &BTreeMap::new())
+            .build()
+            .unwrap();
+        assert!(!plain.headers().contains_key(ROOM_KEYS_HEADER));
+
+        let token = client
+            .token_http_request(&TokenRequest {
+                client_id: "client-pedro".to_owned(),
+                display_name: "Pedro".to_owned(),
+                room: "vip".to_owned(),
+                invite_code: "convite".to_owned(),
+                room_key: Some("k2".to_owned()),
+            })
+            .build()
+            .unwrap();
+        let body = token.body().and_then(reqwest::Body::as_bytes).unwrap();
+        let sent: TokenRequest = serde_json::from_slice(body).unwrap();
+        assert_eq!(sent.room_key.as_deref(), Some("k2"));
+    }
+
+    #[test]
+    fn room_lock_status_mapping() {
+        assert_eq!(
+            token_status_error(StatusCode::FORBIDDEN, Some(ROOM_LOCKED_ERROR), "vip"),
+            SessionError::RoomLocked("vip".to_owned())
+        );
+        assert!(matches!(
+            token_status_error(StatusCode::FORBIDDEN, Some("other"), "vip"),
+            SessionError::TokenServer(_)
+        ));
+        assert_eq!(
+            unlock_status_error(StatusCode::FORBIDDEN),
+            SessionError::RoomPasswordRejected
+        );
+        assert_eq!(
+            unlock_status_error(StatusCode::TOO_MANY_REQUESTS),
+            SessionError::RoomUnlockRateLimited
+        );
+        assert_eq!(
+            unlock_status_error(StatusCode::UNAUTHORIZED),
+            SessionError::InviteRejected
+        );
+    }
 
     #[test]
     fn status_mapping() {

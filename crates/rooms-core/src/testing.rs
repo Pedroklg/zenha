@@ -1,4 +1,4 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
@@ -7,7 +7,8 @@ use async_trait::async_trait;
 use rooms_protocol::{
     AdminLoginRequest, AdminLoginResponse, AdminRoom, AvatarUploadResponse, ChatHistoryResponse,
     ChatMessage, CreateRoomRequest, MoveParticipantRequest, RoomSummary, SaveChatRequest,
-    TokenRequest, TokenResponse, UpdateInviteRequest, UpdateRoomRequest,
+    TokenRequest, TokenResponse, UnlockRoomRequest, UnlockRoomResponse, UpdateInviteRequest,
+    UpdateRoomRequest,
 };
 use tokio::sync::mpsc::{self, UnboundedSender};
 use tokio::time::Instant;
@@ -554,6 +555,8 @@ struct TokenState {
     remaining_failures: u32,
     rooms: Vec<RoomSummary>,
     rooms_calls: usize,
+    rooms_keys: Vec<BTreeMap<String, String>>,
+    room_locks: HashMap<String, FakeRoomLock>,
     chat_history_pages: HashMap<Option<String>, ChatHistoryResponse>,
     save_calls: Vec<(String, String, SaveChatRequest)>,
     history_calls: Vec<(String, String, Option<String>)>,
@@ -571,6 +574,13 @@ struct TokenState {
     download_avatar_calls: Vec<(String, String, Option<String>)>,
     upload_avatar_results: VecDeque<Result<AvatarUploadResponse, SessionError>>,
     delete_avatar_results: VecDeque<Result<(), SessionError>>,
+}
+
+#[derive(Debug, Clone)]
+struct FakeRoomLock {
+    owner: String,
+    password: String,
+    key: String,
 }
 
 #[derive(Debug, Clone)]
@@ -593,6 +603,8 @@ impl FakeTokenClient {
                 remaining_failures: 0,
                 rooms: Vec::new(),
                 rooms_calls: 0,
+                rooms_keys: Vec::new(),
+                room_locks: HashMap::new(),
                 chat_history_pages: HashMap::new(),
                 save_calls: Vec::new(),
                 history_calls: Vec::new(),
@@ -624,6 +636,23 @@ impl FakeTokenClient {
 
     pub fn set_rooms(&self, rooms: Vec<RoomSummary>) {
         lock(&self.state).rooms = rooms;
+    }
+
+    /// Tranca `room`: o token exige `key`, obtida ao desbloquear com `password` (dona: `owner`).
+    pub fn lock_room(&self, room: &str, owner: &str, password: &str, key: &str) {
+        lock(&self.state).room_locks.insert(
+            room.to_owned(),
+            FakeRoomLock {
+                owner: owner.to_owned(),
+                password: password.to_owned(),
+                key: key.to_owned(),
+            },
+        );
+    }
+
+    /// Chaves enviadas em cada `fetch_rooms`.
+    pub fn rooms_keys(&self) -> Vec<BTreeMap<String, String>> {
+        lock(&self.state).rooms_keys.clone()
     }
 
     pub fn requests(&self) -> Vec<TokenRequest> {
@@ -717,19 +746,45 @@ impl TokenClient for FakeTokenClient {
             state.remaining_failures -= 1;
             return Err(SessionError::TokenServer("fake failure".to_owned()));
         }
+        if let Some(room_lock) = state.room_locks.get(&request.room)
+            && request.room_key.as_deref() != Some(room_lock.key.as_str())
+        {
+            return Err(SessionError::RoomLocked(request.room));
+        }
         Ok(TokenResponse {
             token: format!("token-{}-{}", request.room, state.requests.len()),
             livekit_url: "ws://fake.invalid".to_owned(),
         })
     }
 
-    async fn fetch_rooms(&self, _invite_code: &str) -> Result<Vec<RoomSummary>, SessionError> {
+    async fn fetch_rooms(
+        &self,
+        _invite_code: &str,
+        room_keys: &BTreeMap<String, String>,
+    ) -> Result<Vec<RoomSummary>, SessionError> {
         let mut state = lock(&self.state);
         state.rooms_calls += 1;
+        state.rooms_keys.push(room_keys.clone());
         if state.reject_invite {
             return Err(SessionError::InviteRejected);
         }
         Ok(state.rooms.clone())
+    }
+
+    async fn unlock_room(
+        &self,
+        room: &str,
+        request: UnlockRoomRequest,
+    ) -> Result<UnlockRoomResponse, SessionError> {
+        let state = lock(&self.state);
+        match state.room_locks.get(room) {
+            Some(room_lock) if room_lock.password == request.password => Ok(UnlockRoomResponse {
+                room: room_lock.owner.clone(),
+                room_key: room_lock.key.clone(),
+            }),
+            Some(_) => Err(SessionError::RoomPasswordRejected),
+            None => Err(SessionError::TokenServer("room has no password".to_owned())),
+        }
     }
 
     async fn save_chat(
@@ -827,6 +882,8 @@ impl TokenClient for FakeTokenClient {
             id: "new-room".to_owned(),
             title: request.title,
             position: 0,
+            locked: request.password.is_some(),
+            parent: request.parent,
         })
     }
 
@@ -849,6 +906,7 @@ impl TokenClient for FakeTokenClient {
             id: id.to_owned(),
             title: request.title.unwrap_or_else(|| "Updated".to_owned()),
             position: request.position.unwrap_or(0),
+            ..AdminRoom::default()
         })
     }
 

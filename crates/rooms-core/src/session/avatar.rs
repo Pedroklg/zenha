@@ -14,6 +14,7 @@ use crate::token::TokenClient;
 
 use super::Session;
 use super::connection::Phase;
+use super::rooms::room_key_for;
 
 pub(super) enum AvatarTaskEvent {
     Uploaded {
@@ -33,6 +34,7 @@ enum AvatarAuth {
     Room {
         room: String,
         jwt: String,
+        room_key: Option<String>,
         config: SessionConfig,
     },
     Lobby {
@@ -41,15 +43,16 @@ enum AvatarAuth {
 }
 
 impl AvatarAuth {
-    fn from_session(phase: &Phase, config: &SessionConfig) -> Self {
-        match phase {
+    fn from_session(session: &Session) -> Self {
+        match &session.phase {
             Phase::Connected { room, jwt, .. } => Self::Room {
                 room: room.clone(),
                 jwt: jwt.clone(),
-                config: config.clone(),
+                room_key: session.room_key(room),
+                config: session.config.clone(),
             },
             _ => Self::Lobby {
-                config: config.clone(),
+                config: session.config.clone(),
             },
         }
     }
@@ -64,10 +67,15 @@ impl AvatarAuth {
         Fut: Future<Output = Result<T, SessionError>>,
     {
         match self {
-            Self::Room { room, jwt, config } => {
+            Self::Room {
+                room,
+                jwt,
+                room_key,
+                config,
+            } => {
                 let first = op(Arc::clone(tokens), jwt.clone()).await;
                 if matches!(first, Err(SessionError::Unauthorized)) {
-                    let req = token_request(config, room);
+                    let req = token_request(config, room, room_key.clone());
                     match tokens.fetch_token(req).await {
                         Ok(renewed) => {
                             let second = op(Arc::clone(tokens), renewed.token.clone()).await;
@@ -80,11 +88,18 @@ impl AvatarAuth {
                 }
             }
             Self::Lobby { config } => {
-                let rooms = match tokens.fetch_rooms(&config.invite_code).await {
+                let rooms = match tokens
+                    .fetch_rooms(&config.invite_code, &config.room_keys)
+                    .await
+                {
                     Ok(rooms) => rooms,
                     Err(err) => return (Err(err), None),
                 };
-                let Some(room) = rooms.first().map(|r| r.name.clone()) else {
+                let open_room = rooms.iter().find(|r| !r.needs_password()).map(|r| {
+                    let key = room_key_for(&config.room_keys, r.parent.as_deref(), &r.name);
+                    (r.name.clone(), key)
+                });
+                let Some((room, room_key)) = open_room else {
                     return (
                         Err(SessionError::Avatar(
                             "no room available to authenticate avatar request".to_owned(),
@@ -92,7 +107,10 @@ impl AvatarAuth {
                         None,
                     );
                 };
-                let token = match tokens.fetch_token(token_request(config, &room)).await {
+                let token = match tokens
+                    .fetch_token(token_request(config, &room, room_key))
+                    .await
+                {
                     Ok(token) => token,
                     Err(err) => return (Err(err), None),
                 };
@@ -113,12 +131,13 @@ fn avatar_error(err: SessionError) -> SessionError {
     }
 }
 
-fn token_request(config: &SessionConfig, room: &str) -> TokenRequest {
+fn token_request(config: &SessionConfig, room: &str, room_key: Option<String>) -> TokenRequest {
     TokenRequest {
         client_id: config.client_id.clone(),
         display_name: config.display_name.clone(),
         room: room.to_owned(),
         invite_code: config.invite_code.clone(),
+        room_key,
     }
 }
 
@@ -126,7 +145,7 @@ impl Session {
     pub(super) fn set_avatar(&mut self, path: PathBuf) {
         self.avatar_op_seq = self.avatar_op_seq.wrapping_add(1);
         let seq = self.avatar_op_seq;
-        let auth = AvatarAuth::from_session(&self.phase, &self.config);
+        let auth = AvatarAuth::from_session(self);
         let tokens = Arc::clone(&self.tokens);
         let tx = self.avatar_tx.clone();
 
@@ -160,7 +179,7 @@ impl Session {
     pub(super) fn clear_avatar(&mut self) {
         self.avatar_op_seq = self.avatar_op_seq.wrapping_add(1);
         let seq = self.avatar_op_seq;
-        let auth = AvatarAuth::from_session(&self.phase, &self.config);
+        let auth = AvatarAuth::from_session(self);
         let tokens = Arc::clone(&self.tokens);
         let tx = self.avatar_tx.clone();
 
@@ -197,7 +216,7 @@ impl Session {
         if !self.avatar_downloads.insert(key.clone()) {
             return;
         }
-        let auth = AvatarAuth::from_session(&self.phase, &self.config);
+        let auth = AvatarAuth::from_session(self);
         let tokens = Arc::clone(&self.tokens);
         let tx = self.avatar_tx.clone();
         spawn_avatar_download(key.0, key.1, cache_dir, auth, tokens, tx);
@@ -445,7 +464,7 @@ mod tests {
             tokens.set_rooms(vec![RoomSummary {
                 name: "geral".to_owned(),
                 title: "Geral".to_owned(),
-                participants: Vec::new(),
+                ..RoomSummary::default()
             }]);
             let (command_tx, command_rx) = mpsc::unbounded_channel();
             let (event_tx, event_rx) = mpsc::unbounded_channel();
@@ -456,6 +475,7 @@ mod tests {
                 invite_code: "secret".to_owned(),
                 avatar_version: initial_version.map(str::to_owned),
                 avatar_cache_dir: Some(cache_dir),
+                room_keys: std::collections::BTreeMap::new(),
             };
             tokio::spawn(run(
                 config,

@@ -68,6 +68,7 @@ impl Session {
             display_name: self.config.display_name.clone(),
             room: room.to_owned(),
             invite_code: self.config.invite_code.clone(),
+            room_key: self.room_key(room),
         }
     }
 
@@ -127,6 +128,10 @@ impl Session {
         };
         match result {
             Ok(connected) => self.on_connected(room, retry, connected).await,
+            Err(SessionError::RoomLocked(locked)) => {
+                self.forget_room_key(&locked);
+                self.emit(Event::Failed(SessionError::RoomLocked(locked)));
+            }
             Err(err) => match retry {
                 Some(attempt)
                     if attempt < self.policy.max_attempts

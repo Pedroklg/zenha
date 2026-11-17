@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::fmt;
 use std::path::PathBuf;
 
@@ -15,6 +16,8 @@ pub struct SessionConfig {
     pub invite_code: String,
     pub avatar_version: Option<String>,
     pub avatar_cache_dir: Option<PathBuf>,
+    /// Chaves de salas com senha, por nome da sala dona da senha.
+    pub room_keys: BTreeMap<String, String>,
 }
 
 impl fmt::Debug for SessionConfig {
@@ -26,7 +29,18 @@ impl fmt::Debug for SessionConfig {
             .field("invite_code", &"<redacted>")
             .field("avatar_version", &self.avatar_version)
             .field("avatar_cache_dir", &self.avatar_cache_dir)
+            .field("room_keys", &self.room_keys.keys().collect::<Vec<_>>())
             .finish()
+    }
+}
+
+/// Chave de acesso a uma sala com senha; o `Debug` não mostra o valor.
+#[derive(Clone, PartialEq, Eq)]
+pub struct RoomKey(pub String);
+
+impl fmt::Debug for RoomKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("RoomKey(<redacted>)")
     }
 }
 
@@ -111,11 +125,16 @@ pub enum RemovalReason {
 pub enum AdminAction {
     CreateRoom {
         title: String,
+        password: Option<String>,
+        parent: Option<String>,
     },
+    /// Em `password` e `parent`, `Some("")` remove a senha ou a sala-mãe.
     UpdateRoom {
         id: String,
         title: Option<String>,
         position: Option<usize>,
+        password: Option<String>,
+        parent: Option<String>,
     },
     DeleteRoom {
         id: String,
@@ -149,18 +168,29 @@ pub enum AdminAction {
 impl fmt::Debug for AdminAction {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::CreateRoom { title } => {
-                f.debug_struct("CreateRoom").field("title", title).finish()
-            }
+            Self::CreateRoom {
+                title,
+                password,
+                parent,
+            } => f
+                .debug_struct("CreateRoom")
+                .field("title", title)
+                .field("password", &password.as_ref().map(|_| "<redacted>"))
+                .field("parent", parent)
+                .finish(),
             Self::UpdateRoom {
                 id,
                 title,
                 position,
+                password,
+                parent,
             } => f
                 .debug_struct("UpdateRoom")
                 .field("id", id)
                 .field("title", title)
                 .field("position", position)
+                .field("password", &password.as_ref().map(|_| "<redacted>"))
+                .field("parent", parent)
                 .finish(),
             Self::DeleteRoom { id } => f.debug_struct("DeleteRoom").field("id", id).finish(),
             Self::MuteParticipant { room, identity } => f
@@ -205,6 +235,11 @@ impl fmt::Debug for AdminAction {
 pub enum Command {
     Join {
         room: String,
+    },
+    /// Troca a senha de uma sala por uma chave de acesso, guardada na sessão.
+    UnlockRoom {
+        room: String,
+        password: String,
     },
     Leave,
     SetMuted(bool),
@@ -276,6 +311,11 @@ impl fmt::Debug for Command {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Join { room } => f.debug_struct("Join").field("room", room).finish(),
+            Self::UnlockRoom { room, .. } => f
+                .debug_struct("UnlockRoom")
+                .field("room", room)
+                .field("password", &"<redacted>")
+                .finish(),
             Self::Leave => f.write_str("Leave"),
             Self::SetMuted(muted) => f.debug_tuple("SetMuted").field(muted).finish(),
             Self::SetDeafened(deafened) => f.debug_tuple("SetDeafened").field(deafened).finish(),
@@ -396,6 +436,11 @@ pub enum Event {
     },
     FileTransfer(FileTransfer),
     RoomsUpdated(Vec<RoomSummary>),
+    /// Senha aceita; `room` é a sala dona da senha, que pode ser a sala-mãe da pedida.
+    RoomUnlocked {
+        room: String,
+        key: RoomKey,
+    },
     AudioDevicesUpdated(AudioDevices),
     CaptureTargetsUpdated(Vec<CaptureTarget>),
     /// Miniatura RGBA de um alvo de captura, emitida assim que ficar pronta.
@@ -458,6 +503,12 @@ pub enum SessionError {
     TokenServer(String),
     #[error("invite code rejected")]
     InviteRejected,
+    #[error("room {0} requires a password")]
+    RoomLocked(String),
+    #[error("wrong room password")]
+    RoomPasswordRejected,
+    #[error("too many room password attempts; try again later")]
+    RoomUnlockRateLimited,
     #[error("room token rejected")]
     Unauthorized,
     #[error("too many chat messages; try again in a few seconds")]
@@ -523,5 +574,32 @@ mod tests {
             new_code: "secret-invite-code-999".to_owned(),
         });
         assert!(!format!("{invite:?}").contains("secret-invite-code-999"));
+
+        let unlock = Command::UnlockRoom {
+            room: "vip".to_owned(),
+            password: "senha-da-sala".to_owned(),
+        };
+        assert!(!format!("{unlock:?}").contains("senha-da-sala"));
+        let create = Command::Admin(AdminAction::CreateRoom {
+            title: "VIP".to_owned(),
+            password: Some("senha-da-sala".to_owned()),
+            parent: None,
+        });
+        assert!(!format!("{create:?}").contains("senha-da-sala"));
+        let unlocked = Event::RoomUnlocked {
+            room: "vip".to_owned(),
+            key: RoomKey("chave-secreta".to_owned()),
+        };
+        assert!(!format!("{unlocked:?}").contains("chave-secreta"));
+        let config = SessionConfig {
+            token_server_url: String::new(),
+            client_id: String::new(),
+            display_name: String::new(),
+            invite_code: String::new(),
+            avatar_version: None,
+            avatar_cache_dir: None,
+            room_keys: [("vip".to_owned(), "chave-secreta".to_owned())].into(),
+        };
+        assert!(!format!("{config:?}").contains("chave-secreta"));
     }
 }

@@ -6,7 +6,7 @@ use rooms_protocol::{
     ADMIN_CHAT_DELETE_TOPIC, ADMIN_MOVE_TOPIC, ADMIN_STOP_SHARE_TOPIC, AdminChatDelete,
     AdminLoginRequest, AdminMove, AdminStopShare, CreateRoomRequest, MoveParticipantRequest,
     ROOMS_CHANGED_TOPIC, RoomsChanged, UpdateInviteRequest, UpdateRoomRequest, validate_client_id,
-    validate_invite_code, validate_room_name, validate_room_title,
+    validate_invite_code, validate_room_name, validate_room_password, validate_room_title,
 };
 
 use crate::api::{AdminAction, Event, SessionError};
@@ -138,6 +138,9 @@ impl Session {
                 if let Ok(mv) = serde_json::from_slice::<AdminMove>(payload)
                     && validate_room_name(&mv.to_room).is_ok()
                 {
+                    if let Some(unlock) = mv.unlock {
+                        self.config.room_keys.insert(unlock.room, unlock.room_key);
+                    }
                     self.emit(Event::MovedByAdmin {
                         to_room: mv.to_room.clone(),
                     });
@@ -178,20 +181,33 @@ async fn execute_admin_action(
     action: AdminAction,
 ) -> Result<Option<Event>, SessionError> {
     match action {
-        AdminAction::CreateRoom { title } => {
-            let room = tokens
-                .admin_create_room(jwt, CreateRoomRequest { title })
-                .await?;
+        AdminAction::CreateRoom {
+            title,
+            password,
+            parent,
+        } => {
+            let request = CreateRoomRequest {
+                title,
+                password,
+                parent,
+            };
+            let room = tokens.admin_create_room(jwt, request).await?;
             Ok(Some(Event::AdminRoomCreated(room)))
         }
         AdminAction::UpdateRoom {
             id,
             title,
             position,
+            password,
+            parent,
         } => {
-            let room = tokens
-                .admin_update_room(jwt, &id, UpdateRoomRequest { title, position })
-                .await?;
+            let request = UpdateRoomRequest {
+                title,
+                position,
+                password,
+                parent,
+            };
+            let room = tokens.admin_update_room(jwt, &id, request).await?;
             Ok(Some(Event::AdminRoomUpdated(room)))
         }
         AdminAction::DeleteRoom { id } => {
@@ -235,23 +251,43 @@ async fn execute_admin_action(
     }
 }
 
+fn validate_room_lock(password: Option<&str>, parent: Option<&str>) -> Result<(), SessionError> {
+    let invalid = |err: &dyn fmt::Display| SessionError::InvalidInput(err.to_string());
+    if let Some(password) = password.filter(|p| !p.is_empty()) {
+        validate_room_password(password).map_err(|e| invalid(&e))?;
+    }
+    if let Some(parent) = parent.filter(|p| !p.is_empty()) {
+        validate_room_name(parent).map_err(|e| invalid(&e))?;
+    }
+    Ok(())
+}
+
 fn validate_admin_action(action: &AdminAction) -> Result<(), SessionError> {
     let invalid = |err: &dyn fmt::Display| SessionError::InvalidInput(err.to_string());
     match action {
-        AdminAction::CreateRoom { title } => validate_room_title(title).map_err(|e| invalid(&e)),
+        AdminAction::CreateRoom {
+            title,
+            password,
+            parent,
+        } => {
+            validate_room_title(title).map_err(|e| invalid(&e))?;
+            validate_room_lock(password.as_deref(), parent.as_deref())
+        }
         AdminAction::UpdateRoom {
             id,
             title,
             position,
+            password,
+            parent,
         } => {
             validate_room_name(id).map_err(|e| invalid(&e))?;
-            if title.is_none() && position.is_none() {
+            if title.is_none() && position.is_none() && password.is_none() && parent.is_none() {
                 return Err(SessionError::InvalidInput("nothing to update".to_owned()));
             }
             if let Some(title) = title {
                 validate_room_title(title).map_err(|e| invalid(&e))?;
             }
-            Ok(())
+            validate_room_lock(password.as_deref(), parent.as_deref())
         }
         AdminAction::DeleteRoom { id } => validate_room_name(id).map_err(|e| invalid(&e)),
         AdminAction::MuteParticipant { room, identity }
@@ -388,7 +424,7 @@ mod tests {
         h.tokens.set_rooms(vec![RoomSummary {
             name: "new-room".to_owned(),
             title: "Sala Nova".to_owned(),
-            participants: Vec::new(),
+            ..RoomSummary::default()
         }]);
         h.send(Command::AdminLogin {
             password: "admin".to_owned(),
@@ -397,6 +433,8 @@ mod tests {
 
         h.send(Command::Admin(AdminAction::CreateRoom {
             title: "Sala Nova".to_owned(),
+            password: Some("senha-nova".to_owned()),
+            parent: Some("geral".to_owned()),
         }));
         assert_eq!(
             h.next().await,
@@ -404,6 +442,8 @@ mod tests {
                 id: "new-room".to_owned(),
                 title: "Sala Nova".to_owned(),
                 position: 0,
+                locked: true,
+                parent: Some("geral".to_owned()),
             })
         );
         // While in lobby, room mutation refreshes room list preserving `title`.
@@ -416,6 +456,8 @@ mod tests {
             id: "new-room".to_owned(),
             title: Some("Renomeada".to_owned()),
             position: Some(1),
+            password: Some(String::new()),
+            parent: None,
         }));
         assert!(matches!(h.next().await, Event::AdminRoomUpdated(_)));
         assert!(matches!(h.next().await, Event::RoomsUpdated(_)));
@@ -517,6 +559,7 @@ mod tests {
         // Spoofed packets from participants on all 4 server topics must be dropped.
         let spoof_move = serde_json::to_vec(&AdminMove {
             to_room: "jogos".to_owned(),
+            unlock: None,
         })
         .unwrap();
         let spoof_del = serde_json::to_vec(&AdminChatDelete {
@@ -558,8 +601,13 @@ mod tests {
         assert!(h.backend.sharing().is_none());
 
         // Server-originated admin.move notifies UI and switches room via join.
+        h.tokens.lock_room("jogos", "jogos", "senha", "chave-jogos");
         let move_payload = serde_json::to_vec(&AdminMove {
             to_room: "jogos".to_owned(),
+            unlock: Some(rooms_protocol::UnlockRoomResponse {
+                room: "jogos".to_owned(),
+                room_key: "chave-jogos".to_owned(),
+            }),
         })
         .unwrap();
         assert!(h.backend.emit_server_data(ADMIN_MOVE_TOPIC, move_payload));
