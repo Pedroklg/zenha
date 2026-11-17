@@ -202,6 +202,8 @@ impl BotCommand {
             Self::AdminLogout => Command::AdminLogout,
             Self::AdminCreateRoom { title } => Command::Admin(AdminAction::CreateRoom {
                 title: title.clone(),
+                password: None,
+                parent: None,
             }),
             Self::AdminUpdateRoom {
                 id,
@@ -211,6 +213,8 @@ impl BotCommand {
                 id: id.clone(),
                 title: title.clone(),
                 position: *position,
+                password: None,
+                parent: None,
             }),
             Self::AdminDeleteRoom { id } => {
                 Command::Admin(AdminAction::DeleteRoom { id: id.clone() })
@@ -327,6 +331,9 @@ pub fn error_kind(error: &SessionError) -> &'static str {
         SessionError::InviteRejected => "invite_rejected",
         SessionError::Unauthorized => "unauthorized",
         SessionError::RateLimited => "rate_limited",
+        SessionError::RoomLocked(_) => "room_locked",
+        SessionError::RoomPasswordRejected => "room_password_rejected",
+        SessionError::RoomUnlockRateLimited => "room_unlock_rate_limited",
         SessionError::Chat(_) => "chat",
         SessionError::Avatar(_) => "avatar",
         SessionError::AdminInvalidPassword => "admin_invalid_password",
@@ -620,7 +627,8 @@ impl BotEvent {
             | Event::ParticipantNameChanged { .. }
             | Event::ParticipantAvatarChanged { .. }
             | Event::LocalAvatarChanged { .. }
-            | Event::AvatarCached { .. } => return None,
+            | Event::AvatarCached { .. }
+            | Event::RoomUnlocked { .. } => return None,
             Event::CommandFailed(error) => Self::CommandFailed {
                 error: error.into(),
             },

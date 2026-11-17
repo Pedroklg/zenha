@@ -120,6 +120,34 @@ fn draw_slash(painter: &Painter, rect: Rect, stroke: Stroke) {
     );
 }
 
+pub fn padlock(painter: &Painter, rect: Rect, color: Color32) {
+    let stroke = Stroke::new(1.5, color);
+    let c = rect.center();
+    let w = rect.width();
+    let h = rect.height();
+    let body = Rect::from_min_max(
+        Pos2::new(c.x - w * 0.32, rect.top() + h * 0.46),
+        Pos2::new(c.x + w * 0.32, rect.bottom() - h * 0.08),
+    );
+    painter.rect_filled(body, CornerRadius::same(2), color);
+    let r = w * 0.2;
+    let shackle: Vec<Pos2> = (0..=ARC_SEGMENTS)
+        .map(|i| {
+            let angle = PI + PI * i as f32 / ARC_SEGMENTS as f32;
+            Pos2::new(
+                c.x + r * angle.cos(),
+                body.top() - h * 0.1 + r * angle.sin(),
+            )
+        })
+        .collect();
+    painter.line_segment([Pos2::new(c.x - r, body.top()), shackle[0]], stroke);
+    painter.line_segment(
+        [Pos2::new(c.x + r, body.top()), shackle[ARC_SEGMENTS]],
+        stroke,
+    );
+    painter.line(shackle, stroke);
+}
+
 pub fn bookmark(painter: &Painter, rect: Rect, color: Color32) {
     let w = rect.width();
     let h = rect.height();

@@ -179,6 +179,14 @@ impl AppState {
     }
 
     pub(super) fn join_room(&mut self, room: String) -> Vec<UiCommand> {
+        if matches!(self.screen, Screen::Lobby) && self.needs_room_password(&room) {
+            self.open_room_password(room, None);
+            return Vec::new();
+        }
+        self.join_open_room(room)
+    }
+
+    pub(super) fn join_open_room(&mut self, room: String) -> Vec<UiCommand> {
         if !matches!(self.screen, Screen::Lobby) || room.trim().is_empty() {
             return Vec::new();
         }
@@ -256,6 +264,16 @@ impl AppState {
     }
 
     pub(super) fn switch_room(&mut self, room: String) -> Vec<UiCommand> {
+        if matches!(&self.screen, Screen::InRoom(state) if state.room != room)
+            && self.needs_room_password(&room)
+        {
+            self.open_room_password(room, None);
+            return Vec::new();
+        }
+        self.switch_open_room(room)
+    }
+
+    pub(super) fn switch_open_room(&mut self, room: String) -> Vec<UiCommand> {
         if !matches!(&self.screen, Screen::InRoom(state) if state.room != room) {
             return Vec::new();
         }
@@ -456,7 +474,10 @@ pub(super) fn apply_room_event(state: &mut RoomState, event: UiEvent) -> Option<
         | UiEvent::AvatarCached { .. }
         | UiEvent::AvatarFailed { .. }
         | UiEvent::RemovedFromRoom { .. }
-        | UiEvent::AdminFailed { .. } => None,
+        | UiEvent::AdminFailed { .. }
+        | UiEvent::RoomUnlocked { .. }
+        | UiEvent::RoomUnlockFailed { .. }
+        | UiEvent::RoomLocked { .. } => None,
     }
 }
 
@@ -558,6 +579,7 @@ mod tests {
             name: "geral".to_owned(),
             title: String::new(),
             participants: vec![],
+            ..RoomSummary::default()
         }]));
         assert_eq!(state.screen, Screen::Onboarding);
         assert!(state.rooms.is_empty());
@@ -679,6 +701,7 @@ mod tests {
             name: name.to_owned(),
             title: String::new(),
             participants: vec![],
+            ..RoomSummary::default()
         };
         state.apply_event(UiEvent::RoomsUpdated(vec![summary("a"), summary("b")]));
         assert_eq!(state.rooms.len(), 2);
@@ -694,6 +717,7 @@ mod tests {
             name: "geral".to_owned(),
             title: String::new(),
             participants: people.iter().map(|p| (*p).to_owned()).collect(),
+            ..RoomSummary::default()
         };
         state.apply_event(UiEvent::RoomsUpdated(vec![room(&["Pedro", "bel", "KNC"])]));
         assert_eq!(state.rooms, vec![room(&["bel", "KNC", "Pedro"])]);
@@ -743,11 +767,13 @@ mod tests {
                 name: "sala-1".to_owned(),
                 title: "Bate-papo".to_owned(),
                 participants: Vec::new(),
+                ..RoomSummary::default()
             },
             RoomSummary {
                 name: "geral".to_owned(),
                 title: String::new(),
                 participants: Vec::new(),
+                ..RoomSummary::default()
             },
         ];
 

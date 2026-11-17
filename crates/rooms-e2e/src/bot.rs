@@ -284,6 +284,7 @@ mod tests {
                 invite_code: "code".into(),
                 avatar_version: None,
                 avatar_cache_dir: None,
+                room_keys: Default::default(),
             };
             let handle =
                 SessionHandle::spawn(config, backend.clone(), FakeTokenClient::new()).unwrap();

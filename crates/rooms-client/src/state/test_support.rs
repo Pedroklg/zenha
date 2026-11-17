@@ -30,6 +30,7 @@ pub(super) fn valid_settings() -> Settings {
         room_sounds: true,
         dismissed_update_version: None,
         avatar_version: None,
+        room_keys: Default::default(),
     }
 }
 

@@ -763,6 +763,7 @@ impl eframe::App for App {
             admin,
             avatar_version,
             avatar_notice,
+            room_password,
             ..
         } = &mut self.state;
         let can_admin = !matches!(screen, Screen::Onboarding);
@@ -828,7 +829,12 @@ impl eframe::App for App {
                 avatar_notice: avatar_notice.as_deref(),
             },
         ));
-        actions.extend(views::room::admin_dialog(ui.ctx(), &mut admin.dialog));
+        actions.extend(views::room::admin_dialog(
+            ui.ctx(),
+            &mut admin.dialog,
+            rooms,
+        ));
+        actions.extend(views::room::room_password_dialog(ui.ctx(), room_password));
         actions.extend(views::room::update_confirm_dialog(
             ui.ctx(),
             had_update_dialog,
@@ -1046,7 +1052,7 @@ mod tests {
 
             harness.run_steps(2);
             assert!(matches!(harness.state().state.screen, Screen::Lobby));
-            assert_eq!(harness.state().state.rooms.len(), 3);
+            assert_eq!(harness.state().state.rooms.len(), 5);
 
             harness.get_by_label("Geral").click();
             harness.run_steps(2);

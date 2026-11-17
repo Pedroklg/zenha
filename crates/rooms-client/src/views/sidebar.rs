@@ -15,6 +15,7 @@ use crate::format::format_size;
 use crate::icons;
 use crate::state::{
     ConnectionStatus, ShareState, UpdateBanner, UpdatePhase, UserAction, participant_volume_for,
+    sidebar_order,
 };
 use crate::theme;
 use crate::ui_model::ParticipantView;
@@ -420,13 +421,15 @@ fn rooms_list(ui: &mut egui::Ui, view: RoomsListView<'_>, actions: &mut Vec<User
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            for (room_idx, summary) in view.rooms.iter().enumerate() {
+            for (room_idx, summary, depth) in sidebar_order(view.rooms) {
                 let is_current = view.current_room == Some(summary.name.as_str());
                 let row_resp = room_row(
                     ui,
                     summary.display_title(),
-                    summary.participants.len(),
+                    summary.occupant_count(),
                     is_current,
+                    summary.locked,
+                    f32::from(depth) * CHILD_INDENT,
                 );
                 if row_resp.clicked() && !is_current {
                     let action = if view.current_room.is_some() {
@@ -438,8 +441,8 @@ fn rooms_list(ui: &mut egui::Ui, view: RoomsListView<'_>, actions: &mut Vec<User
                 }
                 if view.is_admin {
                     row_resp.context_menu(|ui| {
-                        if ui.button("Renomear").clicked() {
-                            actions.push(UserAction::OpenRenameRoom(summary.name.clone()));
+                        if ui.button("Editar").clicked() {
+                            actions.push(UserAction::OpenEditRoom(summary.name.clone()));
                             ui.close();
                         }
                         if ui
@@ -523,9 +526,19 @@ fn rooms_list(ui: &mut egui::Ui, view: RoomsListView<'_>, actions: &mut Vec<User
         });
 }
 
-fn room_row(ui: &mut egui::Ui, name: &str, count: usize, is_current: bool) -> egui::Response {
+const CHILD_INDENT: f32 = 16.0;
+
+fn room_row(
+    ui: &mut egui::Ui,
+    name: &str,
+    count: usize,
+    is_current: bool,
+    locked: bool,
+    indent: f32,
+) -> egui::Response {
     let desired = Vec2::new(ui.available_width(), 44.0);
-    let (rect, response) = ui.allocate_exact_size(desired, Sense::click());
+    let (full, response) = ui.allocate_exact_size(desired, Sense::click());
+    let rect = full.with_min_x(full.left() + indent);
     if ui.is_rect_visible(rect) {
         let painter = ui.painter().clone();
         let bg = if is_current {
@@ -548,10 +561,21 @@ fn room_row(ui: &mut egui::Ui, name: &str, count: usize, is_current: bool) -> eg
         } else {
             theme::TEXT_WEAK
         };
+        let count_space = if locked { 54.0 } else { 36.0 };
         let left_rect = egui::Rect::from_min_max(
             egui::pos2(rect.left() + 12.0, rect.top()),
-            egui::pos2((rect.right() - 36.0).max(rect.left() + 32.0), rect.bottom()),
+            egui::pos2(
+                (rect.right() - count_space).max(rect.left() + 32.0),
+                rect.bottom(),
+            ),
         );
+        if locked {
+            let icon = egui::Rect::from_center_size(
+                egui::pos2(rect.right() - 40.0, rect.center().y),
+                Vec2::splat(13.0),
+            );
+            icons::padlock(&painter, icon, count_color);
+        }
         ui.scope_builder(egui::UiBuilder::new().max_rect(left_rect), |ui| {
             ui.set_clip_rect(left_rect);
             ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
