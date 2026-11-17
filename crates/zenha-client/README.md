@@ -4,16 +4,15 @@ The desktop app, built as `zenha.exe` with `eframe`/`egui`. It never imports `li
 
 | Module | Contents |
 | --- | --- |
-| `app` | `eframe::App`: reads pending events and draws each frame |
-| `state/` | UI state and screen transitions: `onboarding`, `room`, `audio`, `chat`, `share`, `admin`, `update` |
-| `views/` | Screens and panels: `onboarding`, `room`, `sidebar`, `chat`, `share`, `room_watch`, `participant_menu`, `settings` |
-| `core_session`, `ui_model` | Bridge to `zenha-core` and the UI-side copies of its types |
-| `demo` | `--demo` mode: simulated rooms and participants |
-| `settings`, `credentials` | Settings in `%APPDATA%\zenha`, passwords in Windows Credential Manager |
-| `hotkeys`, `global_keys`, `tray` | Global hotkeys and the tray icon (Windows) |
-| `invite`, `cli`, `single_instance` | `zenha://` links and startup arguments |
-| `update` | Checks GitHub Releases for a newer version |
-| `theme`, `icons`, `chat_images`, `clipboard_image` | Look and feel, chat image thumbnails and pasted images |
+| `app/` | `eframe::App`: `App` state and creation, frame loop, channel pumps, effects, window visibility |
+| `state/` | UI state and screen transitions: `onboarding`, `room`, `audio`, `chat`, `share`, `admin`, `update`, plus `user_action`, `handle` (actions) and `events` |
+| `views/` | Screens and panels: `onboarding`, `room/`, `sidebar/`, `chat`, `share`, `room_watch`, `participant_menu`, `settings` |
+| `core_session/`, `ui_model` | Bridge to `zenha-core` (commands, event translation, errors, video feed) and the UI-side copies of its types |
+| `demo/` | `--demo` mode: simulated rooms, participants, chat and sharing |
+| `platform/` | System integration: `settings`, `credentials` (Windows Credential Manager), `hotkeys`, `global_keys`, `tray`, `single_instance`, `clipboard_image` |
+| `updater/` | Update check on GitHub Releases, verified download and installer launch |
+| `invite`, `cli` | `zenha://` links and startup arguments |
+| `theme`, `icons`, `chat_images`, `avatars`, `dialogs`, `format` | Look and feel, chat image thumbnails, avatars, file dialogs and formatting helpers |
 
 UI text is Brazilian Portuguese.
 

@@ -2,8 +2,8 @@
 
 use std::time::{Duration, Instant};
 
-use crate::hotkeys::binding_label;
-use crate::settings::VoiceMode;
+use crate::platform::hotkeys::binding_label;
+use crate::platform::settings::VoiceMode;
 use crate::state::{AppState, Screen};
 use crate::ui_model::UiCommand;
 
@@ -87,7 +87,7 @@ mod tests {
     use zenha_core::Cue;
 
     use super::*;
-    use crate::settings::Settings;
+    use crate::platform::settings::Settings;
     use crate::state::UserAction;
     use crate::state::test_support::{in_room, room, state_with_code, valid_settings};
     use crate::ui_model::UiEvent;

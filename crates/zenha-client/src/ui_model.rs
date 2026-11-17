@@ -6,7 +6,7 @@ use std::sync::Arc;
 use zenha_core::{AdminAction, RemovalReason, RoomKey};
 use zenha_protocol::{AdminRoom, RoomSummary};
 
-use crate::settings::NoiseMode;
+use crate::platform::settings::NoiseMode;
 
 #[derive(Clone, PartialEq, Eq)]
 pub enum UiCommand {

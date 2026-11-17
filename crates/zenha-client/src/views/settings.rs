@@ -1,7 +1,7 @@
 use eframe::egui::{self, RichText};
 
-use crate::hotkeys::{HotkeyAction, binding_from_key, binding_label, binding_warning};
-use crate::settings::{NoiseMode, VoiceMode};
+use crate::platform::hotkeys::{HotkeyAction, binding_from_key, binding_label, binding_warning};
+use crate::platform::settings::{NoiseMode, VoiceMode};
 use crate::state::{
     AdminState, AudioState, DEFAULT_DEVICE_LABEL, HotkeyState, MicLevelView, UserAction,
 };

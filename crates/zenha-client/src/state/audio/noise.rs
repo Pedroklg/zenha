@@ -1,6 +1,6 @@
 //! Supressão de ruído, porta de ruído e leitura de nível do microfone.
 
-use crate::settings::NoiseMode;
+use crate::platform::settings::NoiseMode;
 use crate::state::AppState;
 use crate::ui_model::UiCommand;
 

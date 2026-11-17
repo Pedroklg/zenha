@@ -32,7 +32,7 @@ fn pipe_name() -> String {
         .chars()
         .filter(char::is_ascii_alphanumeric)
         .collect();
-    let profile = if crate::settings::config_dir_override().is_some() {
+    let profile = if crate::platform::settings::config_dir_override().is_some() {
         "-alt"
     } else {
         ""

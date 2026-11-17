@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use super::{AppState, Screen};
 use crate::ui_model::UiCommand;
-use crate::update::{AvailableUpdate, InstallerAsset, UpdateDownloadEvent, should_show_update};
+use crate::updater::{AvailableUpdate, InstallerAsset, UpdateDownloadEvent, should_show_update};
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum UpdatePhase {
@@ -275,7 +275,7 @@ mod tests {
     use super::*;
     use crate::state::UserAction;
     use crate::state::test_support::{in_room, state_with_code, valid_settings};
-    use crate::update::InstallerAsset;
+    use crate::updater::InstallerAsset;
 
     fn sample_installer() -> InstallerAsset {
         InstallerAsset {

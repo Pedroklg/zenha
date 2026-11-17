@@ -7,7 +7,7 @@ use zenha_protocol::{MAX_DISPLAY_NAME_LEN, ValidationError, validate_display_nam
 use super::audio::{LobbyVoiceState, saved_volume_commands};
 use super::{AppState, Screen};
 use crate::cli::StartupLink;
-use crate::settings::Settings;
+use crate::platform::settings::Settings;
 use crate::ui_model::{Credentials, UiCommand};
 
 #[derive(Clone, PartialEq, Eq, Default)]
