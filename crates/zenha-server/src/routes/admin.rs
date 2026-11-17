@@ -16,7 +16,7 @@ use zenha_protocol::{
     validate_room_name, validate_room_password, validate_room_title,
 };
 
-use crate::chat_store::{
+use crate::store::{
     CreateRoomOutcome, DeleteRoomCheck, DeleteRoomOutcome, RoomUpdate, UpdateRoomOutcome,
 };
 use crate::directory::ModerationError;
@@ -514,7 +514,7 @@ mod tests {
     };
     use tower::ServiceExt;
 
-    use crate::chat_store::ChatStore;
+    use crate::store::ChatStore;
     use crate::directory::{
         FakeDirectory, ModerationCall, TRACK_SOURCE_MICROPHONE, TRACK_SOURCE_SCREEN_SHARE,
         TRACK_SOURCE_SCREEN_SHARE_AUDIO,

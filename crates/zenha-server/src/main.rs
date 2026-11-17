@@ -1,8 +1,9 @@
 mod avatar;
-mod chat_store;
+
 mod config;
 mod directory;
 mod room_access;
+mod store;
 mod routes;
 mod token;
 
@@ -12,7 +13,7 @@ use std::sync::Arc;
 use anyhow::Context;
 use tokio::net::TcpListener;
 
-use crate::chat_store::ChatStore;
+use crate::store::ChatStore;
 use crate::config::Config;
 use crate::directory::LiveKitDirectory;
 use crate::routes::{

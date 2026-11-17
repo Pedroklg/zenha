@@ -9,7 +9,7 @@
 | `routes/` | Router and auth (`mod`), `token`, `rooms`, `chat`, `admin`, `rate_limit` |
 | `token` | LiveKit JWT signing |
 | `directory` | LiveKit server API: participants, moderation, data packets |
-| `chat_store` | SQLite store for saved messages, rooms (title, order, password hash, parent) and the rotated invite hash |
+| `store/` | SQLite store for saved messages, rooms (title, order, password hash, parent) and the rotated invite hash |
 | `room_access` | Room keys (HMAC-SHA256) and the rule that a parent's password opens its children |
 
 Main routes: `GET /health`, `POST /token`, `GET /rooms`, `POST /rooms/{room}/unlock`, `GET`/`POST /rooms/{room}/chat`, `DELETE /rooms/{room}/chat/{id}`, `PUT`/`DELETE /avatar`, `GET /avatar/{identity}` and `/admin/*` (only when `ZENHA_ADMIN_CODE_HASH` is set).

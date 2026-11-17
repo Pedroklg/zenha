@@ -8,7 +8,7 @@ use zenha_protocol::{
     ChatHistoryResponse, ChatMessage, MAX_CHAT_ID_LEN, SaveChatRequest, validate_chat_text,
 };
 
-use crate::chat_store::{DeleteOutcome, InsertOutcome};
+use crate::store::{DeleteOutcome, InsertOutcome};
 
 use super::{ApiError, AppState, authenticate_room};
 
@@ -138,7 +138,7 @@ mod tests {
     };
     use tower::ServiceExt;
 
-    use crate::chat_store::ChatStore;
+    use crate::store::ChatStore;
 
     use super::super::router;
     use super::super::test_support::{
