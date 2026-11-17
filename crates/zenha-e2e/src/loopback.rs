@@ -27,6 +27,7 @@ pub struct WasapiProbe {
 impl WasapiProbe {
     pub fn from_env() -> Self {
         let target = std::env::var("ZENHA_E2E_OUTPUT")
+            .or_else(|_| std::env::var("ROOMS_E2E_OUTPUT"))
             .ok()
             .map(|value| value.trim().to_lowercase())
             .filter(|value| !value.is_empty());
@@ -150,6 +151,7 @@ fn capture_render(target: Option<String>, duration: Duration) -> anyhow::Result<
 /// harness. It runs as its own process so a bot can share the sound of exactly this process.
 pub fn side_tone_main(hz: f64, amplitude: f64) -> anyhow::Result<()> {
     let target = std::env::var("ZENHA_E2E_OUTPUT")
+        .or_else(|_| std::env::var("ROOMS_E2E_OUTPUT"))
         .ok()
         .map(|value| value.trim().to_lowercase())
         .filter(|value| !value.is_empty());
