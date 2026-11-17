@@ -178,7 +178,7 @@ pub fn picker(
     };
     let mut open = true;
     egui::Window::new("Transmitir tela")
-        .id(egui::Id::new(PICKER_ID))
+        .id(egui::Id::unique(PICKER_ID))
         .open(&mut open)
         .collapsible(false)
         .resizable(false)
@@ -410,7 +410,7 @@ mod picker_tests {
         let screen = harness.ctx.content_rect();
         let window = harness
             .ctx
-            .memory(|m| m.area_rect(egui::Id::new(PICKER_ID)))
+            .memory(|m| m.area_rect(egui::Id::unique(PICKER_ID)))
             .expect("picker window");
         assert!(
             screen.contains_rect(window),
