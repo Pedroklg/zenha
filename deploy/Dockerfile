@@ -1,7 +1,7 @@
 FROM rust:1.97-slim AS build
 WORKDIR /src
 COPY . .
-RUN cargo build --release --locked --package rooms-token-server
+RUN cargo build --release --locked --package zenha-server
 
 FROM debian:stable-slim
 RUN apt-get update \
@@ -10,7 +10,7 @@ RUN apt-get update \
     && groupadd --system --gid 10001 zenha \
     && useradd --system --uid 10001 --gid 10001 --no-create-home --shell /usr/sbin/nologin zenha \
     && install -d -m 0750 -o zenha -g zenha /var/lib/zenha
-COPY --from=build /src/target/release/rooms-token-server /usr/local/bin/rooms-token-server
+COPY --from=build /src/target/release/zenha-server /usr/local/bin/zenha-server
 USER zenha:zenha
 EXPOSE 8787
-ENTRYPOINT ["rooms-token-server"]
+ENTRYPOINT ["zenha-server"]

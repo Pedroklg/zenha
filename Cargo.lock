@@ -5445,7 +5445,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "rooms-client"
+name = "zenha-client"
 version = "0.1.12"
 dependencies = [
  "anyhow",
@@ -5457,8 +5457,8 @@ dependencies = [
  "keyring",
  "reqwest 0.13.5",
  "rfd",
- "rooms-core",
- "rooms-protocol",
+ "zenha-core",
+ "zenha-protocol",
  "serde",
  "serde_json",
  "sha2",
@@ -5471,7 +5471,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "rooms-core"
+name = "zenha-core"
 version = "0.1.12"
 dependencies = [
  "async-trait",
@@ -5481,7 +5481,7 @@ dependencies = [
  "ndarray",
  "nnnoiseless",
  "reqwest 0.13.5",
- "rooms-protocol",
+ "zenha-protocol",
  "rustls",
  "serde_json",
  "thiserror 2.0.21",
@@ -5493,12 +5493,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "rooms-e2e"
+name = "zenha-e2e"
 version = "0.1.12"
 dependencies = [
  "anyhow",
- "rooms-core",
- "rooms-protocol",
+ "zenha-core",
+ "zenha-protocol",
  "serde",
  "serde_json",
  "tokio",
@@ -5509,7 +5509,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "rooms-protocol"
+name = "zenha-protocol"
 version = "0.1.12"
 dependencies = [
  "serde",
@@ -5518,7 +5518,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "rooms-token-server"
+name = "zenha-server"
 version = "0.1.12"
 dependencies = [
  "anyhow",
@@ -5529,7 +5529,7 @@ dependencies = [
  "http-body-util",
  "image",
  "livekit-api",
- "rooms-protocol",
+ "zenha-protocol",
  "rusqlite",
  "serde_json",
  "sha2",

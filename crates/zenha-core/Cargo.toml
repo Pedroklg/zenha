@@ -1,0 +1,37 @@
+[package]
+name = "zenha-core"
+description = "Sessão, áudio, captura e vídeo. Única crate que conhece o SDK do LiveKit"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+test-util = []
+
+[dependencies]
+async-trait.workspace = true
+nnnoiseless.workspace = true
+reqwest.workspace = true
+zenha-protocol.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+deep_filter.workspace = true
+futures-util.workspace = true
+livekit.workspace = true
+ndarray.workspace = true
+rustls.workspace = true
+wasapi.workspace = true
+windows.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
+
+[lints]
+workspace = true

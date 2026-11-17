@@ -35,7 +35,7 @@ Settings live in `%APPDATA%\zenha` and survive uninstall. Server passwords live 
 
 ## Self-hosting
 
-The server is `livekit-server` plus `rooms-token-server` behind Caddy, run with Docker Compose. See the [deployment guide](docs/deploy.md).
+The server is `livekit-server` plus `zenha-server` behind Caddy, run with Docker Compose. See the [deployment guide](docs/deploy.md).
 
 ## Building from source
 
@@ -59,27 +59,27 @@ cargo client -- --demo  # simulated rooms and participants, no server needed
 | --- | --- |
 | `cargo ci` | Boundary checks, `fmt --check`, clippy (`-D warnings`), workspace tests and `cargo deny` |
 | `cargo lint` | Clippy on all workspace targets |
-| `cargo server` | Runs `rooms-token-server` |
+| `cargo server` | Runs `zenha-server` |
 | `cargo client` | Runs the `zenha` desktop client |
 | `cargo fmt --all` | Formats the workspace |
 
-`cargo run -p rooms-token-server -- hash-password` reads a password from stdin and prints the Argon2 hash for `ROOMS_INVITE_CODE_HASH`.
+`cargo run -p zenha-server -- hash-password` reads a password from stdin and prints the Argon2 hash for `ZENHA_INVITE_CODE_HASH`.
 
 `scripts\package.cmd` builds the release zip into `dist\`, and the installer too when Inno Setup 6 is installed. Releases are published from a PC with `scripts\release.cmd`; see [Releases and updates](docs/deploy.md#6-releases-and-updates).
 
 ## Architecture
 
-The `egui` UI (`rooms-client`) talks to the media engine (`rooms-core`) only through `Command` and `Event` channels, so the UI thread never blocks. `rooms-core` is the only crate that uses the LiveKit SDK. `rooms-token-server` checks the invite code, issues short-lived room tokens and stores rooms and saved chat messages in SQLite.
+The `egui` UI (`zenha-client`) talks to the media engine (`zenha-core`) only through `Command` and `Event` channels, so the UI thread never blocks. `zenha-core` is the only crate that uses the LiveKit SDK. `zenha-server` checks the invite code, issues short-lived room tokens and stores rooms and saved chat messages in SQLite.
 
 See [docs/architecture.md](docs/architecture.md) for diagrams and [docs/adr/](docs/adr/) for decision records.
 
 | Path | Contents |
 | --- | --- |
-| [`crates/rooms-protocol`](crates/rooms-protocol/README.md) | Shared `serde` types and size limits |
-| [`crates/rooms-core`](crates/rooms-core/README.md) | Session, audio, noise suppression, capture and video; the only LiveKit SDK user |
-| [`crates/rooms-client`](crates/rooms-client/README.md) | Desktop UI (`zenha.exe`), `eframe`/`egui` |
-| [`crates/rooms-token-server`](crates/rooms-token-server/README.md) | HTTP server: invite check, LiveKit tokens, rooms, saved chat, admin |
-| [`crates/rooms-e2e`](crates/rooms-e2e/README.md) | End-to-end harness with scripted bots and a WASAPI loopback probe |
+| [`crates/zenha-protocol`](crates/zenha-protocol/README.md) | Shared `serde` types and size limits |
+| [`crates/zenha-core`](crates/zenha-core/README.md) | Session, audio, noise suppression, capture and video; the only LiveKit SDK user |
+| [`crates/zenha-client`](crates/zenha-client/README.md) | Desktop UI (`zenha.exe`), `eframe`/`egui` |
+| [`crates/zenha-server`](crates/zenha-server/README.md) | HTTP server: invite check, LiveKit tokens, rooms, saved chat, admin |
+| [`crates/zenha-e2e`](crates/zenha-e2e/README.md) | End-to-end harness with scripted bots and a WASAPI loopback probe |
 | `xtask` | `cargo ci`, review checks, icon generation |
 | [`deploy`](deploy/README.md) | Server config and OpenTofu infrastructure |
 | `installer` | Inno Setup script |

@@ -13,24 +13,24 @@ for arg in "$@"; do
     TOKEN_DOMAIN=*) TOKEN_DOMAIN="${arg#*=}" ;;
     RTC_DOMAIN=*) RTC_DOMAIN="${arg#*=}" ;;
     ZENHA_IMAGE=*) ZENHA_IMAGE="${arg#*=}" ;;
-    ROOMS_INVITE_CODE_HASH=*) ROOMS_INVITE_CODE_HASH="${arg#*=}" ;;
+    ZENHA_INVITE_CODE_HASH=*) ZENHA_INVITE_CODE_HASH="${arg#*=}" ;;
     INVITE_PASSWORD=*) INVITE_PASSWORD="${arg#*=}" ;;
-    ROOMS_ADMIN_CODE_HASH=*) ROOMS_ADMIN_CODE_HASH="${arg#*=}" ;;
+    ZENHA_ADMIN_CODE_HASH=*) ZENHA_ADMIN_CODE_HASH="${arg#*=}" ;;
     ADMIN_PASSWORD=*) ADMIN_PASSWORD="${arg#*=}" ;;
-    ROOMS_ROOM_LIST=*) ROOMS_ROOM_LIST="${arg#*=}" ;;
-    ROOMS_TOKEN_TTL_SECS=*) ROOMS_TOKEN_TTL_SECS="${arg#*=}" ;;
+    ZENHA_ROOM_LIST=*) ZENHA_ROOM_LIST="${arg#*=}" ;;
+    ZENHA_TOKEN_TTL_SECS=*) ZENHA_TOKEN_TTL_SECS="${arg#*=}" ;;
     NODE_IP=*) NODE_IP="${arg#*=}" ;;
     --token-domain=*) TOKEN_DOMAIN="${arg#*=}" ;;
     --rtc-domain=*) RTC_DOMAIN="${arg#*=}" ;;
     --image=*) ZENHA_IMAGE="${arg#*=}" ;;
-    --invite-hash=*) ROOMS_INVITE_CODE_HASH="${arg#*=}" ;;
+    --invite-hash=*) ZENHA_INVITE_CODE_HASH="${arg#*=}" ;;
     --invite-password=*) INVITE_PASSWORD="${arg#*=}" ;;
-    --admin-hash=*) ROOMS_ADMIN_CODE_HASH="${arg#*=}" ;;
+    --admin-hash=*) ZENHA_ADMIN_CODE_HASH="${arg#*=}" ;;
     --admin-password=*) ADMIN_PASSWORD="${arg#*=}" ;;
     --node-ip=*) NODE_IP="${arg#*=}" ;;
     *)
       echo "Unknown argument: ${arg}" >&2
-      echo "Usage: $0 [TOKEN_DOMAIN=...] [RTC_DOMAIN=...] [ZENHA_IMAGE=...] [ROOMS_INVITE_CODE_HASH=...] [INVITE_PASSWORD=...] [ROOMS_ADMIN_CODE_HASH=...] [ADMIN_PASSWORD=...] [NODE_IP=...]" >&2
+      echo "Usage: $0 [TOKEN_DOMAIN=...] [RTC_DOMAIN=...] [ZENHA_IMAGE=...] [ZENHA_INVITE_CODE_HASH=...] [INVITE_PASSWORD=...] [ZENHA_ADMIN_CODE_HASH=...] [ADMIN_PASSWORD=...] [NODE_IP=...]" >&2
       exit 1
       ;;
   esac
@@ -58,7 +58,7 @@ read_existing_env() {
   local key="$1"
   if [[ -f "${ENV_FILE}" ]]; then
     local line
-    line="$(grep -E "^${key}=" "${ENV_FILE}" | tail -n 1 || true)"
+    line="$(grep -E "^(${key}|${key/#ZENHA_/ROOMS_})=" "${ENV_FILE}" | tail -n 1 || true)"
     if [[ -n "${line}" ]]; then
       local val="${line#*=}"
       val="${val#\'}"
@@ -73,17 +73,17 @@ read_existing_env() {
 TOKEN_DOMAIN="${TOKEN_DOMAIN:-$(read_existing_env TOKEN_DOMAIN)}"
 RTC_DOMAIN="${RTC_DOMAIN:-$(read_existing_env RTC_DOMAIN)}"
 ZENHA_IMAGE="${ZENHA_IMAGE:-$(read_existing_env ZENHA_IMAGE)}"
-ROOMS_INVITE_CODE_HASH="${ROOMS_INVITE_CODE_HASH:-$(read_existing_env ROOMS_INVITE_CODE_HASH)}"
-if [[ -z "${ROOMS_ADMIN_CODE_HASH:-}" && -z "${ADMIN_PASSWORD:-}" ]]; then
-  ROOMS_ADMIN_CODE_HASH="$(read_existing_env ROOMS_ADMIN_CODE_HASH)"
+ZENHA_INVITE_CODE_HASH="${ZENHA_INVITE_CODE_HASH:-$(read_existing_env ZENHA_INVITE_CODE_HASH)}"
+if [[ -z "${ZENHA_ADMIN_CODE_HASH:-}" && -z "${ADMIN_PASSWORD:-}" ]]; then
+  ZENHA_ADMIN_CODE_HASH="$(read_existing_env ZENHA_ADMIN_CODE_HASH)"
 fi
-ROOMS_ADMIN_CODE_HASH="${ROOMS_ADMIN_CODE_HASH:-}"
+ZENHA_ADMIN_CODE_HASH="${ZENHA_ADMIN_CODE_HASH:-}"
 LIVEKIT_API_KEY="${LIVEKIT_API_KEY:-$(read_existing_env LIVEKIT_API_KEY)}"
 LIVEKIT_API_SECRET="${LIVEKIT_API_SECRET:-$(read_existing_env LIVEKIT_API_SECRET)}"
-ROOMS_ROOM_LIST="${ROOMS_ROOM_LIST:-$(read_existing_env ROOMS_ROOM_LIST)}"
-ROOMS_ROOM_LIST="${ROOMS_ROOM_LIST:-geral,jogos,afk}"
-ROOMS_TOKEN_TTL_SECS="${ROOMS_TOKEN_TTL_SECS:-$(read_existing_env ROOMS_TOKEN_TTL_SECS)}"
-ROOMS_TOKEN_TTL_SECS="${ROOMS_TOKEN_TTL_SECS:-3600}"
+ZENHA_ROOM_LIST="${ZENHA_ROOM_LIST:-$(read_existing_env ZENHA_ROOM_LIST)}"
+ZENHA_ROOM_LIST="${ZENHA_ROOM_LIST:-geral,jogos,afk}"
+ZENHA_TOKEN_TTL_SECS="${ZENHA_TOKEN_TTL_SECS:-$(read_existing_env ZENHA_TOKEN_TTL_SECS)}"
+ZENHA_TOKEN_TTL_SECS="${ZENHA_TOKEN_TTL_SECS:-3600}"
 NODE_IP="${NODE_IP:-}"
 
 if [[ -z "${TOKEN_DOMAIN}" ]] && [[ -t 0 ]]; then
@@ -101,41 +101,41 @@ if [[ -z "${TOKEN_DOMAIN}" || -z "${RTC_DOMAIN}" || -z "${ZENHA_IMAGE}" ]]; then
   exit 1
 fi
 
-if [[ -z "${ROOMS_INVITE_CODE_HASH}" ]]; then
+if [[ -z "${ZENHA_INVITE_CODE_HASH}" ]]; then
   if [[ -n "${INVITE_PASSWORD:-}" ]]; then
-    ROOMS_INVITE_CODE_HASH="$(printf '%s\n' "${INVITE_PASSWORD}" | docker run --rm -i "${ZENHA_IMAGE}" hash-password)"
+    ZENHA_INVITE_CODE_HASH="$(printf '%s\n' "${INVITE_PASSWORD}" | docker run --rm -i "${ZENHA_IMAGE}" hash-password)"
   elif [[ -t 0 ]]; then
     read -r -s -p "Enter Argon2 PHC hash (\$argon2id\$...) or plaintext invite password: " USER_SECRET
     echo >&2
     if [[ "${USER_SECRET}" == \$argon2* ]]; then
-      ROOMS_INVITE_CODE_HASH="${USER_SECRET}"
+      ZENHA_INVITE_CODE_HASH="${USER_SECRET}"
     elif [[ -n "${USER_SECRET}" ]]; then
-      ROOMS_INVITE_CODE_HASH="$(printf '%s\n' "${USER_SECRET}" | docker run --rm -i "${ZENHA_IMAGE}" hash-password)"
+      ZENHA_INVITE_CODE_HASH="$(printf '%s\n' "${USER_SECRET}" | docker run --rm -i "${ZENHA_IMAGE}" hash-password)"
     fi
   fi
 fi
 
-if [[ -z "${ROOMS_INVITE_CODE_HASH}" || "${ROOMS_INVITE_CODE_HASH}" != \$argon2* ]]; then
-  echo "error: valid ROOMS_INVITE_CODE_HASH (\$argon2id\$...) or INVITE_PASSWORD is required" >&2
+if [[ -z "${ZENHA_INVITE_CODE_HASH}" || "${ZENHA_INVITE_CODE_HASH}" != \$argon2* ]]; then
+  echo "error: valid ZENHA_INVITE_CODE_HASH (\$argon2id\$...) or INVITE_PASSWORD is required" >&2
   exit 1
 fi
 
-if [[ -z "${ROOMS_ADMIN_CODE_HASH}" ]]; then
+if [[ -z "${ZENHA_ADMIN_CODE_HASH}" ]]; then
   if [[ -n "${ADMIN_PASSWORD:-}" ]]; then
-    ROOMS_ADMIN_CODE_HASH="$(printf '%s\n' "${ADMIN_PASSWORD}" | docker run --rm -i "${ZENHA_IMAGE}" hash-password)"
+    ZENHA_ADMIN_CODE_HASH="$(printf '%s\n' "${ADMIN_PASSWORD}" | docker run --rm -i "${ZENHA_IMAGE}" hash-password)"
   elif [[ -t 0 ]]; then
     read -r -s -p "Optional admin Argon2 PHC hash or plaintext password (Enter to skip): " ADMIN_SECRET
     echo >&2
     if [[ "${ADMIN_SECRET}" == \$argon2* ]]; then
-      ROOMS_ADMIN_CODE_HASH="${ADMIN_SECRET}"
+      ZENHA_ADMIN_CODE_HASH="${ADMIN_SECRET}"
     elif [[ -n "${ADMIN_SECRET}" ]]; then
-      ROOMS_ADMIN_CODE_HASH="$(printf '%s\n' "${ADMIN_SECRET}" | docker run --rm -i "${ZENHA_IMAGE}" hash-password)"
+      ZENHA_ADMIN_CODE_HASH="$(printf '%s\n' "${ADMIN_SECRET}" | docker run --rm -i "${ZENHA_IMAGE}" hash-password)"
     fi
   fi
 fi
 
-if [[ -n "${ROOMS_ADMIN_CODE_HASH}" && "${ROOMS_ADMIN_CODE_HASH}" != \$argon2* ]]; then
-  echo "error: ROOMS_ADMIN_CODE_HASH must be an Argon2 PHC hash (\$argon2id\$...)" >&2
+if [[ -n "${ZENHA_ADMIN_CODE_HASH}" && "${ZENHA_ADMIN_CODE_HASH}" != \$argon2* ]]; then
+  echo "error: ZENHA_ADMIN_CODE_HASH must be an Argon2 PHC hash (\$argon2id\$...)" >&2
   exit 1
 fi
 
@@ -171,7 +171,7 @@ services:
     env_file:
       - /opt/zenha/.env
     environment:
-      ROOMS_CHAT_DB: /var/lib/zenha/chat.db
+      ZENHA_CHAT_DB: /var/lib/zenha/chat.db
     volumes:
       - zenha_data:/var/lib/zenha
     depends_on:
@@ -243,17 +243,17 @@ cat <<EOF >"${ENV_FILE}"
 ZENHA_IMAGE=${ZENHA_IMAGE}
 TOKEN_DOMAIN=${TOKEN_DOMAIN}
 RTC_DOMAIN=${RTC_DOMAIN}
-ROOMS_BIND_ADDR=127.0.0.1:8787
-ROOMS_INVITE_CODE_HASH='${ROOMS_INVITE_CODE_HASH}'
+ZENHA_BIND_ADDR=127.0.0.1:8787
+ZENHA_INVITE_CODE_HASH='${ZENHA_INVITE_CODE_HASH}'
 LIVEKIT_URL=wss://${RTC_DOMAIN}
 LIVEKIT_API_KEY=${LIVEKIT_API_KEY}
 LIVEKIT_API_SECRET=${LIVEKIT_API_SECRET}
-ROOMS_TOKEN_TTL_SECS=${ROOMS_TOKEN_TTL_SECS}
-ROOMS_ROOM_LIST=${ROOMS_ROOM_LIST}
+ZENHA_TOKEN_TTL_SECS=${ZENHA_TOKEN_TTL_SECS}
+ZENHA_ROOM_LIST=${ZENHA_ROOM_LIST}
 RUST_LOG=info
 EOF
-if [[ -n "${ROOMS_ADMIN_CODE_HASH}" ]]; then
-  printf "ROOMS_ADMIN_CODE_HASH='%s'\n" "${ROOMS_ADMIN_CODE_HASH}" >>"${ENV_FILE}"
+if [[ -n "${ZENHA_ADMIN_CODE_HASH}" ]]; then
+  printf "ZENHA_ADMIN_CODE_HASH='%s'\n" "${ZENHA_ADMIN_CODE_HASH}" >>"${ENV_FILE}"
 fi
 chmod 0600 "${ENV_FILE}"
 chown root:root "${ENV_FILE}"

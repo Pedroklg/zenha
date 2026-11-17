@@ -1,10 +1,10 @@
-# Regras de `rooms-client`: interface `egui`, thread da UI e estado (UI)
+# Regras de `zenha-client`: interface `egui`, thread da UI e estado (UI)
 
-Complementa [general.md](general.md). Escopo: `crates/rooms-client/`.
+Complementa [general.md](general.md). Escopo: `crates/zenha-client/`.
 
-## UI-01: `rooms-client` nunca importa `livekit` nem `libwebrtc`
+## UI-01: `zenha-client` nunca importa `livekit` nem `libwebrtc`
 
-- `rooms-client` depende apenas de `rooms-core` e `rooms-protocol` para comunicação de domínio.
+- `zenha-client` depende apenas de `zenha-core` e `zenha-protocol` para comunicação de domínio.
 - Toda interação com a sessão passa pelo trait `SessionPort` (`ui_model.rs`), implementado por `CoreSession` (produção) e `DemoSession` (`--demo`), trocando `UiCommand` e `UiEvent`.
 
 ## UI-02: A thread da UI (`fn ui`) nunca bloqueia nem faz I/O
@@ -17,7 +17,7 @@ Complementa [general.md](general.md). Escopo: `crates/rooms-client/`.
 ## UI-03: Estado de tela em `enum Screen` e transições concentradas em `state/`
 
 - A tela ativa fica em `enum Screen` (`state/mod.rs`).
-- As views em `crates/rooms-client/src/views/` apenas desenham o estado e emitem `UserAction`, sem mutar estado de sessão nem enviar `UiCommand` diretamente por fora de `AppState`.
+- As views em `crates/zenha-client/src/views/` apenas desenham o estado e emitem `UserAction`, sem mutar estado de sessão nem enviar `UiCommand` diretamente por fora de `AppState`.
 - Transições de tela, reação a `UiEvent` e geração de efeitos (`UiCommand`, `CredentialOp`, persistência de `Settings`) ficam em `state/` (testável sem abrir janela `eframe`).
 
 ## UI-04: Convenção do `eframe` 0.37 (`fn ui` com `&mut egui::Ui`)

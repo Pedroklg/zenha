@@ -22,6 +22,6 @@
 ## Checklist
 
 - [ ] Commit messages follow Conventional Commits
-- [ ] Crate boundaries in `CLAUDE.md` are respected (`livekit` stays isolated in `rooms-core`, UI thread stays non-blocking)
+- [ ] Crate boundaries in `CLAUDE.md` are respected (`livekit` stays isolated in `zenha-core`, UI thread stays non-blocking)
 - [ ] UI strings are in Brazilian Portuguese; identifiers and `tracing` logs are in English
 - [ ] No secrets, `.env` values, or local-only files included

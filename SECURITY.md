@@ -10,7 +10,7 @@ Instead, report vulnerabilities privately via GitHub's private vulnerability rep
 
 Include as much detail as possible to help reproduce and assess the issue:
 
-- Affected component (`zenha` desktop client, `rooms-token-server`, installer, or deployment config)
+- Affected component (`zenha` desktop client, `zenha-server`, installer, or deployment config)
 - Version or commit hash
 - Clear steps to reproduce or proof of concept
 - Potential impact
@@ -19,9 +19,9 @@ Include as much detail as possible to help reproduce and assess the issue:
 
 ### In Scope
 
-- The Zenha Windows desktop client (`rooms-client` / `zenha.exe`) and core library (`rooms-core`), including `zenha://` URI handling, file transfer parsing/limits, and credential storage
-- The token server (`rooms-token-server`), including invite code verification, Argon2 password handling, and JWT generation
-- Shared protocol validation (`rooms-protocol`)
+- The Zenha Windows desktop client (`zenha-client` / `zenha.exe`) and core library (`zenha-core`), including `zenha://` URI handling, file transfer parsing/limits, and credential storage
+- The token server (`zenha-server`), including invite code verification, Argon2 password handling, and JWT generation
+- Shared protocol validation (`zenha-protocol`)
 - Official release artifacts and installer script (`installer/zenha.iss`)
 - Default server deployment configurations (`deploy/`)
 
