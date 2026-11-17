@@ -124,6 +124,9 @@ fn start_token_server(
     let port = free_port()?;
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
     let invite = uuid::Uuid::new_v4().simple().to_string();
+    for file in ["chat.db", "chat.db-wal", "chat.db-shm"] {
+        let _ = fs::remove_file(work_dir.join(file));
+    }
     let mut command = Command::new(&exe);
     command
         .current_dir(work_dir)

@@ -145,6 +145,12 @@ pub const ALL: &[ScenarioDef] = &[
         run: share_audio,
     },
     ScenarioDef {
+        name: "participant-volume",
+        title: "Volume por pessoa abaixa, zera e passa de 100%",
+        needs_media: true,
+        run: participant_volume,
+    },
+    ScenarioDef {
         name: "room-switch",
         title: "Troca de sala e volta com presença e áudio",
         needs_media: true,
@@ -782,6 +788,42 @@ fn mute(ctx: &mut Ctx<'_>) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn participant_volume(ctx: &mut Ctx<'_>) -> anyhow::Result<()> {
+    const SETTLE: Duration = Duration::from_millis(1500);
+    const WINDOW: Duration = Duration::from_millis(1000);
+    let AudibleRoom { listener, .. } = audible_room(ctx)?;
+
+    let level = |ctx: &mut Ctx<'_>, percent: u16| -> anyhow::Result<f64> {
+        listener.send(&BotCommand::SetParticipantVolume {
+            identity: TONE_BOT.to_owned(),
+            percent,
+        })?;
+        std::thread::sleep(SETTLE);
+        let m = ctx.probe.measure_tone(TONE_HZ, WINDOW)?;
+        ctx.rec
+            .number(&format!("volume_{percent}_tone_rms"), m.tone_rms, "");
+        Ok(m.tone_rms)
+    };
+
+    let full = level(ctx, 100)?;
+    if full < MIN_TONE_RMS {
+        bail!("volume 100 plays no tone (tone_rms {full:.5})");
+    }
+    let half = level(ctx, 50)? / full;
+    if !(0.35..=0.70).contains(&half) {
+        bail!("volume 50 should play at half the level, got {half:.2}");
+    }
+    let double = level(ctx, 200)? / full;
+    if !(1.5..=2.6).contains(&double) {
+        bail!("volume 200 should play at twice the level, got {double:.2}");
+    }
+    let silent = level(ctx, 0)?;
+    if silent > MIN_TONE_RMS {
+        bail!("volume 0 still plays the tone (tone_rms {silent:.5})");
+    }
+    Ok(())
+}
+
 fn deafen(ctx: &mut Ctx<'_>) -> anyhow::Result<()> {
     let AudibleRoom {
         baseline,
@@ -1345,6 +1387,7 @@ mod tests {
                 "files",
                 "share",
                 "share-audio",
+                "participant-volume",
                 "room-switch",
                 "cue",
             ]
