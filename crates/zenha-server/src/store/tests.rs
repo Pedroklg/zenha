@@ -701,16 +701,29 @@ async fn webhooks_create_list_get_and_delete() {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!((created.id.as_str(), created.room.as_str()), ("w1", "geral"));
+    assert_eq!(
+        (created.id.as_str(), created.room.as_str()),
+        ("w1", "geral")
+    );
     assert!(created.created_at_unix_ms > 0);
     assert_eq!(store.list_webhooks().await.unwrap(), vec![created]);
 
     let record = store.get_webhook("w1".to_owned()).await.unwrap().unwrap();
     assert_eq!(
-        (record.room.as_str(), record.name.as_str(), record.token_hash.as_str()),
+        (
+            record.room.as_str(),
+            record.name.as_str(),
+            record.token_hash.as_str()
+        ),
         ("geral", "GC", "hash1")
     );
-    assert!(store.get_webhook("nope".to_owned()).await.unwrap().is_none());
+    assert!(
+        store
+            .get_webhook("nope".to_owned())
+            .await
+            .unwrap()
+            .is_none()
+    );
 
     assert!(store.delete_webhook("w1".to_owned()).await.unwrap());
     assert!(!store.delete_webhook("w1".to_owned()).await.unwrap());
@@ -722,17 +735,30 @@ async fn webhook_quota_is_enforced() {
     let store = ChatStore::open_in_memory().unwrap();
     for i in 0..MAX_WEBHOOKS_COUNT {
         let made = store
-            .create_webhook(format!("w{i}"), "geral".to_owned(), "GC".to_owned(), "h".to_owned())
+            .create_webhook(
+                format!("w{i}"),
+                "geral".to_owned(),
+                "GC".to_owned(),
+                "h".to_owned(),
+            )
             .await
             .unwrap();
         assert!(made.is_some());
     }
     let over = store
-        .create_webhook("extra".to_owned(), "geral".to_owned(), "GC".to_owned(), "h".to_owned())
+        .create_webhook(
+            "extra".to_owned(),
+            "geral".to_owned(),
+            "GC".to_owned(),
+            "h".to_owned(),
+        )
         .await
         .unwrap();
     assert!(over.is_none());
-    assert_eq!(store.list_webhooks().await.unwrap().len(), MAX_WEBHOOKS_COUNT);
+    assert_eq!(
+        store.list_webhooks().await.unwrap().len(),
+        MAX_WEBHOOKS_COUNT
+    );
 }
 
 #[tokio::test]
@@ -743,7 +769,12 @@ async fn deleting_a_room_removes_its_webhooks() {
         .unwrap();
     for (id, room) in [("a", "geral"), ("b", "jogos")] {
         store
-            .create_webhook(id.to_owned(), room.to_owned(), "GC".to_owned(), "h".to_owned())
+            .create_webhook(
+                id.to_owned(),
+                room.to_owned(),
+                "GC".to_owned(),
+                "h".to_owned(),
+            )
             .await
             .unwrap();
     }

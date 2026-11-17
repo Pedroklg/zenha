@@ -4,9 +4,9 @@ mod avatars;
 mod messages;
 mod rooms;
 mod schema;
-mod webhooks;
 #[cfg(test)]
 mod tests;
+mod webhooks;
 
 use std::path::Path;
 use std::sync::{Arc, Mutex};

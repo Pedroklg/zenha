@@ -236,10 +236,7 @@ impl FakeTokenClient {
         lock(&self.state).admin_unit_results.push_back(result);
     }
 
-    pub fn push_admin_webhook_list_result(
-        &self,
-        result: Result<Vec<AdminWebhook>, SessionError>,
-    ) {
+    pub fn push_admin_webhook_list_result(&self, result: Result<Vec<AdminWebhook>, SessionError>) {
         lock(&self.state)
             .admin_webhook_list_results
             .push_back(result);

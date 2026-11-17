@@ -7,8 +7,8 @@ use axum::http::{Request, StatusCode, header};
 use axum::response::Response;
 use tower::ServiceExt;
 use zenha_protocol::{
-    AdminWebhook, CreateWebhookRequest, CreatedWebhook, MAX_WEBHOOK_BODY_BYTES,
-    MAX_WEBHOOKS_COUNT, WEBHOOK_TOPIC, WebhookPost, WebhooksResponse,
+    AdminWebhook, CreateWebhookRequest, CreatedWebhook, MAX_WEBHOOK_BODY_BYTES, MAX_WEBHOOKS_COUNT,
+    WEBHOOK_TOPIC, WebhookPost, WebhooksResponse,
 };
 
 use crate::directory::{FakeDirectory, ModerationCall};
@@ -336,7 +336,10 @@ fn empty_fixture() -> Fixture {
 #[tokio::test]
 async fn admin_webhook_routes_require_an_admin_token() {
     let f = fixture().await;
-    let member = format!("Bearer {}", mint_room_jwt("client-pedro", "Pedro", "geral", true));
+    let member = format!(
+        "Bearer {}",
+        mint_room_jwt("client-pedro", "Pedro", "geral", true)
+    );
     for auth in [None, Some(member.as_str())] {
         for (method, uri) in [
             ("GET", "/admin/webhooks"),
@@ -346,7 +349,12 @@ async fn admin_webhook_routes_require_an_admin_token() {
             let response = f
                 .app
                 .clone()
-                .oneshot(admin_request(method, uri, auth, &create_body("geral", "GC")))
+                .oneshot(admin_request(
+                    method,
+                    uri,
+                    auth,
+                    &create_body("geral", "GC"),
+                ))
                 .await
                 .unwrap();
             let expected = if auth.is_some() {
