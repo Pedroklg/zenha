@@ -12,3 +12,4 @@
 *.ttf binary
 *.png binary
 Cargo.lock text eol=lf -diff
+patches/** linguist-vendored
