@@ -69,7 +69,7 @@ impl LiveKitBackend {
             .current_room_and_events()
             .await
             .ok_or(SessionError::NotInRoom)?;
-        livekit_files::start_send(room, events, transfer, path);
+        files::start_send(room, events, transfer, path);
         Ok(())
     }
 }

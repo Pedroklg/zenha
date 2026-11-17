@@ -287,7 +287,7 @@ fn translate(
             if topic == FILE_TOPIC
                 && let Some(reader) = reader.take()
             {
-                livekit_files::start_receive(
+                files::start_receive(
                     reader,
                     String::from(participant_identity),
                     files,

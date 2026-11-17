@@ -104,7 +104,7 @@ impl LiveKitBackend {
         }
         let share = self.local_share.lock().await.take();
         if let Some(share) = share {
-            livekit_video::stop_share(share).await;
+            video::stop_share(share).await;
         }
     }
 
@@ -287,7 +287,7 @@ impl LiveKitBackend {
         }
         let target = self.resolve_target(target_id).await?;
         let (capture, capture_target) = capture_for(target.clone())?;
-        let share = livekit_video::publish_share(
+        let share = video::publish_share(
             room.clone(),
             events,
             capture,
