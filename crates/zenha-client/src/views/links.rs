@@ -192,7 +192,12 @@ mod tests {
 
     #[test]
     fn bare_urls_with_other_schemes_or_no_body_stay_text() {
-        for text in ["http://exemplo.com", "ftp://x", "https://", "xhttps://a.com"] {
+        for text in [
+            "http://exemplo.com",
+            "ftp://x",
+            "https://",
+            "xhttps://a.com",
+        ] {
             assert_eq!(segments(text), vec![Segment::Text(text)], "{text}");
         }
     }

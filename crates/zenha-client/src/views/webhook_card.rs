@@ -45,9 +45,16 @@ fn header(ui: &mut egui::Ui, post: &WebhookPost) {
             .corner_radius(CornerRadius::same(4))
             .inner_margin(Margin::symmetric(5, 1))
             .show(ui, |ui| {
-                ui.label(RichText::new(BADGE_LABEL).size(10.5).color(theme::TEXT_WEAK));
+                ui.label(
+                    RichText::new(BADGE_LABEL)
+                        .size(10.5)
+                        .color(theme::TEXT_WEAK),
+                );
             });
-        ui.weak(format_hhmm(post.sent_at_unix_ms, DISPLAY_UTC_OFFSET_MINUTES));
+        ui.weak(format_hhmm(
+            post.sent_at_unix_ms,
+            DISPLAY_UTC_OFFSET_MINUTES,
+        ));
     });
 }
 

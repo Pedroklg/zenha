@@ -559,8 +559,13 @@ fn admin_creates_then_revokes_a_webhook() {
     assert!(created.url.starts_with("https://demo.zenha.local/hooks/"));
 
     let id = created.webhook.id.clone();
-    session.send(UiCommand::Admin(AdminAction::DeleteWebhook { id: id.clone() }));
-    assert_eq!(drain(&mut session), vec![UiEvent::AdminWebhookDeleted { id }]);
+    session.send(UiCommand::Admin(AdminAction::DeleteWebhook {
+        id: id.clone(),
+    }));
+    assert_eq!(
+        drain(&mut session),
+        vec![UiEvent::AdminWebhookDeleted { id }]
+    );
 
     session.send(UiCommand::Admin(AdminAction::ListWebhooks));
     assert!(matches!(
@@ -581,5 +586,9 @@ fn webhook_admin_rejects_unknown_room_and_unknown_id() {
     }));
     let events = drain(&mut session);
     assert_eq!(events.len(), 2);
-    assert!(events.iter().all(|e| matches!(e, UiEvent::AdminFailed { .. })));
+    assert!(
+        events
+            .iter()
+            .all(|e| matches!(e, UiEvent::AdminFailed { .. }))
+    );
 }

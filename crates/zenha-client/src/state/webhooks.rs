@@ -87,9 +87,7 @@ impl AppState {
                 Err("O nome contém caracteres inválidos.".to_owned())
             }
             (None, Ok(())) => Err("Escolha a sala do webhook.".to_owned()),
-            (Some(_), Ok(()))
-                if self.admin.webhooks.items.len() >= MAX_WEBHOOKS_COUNT =>
-            {
+            (Some(_), Ok(())) if self.admin.webhooks.items.len() >= MAX_WEBHOOKS_COUNT => {
                 Err(format!(
                     "Limite de {MAX_WEBHOOKS_COUNT} webhooks atingido. Revogue algum antes de criar outro."
                 ))
@@ -313,7 +311,13 @@ mod tests {
             .map(|i| webhook(&format!("w{i}"), "geral"))
             .collect();
         assert!(state.handle_action(UserAction::CreateWebhook).is_empty());
-        assert!(state.admin.error.as_deref().is_some_and(|e| e.contains("Limite")));
+        assert!(
+            state
+                .admin
+                .error
+                .as_deref()
+                .is_some_and(|e| e.contains("Limite"))
+        );
 
         let mut other = state_with_code();
         other.handle_action(UserAction::SubmitOnboarding);
@@ -392,8 +396,10 @@ mod tests {
         admin.apply_event(UiEvent::AdminWebhookCreated(created("n2", "geral")));
         let dump = format!("{:?}", admin.admin);
         assert!(!dump.contains("token-secreto"));
-        assert!(!format!("{:?}", UiEvent::AdminWebhookCreated(created("n2", "geral")))
-            .contains("token-secreto"));
+        assert!(
+            !format!("{:?}", UiEvent::AdminWebhookCreated(created("n2", "geral")))
+                .contains("token-secreto")
+        );
     }
 
     #[test]
@@ -422,9 +428,15 @@ mod tests {
     fn selected_room_falls_back_when_the_picked_room_disappears() {
         let mut state = admin_state();
         state.admin.webhooks.new_room = Some("jogos".to_owned());
-        assert_eq!(state.admin.webhooks.selected_room(&state.rooms), Some("jogos"));
+        assert_eq!(
+            state.admin.webhooks.selected_room(&state.rooms),
+            Some("jogos")
+        );
         state.admin.webhooks.new_room = Some("sumiu".to_owned());
-        assert_eq!(state.admin.webhooks.selected_room(&state.rooms), Some("geral"));
+        assert_eq!(
+            state.admin.webhooks.selected_room(&state.rooms),
+            Some("geral")
+        );
         assert_eq!(state.admin.webhooks.selected_room(&[]), None);
     }
 }

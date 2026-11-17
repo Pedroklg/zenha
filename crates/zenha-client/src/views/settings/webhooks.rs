@@ -16,7 +16,9 @@ pub(super) fn webhooks_section(
     ui.add_space(GROUP_GAP);
     ui.label(RichText::new("Webhooks de integrações").font(theme::semibold(14.0)));
     ui.add_space(CONTROL_GAP);
-    ui.weak("Mensagens de integrações, como o GamersClub Booster, aparecem no chat da sala escolhida.");
+    ui.weak(
+        "Mensagens de integrações, como o GamersClub Booster, aparecem no chat da sala escolhida.",
+    );
     ui.add_space(ROW_GAP);
 
     if let Some(created) = &admin.webhooks.created {
@@ -140,7 +142,7 @@ fn create_form(
 mod tests {
     use egui_kittest::Harness;
     use egui_kittest::kittest::Queryable;
-    use zenha_protocol::{AdminWebhook, CreatedWebhook};
+    use zenha_protocol::AdminWebhook;
 
     use super::*;
     use crate::state::SecretText;

@@ -1,7 +1,7 @@
 //! Admin section of the settings.
 
-use super::*;
 use super::webhooks::webhooks_section;
+use super::*;
 
 pub(super) fn admin_section(
     ui: &mut egui::Ui,

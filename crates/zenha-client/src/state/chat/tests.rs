@@ -388,7 +388,7 @@ fn chat_history_initial_and_older_pages_order_and_pending_state() {
         .iter()
         .filter_map(|e| match e {
             ChatEntry::Text(m) => Some(m.id.as_str()),
-            ChatEntry::File(_) => None,
+            ChatEntry::File(_) | ChatEntry::Webhook(_) => None,
         })
         .collect();
     assert_eq!(ids, vec!["h2", "h3", "99"]);
@@ -419,7 +419,7 @@ fn chat_history_initial_and_older_pages_order_and_pending_state() {
         .iter()
         .filter_map(|e| match e {
             ChatEntry::Text(m) => Some(m.id.as_str()),
-            ChatEntry::File(_) => None,
+            ChatEntry::File(_) | ChatEntry::Webhook(_) => None,
         })
         .collect();
     assert_eq!(ids, vec!["h0", "h1", "h2", "h3", "99"]);
@@ -459,7 +459,7 @@ fn chat_deduplicates_overlapping_live_and_history_ids() {
         .iter()
         .filter_map(|e| match e {
             ChatEntry::Text(m) => Some(m.id.as_str()),
-            ChatEntry::File(_) => None,
+            ChatEntry::File(_) | ChatEntry::Webhook(_) => None,
         })
         .collect();
     assert_eq!(ids, vec!["s1", "s2"]);
