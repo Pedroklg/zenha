@@ -321,6 +321,9 @@ impl DemoSession {
             AdminAction::RotateInvite { .. } => {
                 self.schedule(Duration::ZERO, UiEvent::AdminInviteRotated);
             }
+            AdminAction::ListWebhooks => self.list_webhooks(),
+            AdminAction::CreateWebhook { room, name } => self.create_webhook(room, name),
+            AdminAction::DeleteWebhook { id } => self.delete_webhook(id),
         }
     }
 }

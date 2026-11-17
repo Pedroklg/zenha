@@ -109,7 +109,9 @@ impl AppState {
                 self.name_draft.clone_from(&self.form.display_name);
                 self.invite_copied = false;
                 self.admin.notice = None;
-                vec![UiCommand::RefreshAudioDevices]
+                let mut commands = vec![UiCommand::RefreshAudioDevices];
+                commands.extend(self.request_webhooks());
+                commands
             }
             UserAction::CloseSettings => {
                 self.audio.open = false;
@@ -118,6 +120,7 @@ impl AppState {
                 self.invite_copied = false;
                 self.admin.error = None;
                 self.admin.notice = None;
+                self.admin.webhooks.close_session();
                 Vec::new()
             }
             UserAction::StartHotkeyCapture(action) => {
@@ -293,6 +296,15 @@ impl AppState {
             UserAction::AdminLogin => self.admin_login(),
             UserAction::AdminLogout => self.admin_logout(),
             UserAction::RotateInvite => self.rotate_invite(),
+            UserAction::CreateWebhook => self.create_webhook(),
+            UserAction::OpenRevokeWebhook(id) => {
+                self.open_revoke_webhook(id);
+                Vec::new()
+            }
+            UserAction::DismissCreatedWebhook => {
+                self.admin.webhooks.created = None;
+                Vec::new()
+            }
             UserAction::DismissAdminNotice => {
                 self.admin.error = None;
                 self.admin.notice = None;

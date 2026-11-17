@@ -187,6 +187,7 @@ impl eframe::App for App {
                 invite_copied: *invite_copied,
                 can_admin,
                 admin,
+                rooms,
                 avatar_identity: &client_id,
                 avatar_version: avatar_version.as_deref(),
                 avatar_notice: avatar_notice.as_deref(),

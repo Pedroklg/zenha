@@ -15,6 +15,7 @@ mod test_support;
 mod tests;
 mod update;
 mod user_action;
+mod webhooks;
 
 use std::path::PathBuf;
 use std::time::Instant;
@@ -33,6 +34,7 @@ pub use room_lock::{RoomPasswordDialog, SecretText, sidebar_order};
 pub use share::{LocalShare, SharePicker, ShareState, WatchState, aspect_fit};
 pub use update::{UpdateBanner, UpdateEffect, UpdatePhase};
 pub use user_action::UserAction;
+pub use webhooks::CreatedWebhookNotice;
 
 use crate::cli::{compile_time_default_server, resolve_initial_server};
 use crate::platform::settings::{RoomKeys, Settings};

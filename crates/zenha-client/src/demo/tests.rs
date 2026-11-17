@@ -521,3 +521,65 @@ fn join_posts_a_lobby_card_and_a_match_card() {
     );
     assert!(posts.iter().all(|post| post.validate().is_ok()));
 }
+
+fn admin_session() -> DemoSession {
+    let mut session = DemoSession::with_delays(DemoDelays::instant());
+    session.send(UiCommand::AdminLogin {
+        password: "x".to_owned(),
+    });
+    drain(&mut session);
+    session
+}
+
+#[test]
+fn admin_lists_two_fake_webhooks() {
+    let mut session = admin_session();
+    session.send(UiCommand::Admin(AdminAction::ListWebhooks));
+    let events = drain(&mut session);
+    assert!(matches!(
+        events.as_slice(),
+        [UiEvent::AdminWebhooks(list)] if list.len() == 2
+            && list[0].room == "geral"
+            && list[1].room == "jogos"
+    ));
+}
+
+#[test]
+fn admin_creates_then_revokes_a_webhook() {
+    let mut session = admin_session();
+    session.send(UiCommand::Admin(AdminAction::CreateWebhook {
+        room: "geral".to_owned(),
+        name: "Novo".to_owned(),
+    }));
+    let events = drain(&mut session);
+    let Some(UiEvent::AdminWebhookCreated(created)) = events.first() else {
+        panic!("expected AdminWebhookCreated, got {events:?}");
+    };
+    assert_eq!(created.webhook.name, "Novo");
+    assert!(created.url.starts_with("https://demo.zenha.local/hooks/"));
+
+    let id = created.webhook.id.clone();
+    session.send(UiCommand::Admin(AdminAction::DeleteWebhook { id: id.clone() }));
+    assert_eq!(drain(&mut session), vec![UiEvent::AdminWebhookDeleted { id }]);
+
+    session.send(UiCommand::Admin(AdminAction::ListWebhooks));
+    assert!(matches!(
+        drain(&mut session).as_slice(),
+        [UiEvent::AdminWebhooks(list)] if list.len() == 2
+    ));
+}
+
+#[test]
+fn webhook_admin_rejects_unknown_room_and_unknown_id() {
+    let mut session = admin_session();
+    session.send(UiCommand::Admin(AdminAction::CreateWebhook {
+        room: "nao-existe".to_owned(),
+        name: "x".to_owned(),
+    }));
+    session.send(UiCommand::Admin(AdminAction::DeleteWebhook {
+        id: "nao-existe".to_owned(),
+    }));
+    let events = drain(&mut session);
+    assert_eq!(events.len(), 2);
+    assert!(events.iter().all(|e| matches!(e, UiEvent::AdminFailed { .. })));
+}
