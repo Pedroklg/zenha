@@ -3,8 +3,10 @@
 mod audio;
 mod data;
 mod events;
+mod files;
 mod room;
 mod stream_player;
+mod video;
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicI8, AtomicU8, Ordering};
@@ -18,14 +20,14 @@ use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 
 use crate::api::{AudioDevices, FileTransfer, NoiseSuppression, SessionError};
-use crate::audio_render::{RENDER_SAMPLE_RATE, play_once};
+use crate::audio::audio_render::{RENDER_SAMPLE_RATE, play_once};
 use crate::backend::{ConnectedRoom, MediaBackend};
-use crate::backend_options::LiveKitBackendOptions;
-use crate::backend_support::GATE_OFF;
-use crate::cue::{Cue, cue_samples};
-use crate::file_receive::FileReceiver;
-use crate::livekit_video::{LocalShare, Watch};
-use crate::participant_volume::ParticipantVolumes;
+use crate::backend::options::LiveKitBackendOptions;
+use crate::backend::support::GATE_OFF;
+use crate::audio::cue::{Cue, cue_samples};
+use crate::files::receive::FileReceiver;
+use crate::livekit::video::{LocalShare, Watch};
+use crate::audio::participant_volume::ParticipantVolumes;
 use crate::video::{CaptureTarget, FrameSlot, SharePreset, VideoFrame};
 
 use self::audio::{Selection, ShareAudio};

@@ -17,9 +17,9 @@ use crate::api::{
     AudioDevice, AudioDevices, FileTransfer, NoiseSuppression, Participant, SessionError,
 };
 use crate::backend::{BackendEvent, ConnectedRoom, MediaBackend};
-use crate::cue::Cue;
-use crate::participant_volume::ParticipantVolumes;
-use crate::token::TokenClient;
+use crate::audio::cue::Cue;
+use crate::audio::participant_volume::ParticipantVolumes;
+use crate::net::token::TokenClient;
 use crate::video::{CaptureTarget, FrameSlot, SharePreset, VideoFrame};
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {

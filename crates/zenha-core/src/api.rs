@@ -4,8 +4,8 @@ use std::path::PathBuf;
 
 use zenha_protocol::{AdminRoom, ChatMessage, RoomSummary, SavedChatMessage};
 
-use crate::capture::CaptureEnd;
-use crate::cue::Cue;
+use crate::video::capture::CaptureEnd;
+use crate::audio::cue::Cue;
 use crate::video::{CaptureTarget, FrameSlot, SharePreset};
 
 #[derive(Clone, PartialEq, Eq)]

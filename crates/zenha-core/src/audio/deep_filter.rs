@@ -3,8 +3,8 @@
 use df::tract::{DfParams, DfTract, RuntimeParams};
 use ndarray::Array2;
 
-use crate::mic_capture::CAPTURE_SAMPLE_RATE;
-use crate::noise::{DENOISE_FRAME, Denoiser, speech_from_lsnr};
+use crate::audio::mic_capture::CAPTURE_SAMPLE_RATE;
+use crate::audio::noise::{DENOISE_FRAME, Denoiser, speech_from_lsnr};
 
 pub(crate) struct DeepFilterDenoiser {
     model: DfTract,

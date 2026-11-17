@@ -8,7 +8,7 @@ use zenha_protocol::{SaveChatRequest, SavedChatMessage, validate_chat_text};
 use crate::api::{Event, SessionError};
 use crate::chat::{self as chat_codec, CHAT_DELETE_TOPIC, CHAT_TOPIC};
 use crate::clock::unix_ms;
-use crate::token::TokenClient;
+use crate::net::token::TokenClient;
 
 use super::Session;
 use super::connection::Phase;

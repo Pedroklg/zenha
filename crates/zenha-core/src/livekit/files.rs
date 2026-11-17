@@ -12,7 +12,7 @@ use tokio::sync::mpsc::UnboundedSender;
 use crate::api::{FileTransfer, TransferState};
 use crate::backend::BackendEvent;
 use crate::clock::unix_ms;
-use crate::file_receive::{FileReceiver, IncomingFile, PROGRESS_INTERVAL, ReceiveSlot, Throttle};
+use crate::files::receive::{FileReceiver, IncomingFile, PROGRESS_INTERVAL, ReceiveSlot, Throttle};
 use crate::files::{FILE_TOPIC, mime_for_name, received_path, sanitize_file_name};
 
 const MAX_ID_CHARS: usize = 64;

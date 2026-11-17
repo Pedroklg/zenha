@@ -34,7 +34,7 @@ use windows::Win32::System::Com::{COINIT_MULTITHREADED, CoInitializeEx, CoUninit
 use windows::core::Interface;
 
 use crate::api::SessionError;
-use crate::capture::{CaptureEnd, FrameSource, Pacer};
+use crate::video::capture::{CaptureEnd, FrameSource, Pacer};
 use crate::video::{
     CaptureKind, CaptureTarget, FrameSlot, PreviewGate, SHARE_PREVIEW_INTERVAL,
     SHARE_PREVIEW_MAX_SIDE, VideoFrame, fit_within,
@@ -158,7 +158,7 @@ impl FrameSource for GpuShare {
         &mut self,
         _target: &CaptureTarget,
         _fps: u32,
-        _sink: Box<dyn crate::capture::FrameSink>,
+        _sink: Box<dyn crate::video::capture::FrameSink>,
     ) -> Result<(), SessionError> {
         Err(SessionError::Video(
             "the GPU share starts on its own".to_owned(),

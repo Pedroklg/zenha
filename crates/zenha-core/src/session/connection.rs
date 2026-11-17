@@ -252,7 +252,7 @@ mod tests {
 
     use crate::api::{Command, Event, RemovalReason, SessionError};
     use crate::backend::BackendEvent;
-    use crate::backoff::ReconnectPolicy;
+    use crate::net::backoff::ReconnectPolicy;
     use crate::video::{CaptureKind, CaptureTarget, SharePreset};
 
     use super::super::test_support::{harness, participant};

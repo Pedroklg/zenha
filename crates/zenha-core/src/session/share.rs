@@ -230,7 +230,7 @@ mod tests {
 
     use crate::api::{Command, Event, SessionError};
     use crate::backend::BackendEvent;
-    use crate::capture::CaptureEnd;
+    use crate::video::capture::CaptureEnd;
     use crate::testing::{BackendCall, FakeThumbnail};
     use crate::video::{CaptureKind, CaptureTarget, FrameSlot, SharePreset, VideoFrame};
 

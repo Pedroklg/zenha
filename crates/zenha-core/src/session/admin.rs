@@ -12,7 +12,7 @@ use zenha_protocol::{
 use crate::api::{AdminAction, Event, SessionError};
 use crate::chat as chat_codec;
 use crate::clock::unix_ms;
-use crate::token::TokenClient;
+use crate::net::token::TokenClient;
 
 use super::Session;
 

@@ -21,16 +21,16 @@ use tokio::time::MissedTickBehavior;
 
 use crate::api::{AudioDevice, AudioDevices, NoiseSuppression, SessionError};
 use crate::backend::BackendEvent;
-use crate::backend_options::{TONE_FRAME_SAMPLES, TONE_SAMPLE_RATE, ToneGenerator};
-use crate::backend_support::{
+use crate::backend::options::{TONE_FRAME_SAMPLES, TONE_SAMPLE_RATE, ToneGenerator};
+use crate::backend::support::{
     LevelMeter, LocalSpeech, SPEAKING_AUDIO_LEVEL, audio_device, enhanced_voice, gate_threshold,
     unique_devices,
 };
-use crate::deep_filter::DeepFilterDenoiser;
-use crate::mic_capture::{CAPTURE_SAMPLE_RATE, MicCapture};
-use crate::noise::{Denoiser, NoiseGate, RnnoiseDenoiser};
-use crate::participant_volume::volume_gain;
-use crate::share_audio::{
+use crate::audio::deep_filter::DeepFilterDenoiser;
+use crate::audio::mic_capture::{CAPTURE_SAMPLE_RATE, MicCapture};
+use crate::audio::noise::{Denoiser, NoiseGate, RnnoiseDenoiser};
+use crate::audio::participant_volume::volume_gain;
+use crate::audio::share_audio::{
     AudioScope, SHARE_AUDIO_CHANNELS, SHARE_AUDIO_SAMPLE_RATE, ShareAudioCapture,
 };
 
@@ -291,7 +291,7 @@ fn apply_input(
     let fallback;
     let requested = match requested {
         Some(requested) => requested,
-        None => match crate::default_device::default_input_id() {
+        None => match crate::audio::default_device::default_input_id() {
             Some(id) => {
                 fallback = id;
                 fallback.as_str()
@@ -331,7 +331,7 @@ fn apply_output(
     let fallback;
     let requested = match requested {
         Some(requested) => requested,
-        None => match crate::default_device::default_output_id() {
+        None => match crate::audio::default_device::default_output_id() {
             Some(id) => {
                 fallback = id;
                 fallback.as_str()

@@ -12,7 +12,7 @@ use wasapi::{
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId;
 
-use crate::backend_support::{drain_f32_le_to_i16, parse_target_id};
+use crate::backend::support::{drain_f32_le_to_i16, parse_target_id};
 use crate::video::{CaptureKind, CaptureTarget};
 
 pub(crate) const SHARE_AUDIO_SAMPLE_RATE: u32 = 48_000;

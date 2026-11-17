@@ -14,11 +14,11 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 use crate::api::RemovalReason;
 use crate::backend::BackendEvent;
-use crate::backend_support::{SpeakingTracker, display_name};
-use crate::file_receive::FileReceiver;
+use crate::backend::support::{SpeakingTracker, display_name};
+use crate::files::receive::FileReceiver;
 use crate::files::FILE_TOPIC;
-use crate::livekit_files;
-use crate::livekit_video::Watch;
+use crate::livekit::files;
+use crate::livekit::video::Watch;
 
 use super::Flags;
 use super::audio::audio_tap;

@@ -8,7 +8,7 @@ use futures_util::StreamExt;
 use livekit::webrtc::audio_stream::native::NativeAudioStream;
 use livekit::webrtc::audio_track::RtcAudioTrack;
 
-use crate::audio_render::{OutputStream, RENDER_CHANNELS, RENDER_SAMPLE_RATE};
+use crate::audio::audio_render::{OutputStream, RENDER_CHANNELS, RENDER_SAMPLE_RATE};
 
 use super::TaskGuard;
 

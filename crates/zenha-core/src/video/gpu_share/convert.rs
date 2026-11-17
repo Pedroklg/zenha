@@ -19,7 +19,7 @@ use windows::Win32::Graphics::Dxgi::Common::{
 use windows::core::Interface;
 
 use super::{GpuError, Step};
-use crate::capture::{BgraFrame, bgra_to_rgba};
+use crate::video::capture::{BgraFrame, bgra_to_rgba};
 
 const PREVIEW_RATE: u32 = 10;
 

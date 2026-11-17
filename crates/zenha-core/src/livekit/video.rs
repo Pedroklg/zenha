@@ -26,11 +26,11 @@ use tokio::time::timeout;
 
 use crate::api::SessionError;
 use crate::backend::BackendEvent;
-use crate::backend_support::{CaptureHealth, ShareMeter, parse_target_id, target_id, target_name};
-use crate::capture::{
+use crate::backend::support::{CaptureHealth, ShareMeter, parse_target_id, target_id, target_name};
+use crate::video::capture::{
     BgraFrame, CaptureEnd, FrameSink, FrameSource, Pacer, bgra_to_rgba_scaled, bgra_to_video_frame,
 };
-use crate::gpu_share;
+use crate::video::gpu_share;
 use crate::video::{
     CaptureKind, CaptureTarget, FrameSlot, PreviewGate, SHARE_PREVIEW_INTERVAL,
     SHARE_PREVIEW_MAX_SIDE, SharePreset, VideoFrame, fit_within,

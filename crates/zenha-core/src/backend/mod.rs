@@ -1,3 +1,10 @@
+//! Contrato do backend de mídia e implementações independentes do SDK.
+
+pub(crate) mod no_media;
+pub(crate) mod options;
+#[cfg(any(windows, test))]
+pub(crate) mod support;
+
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -7,8 +14,8 @@ use tokio::sync::mpsc::UnboundedReceiver;
 use crate::api::{
     AudioDevices, FileTransfer, NoiseSuppression, Participant, RemovalReason, SessionError,
 };
-use crate::capture::CaptureEnd;
-use crate::cue::Cue;
+use crate::video::capture::CaptureEnd;
+use crate::audio::cue::Cue;
 use crate::video::{CaptureTarget, FrameSlot, SharePreset, VideoFrame};
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 
 use crate::api::AudioDevice;
 use crate::backend::BackendEvent;
-use crate::noise::GateReading;
+use crate::audio::noise::GateReading;
 use crate::video::CaptureKind;
 
 const MAX_ERROR_LEN: usize = 160;

@@ -16,13 +16,13 @@ use tokio::time::timeout;
 
 use crate::api::{Participant, SessionError};
 use crate::backend::{BackendEvent, ConnectedRoom, MediaBackend};
-use crate::backend_options::{
+use crate::backend::options::{
     MicrophoneSource, TEST_PATTERN_SIZE, TEST_PATTERN_TARGET_ID, test_pattern_target,
 };
-use crate::backend_support::{display_name, sanitize_error};
-use crate::capture::{FrameSource, TestPatternSource};
-use crate::livekit_video::{self, DesktopCaptureSource};
-use crate::share_audio::AudioScope;
+use crate::backend::support::{display_name, sanitize_error};
+use crate::video::capture::{FrameSource, TestPatternSource};
+use crate::livekit::video::{self, DesktopCaptureSource};
+use crate::audio::share_audio::AudioScope;
 use crate::video::{CaptureTarget, FrameSlot, SharePreset, VideoFrame};
 
 use super::LiveKitBackend;

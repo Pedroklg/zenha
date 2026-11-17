@@ -1,3 +1,9 @@
+//! Vídeo: tipos de quadro e alvo, captura de tela e compartilhamento por GPU.
+
+pub(crate) mod capture;
+#[cfg(windows)]
+pub(crate) mod gpu_share;
+
 use std::fmt;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};

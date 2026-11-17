@@ -1,4 +1,7 @@
-//! Funções puras para envio e recebimento de arquivos: nomes seguros, tipo e caminho de destino.
+//! Envio e recebimento de arquivos: nomes seguros, tipo, caminho de destino e remontagem.
+
+#[cfg(any(windows, test))]
+pub(crate) mod receive;
 
 use std::path::{Path, PathBuf};
 
