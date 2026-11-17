@@ -27,8 +27,8 @@ use crate::video::{CaptureTarget, FrameSlot, SharePreset, VideoFrame};
 
 use super::LiveKitBackend;
 use super::audio::{
-    Microphone, apply_selection, open_audio, publish_selected_microphone, publish_share_audio,
-    publish_tone, stop_share_audio,
+    LocalSpeaker, Microphone, apply_selection, open_audio, publish_selected_microphone,
+    publish_share_audio, publish_tone, stop_share_audio,
 };
 use super::events::pump_events;
 
@@ -183,20 +183,16 @@ impl LiveKitBackend {
         let mic = match self.options.microphone {
             MicrophoneSource::Device => match &audio {
                 Some(audio) => {
-                    publish_selected_microphone(
-                        &room,
-                        audio,
-                        &selection,
-                        &tx,
-                        &self.flags.noise_gate,
-                    )
-                    .await
+                    publish_selected_microphone(&room, audio, &selection, &tx, &self.flags).await
                 }
                 None => Microphone::None,
             },
-            MicrophoneSource::Tone { hz, amplitude } => publish_tone(&room, hz, amplitude)
-                .await
-                .map_or(Microphone::None, |task| Microphone::Tone { _task: task }),
+            MicrophoneSource::Tone { hz, amplitude } => {
+                let speaker = LocalSpeaker::new(&room, &tx, &self.flags);
+                publish_tone(&room, hz, amplitude, speaker)
+                    .await
+                    .unwrap_or(Microphone::None)
+            }
         };
         let published = !matches!(mic, Microphone::None);
         if published && self.flags.microphone_muted.load(Ordering::SeqCst) {

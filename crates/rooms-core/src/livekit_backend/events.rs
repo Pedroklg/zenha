@@ -311,7 +311,7 @@ pub(super) async fn pump_events(
     watch: Arc<Watch>,
     files: Arc<FileReceiver>,
 ) {
-    let mut speaking = SpeakingTracker::default();
+    let mut speaking = SpeakingTracker::new(String::from(room.local_participant().identity()));
     while let Some(event) = room_events.recv().await {
         let mut finished = false;
         for backend_event in translate(event, &room, &mut speaking, &flags, &watch, &tx, &files) {
