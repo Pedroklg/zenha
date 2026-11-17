@@ -327,7 +327,7 @@ To set or rotate the admin password:
 
 `POST /admin/login` returns an admin JWT (lifetime `ROOMS_TOKEN_TTL_SECS`) with no LiveKit media grants. Failed logins are delayed and rate-limited per `client_id` and per client IP (`X-Forwarded-For` from Caddy). With `Authorization: Bearer <admin_token>` an admin can:
 
-- Create (up to 50), rename, reorder and delete rooms: `POST /admin/rooms`, `PATCH` and `DELETE /admin/rooms/{id}`. The last room cannot be deleted; deleting a room removes its LiveKit room and saved chat. Clients get `rooms.changed`.
+- Create (up to 50), rename, reorder and delete rooms, and set a room's password or parent room: `POST /admin/rooms`, `PATCH` and `DELETE /admin/rooms/{id}`. The last room cannot be deleted; deleting a room removes its LiveKit room and saved chat. Clients get `rooms.changed`.
 - Moderate a participant: `POST /admin/rooms/{room}/participants/{identity}/` `mute`, `stop-share` (mutes the share and sends `admin.stop_share`), `kick` or `move` (sends `admin.move` to the client, since LiveKit's `MoveParticipant` is Cloud-only).
 - Delete any saved message: `DELETE /admin/rooms/{room}/chat/{id}` (broadcasts `admin.chat_delete`).
 - Rotate the invite code: `POST /admin/invite` (8 to 128 characters). The new Argon2 hash is stored in `chat.db` and overrides `ROOMS_INVITE_CODE_HASH`, also across restarts.

@@ -52,13 +52,15 @@ sequenceDiagram
   participant DB as SQLite (chat.db)
   participant L as livekit-server
 
-  C->>T: GET /rooms (x-invite-code header)
+  C->>T: GET /rooms (x-invite-code and x-room-keys headers)
   T->>T: verify invite code (Argon2)
   T->>DB: read room list
   T->>L: list participants (server API)
-  T-->>C: rooms with occupants
-  C->>T: POST /token (client_id, display_name, room, invite_code)
-  T->>T: verify invite, validate fields, check room exists
+  T-->>C: rooms with occupants (hidden for locked rooms without a key)
+  C->>T: POST /rooms/{room}/unlock (invite_code, password), only for a locked room
+  T-->>C: room_key
+  C->>T: POST /token (client_id, display_name, room, invite_code, room_key)
+  T->>T: verify invite, validate fields, check room exists and room key
   T-->>C: JWT for that room only (short TTL) + livekit_url
   C->>L: connect with the JWT (WebRTC)
   L-->>C: audio, video, chat and file data
@@ -68,6 +70,8 @@ sequenceDiagram
 
 - The invite code is checked against `ROOMS_INVITE_CODE_HASH`, or against a hash rotated by an admin and kept in SQLite.
 - The token's identity is the `client_id`, its name is the trimmed display name, and it grants only the requested room.
+- A room can have a password (Argon2 hash in SQLite) and one parent room; nesting is one level deep. `POST /rooms/{room}/unlock` checks the password (rate-limited) and returns a `room_key`: HMAC-SHA256 over the room name and its password hash, keyed with the LiveKit API secret. The parent's password and key also open its children. Changing a password changes the hash, so old keys stop working.
+- The client stores keys, never passwords, in `settings.json` per server and room. It sends them in the `x-room-keys` header (`room=key,...`) of `GET /rooms` and in `room_key` of `POST /token`. Without a valid key, `GET /rooms` returns the room's name, count and `locked` flag but no occupants, and `POST /token` answers `403 room_locked`. The invite code is still required for every route.
 - Chat messages go over LiveKit data. Only messages a user marks as saved reach the token server; history is read back with `GET /rooms/{room}/chat`.
 - Files go over LiveKit byte streams, up to 50 MB, and never touch the token server.
 - Profile photos go to `PUT /avatar` (Bearer JWT). The server re-encodes them as 128x128 PNG in the same database and serves them with `GET /avatar/{identity}?v=<version>`. The version travels in the `zenha.avatar` participant attribute, and clients cache each version on disk.

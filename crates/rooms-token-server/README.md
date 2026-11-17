@@ -1,6 +1,6 @@
 # rooms-token-server
 
-`axum` HTTP server. It checks the invite code (Argon2), issues short-lived LiveKit tokens for one room, lists rooms with their occupants, stores saved chat messages and rooms in SQLite, and serves the optional admin routes. See the [join flow](../../docs/architecture.md#joining-a-room).
+`axum` HTTP server. It checks the invite code (Argon2), issues short-lived LiveKit tokens for one room, lists rooms with their occupants, checks per-room passwords, stores saved chat messages and rooms in SQLite, and serves the optional admin routes. See the [join flow](../../docs/architecture.md#joining-a-room).
 
 | Module | Contents |
 | --- | --- |
@@ -9,9 +9,12 @@
 | `routes/` | Router and auth (`mod`), `token`, `rooms`, `chat`, `admin`, `rate_limit` |
 | `token` | LiveKit JWT signing |
 | `directory` | LiveKit server API: participants, moderation, data packets |
-| `chat_store` | SQLite store for saved messages, rooms and the rotated invite hash |
+| `chat_store` | SQLite store for saved messages, rooms (title, order, password hash, parent) and the rotated invite hash |
+| `room_access` | Room keys (HMAC-SHA256) and the rule that a parent's password opens its children |
 
-Main routes: `GET /health`, `POST /token`, `GET /rooms`, `GET`/`POST /rooms/{room}/chat`, `DELETE /rooms/{room}/chat/{id}`, `PUT`/`DELETE /avatar`, `GET /avatar/{identity}` and `/admin/*` (only when `ROOMS_ADMIN_CODE_HASH` is set).
+Main routes: `GET /health`, `POST /token`, `GET /rooms`, `POST /rooms/{room}/unlock`, `GET`/`POST /rooms/{room}/chat`, `DELETE /rooms/{room}/chat/{id}`, `PUT`/`DELETE /avatar`, `GET /avatar/{identity}` and `/admin/*` (only when `ROOMS_ADMIN_CODE_HASH` is set).
+
+Room passwords: an admin sets `password` and `parent` in `POST /admin/rooms` and `PATCH /admin/rooms/{id}` (an empty string removes them; a parent must be a top-level room). `POST /rooms/{room}/unlock` takes `{invite_code, password}` and returns `{room, room_key}`, where `room` is the room that owns the password (the room itself or its parent). Clients send keys in the `x-room-keys: room=key,...` header of `GET /rooms` and in `room_key` of `POST /token`; a locked room without a valid key lists no occupants and its token request fails with `403 room_locked`. Admin moves ignore room passwords.
 
 Configuration comes from environment variables (`.env` in development; see [.env.example](../../.env.example)): `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, `ROOMS_INVITE_CODE_HASH` (or plaintext `ROOMS_INVITE_CODE`, with a startup warning), `ROOMS_ADMIN_CODE_HASH`, `ROOMS_BIND_ADDR`, `ROOMS_CHAT_DB`, `ROOMS_ROOM_LIST`, `ROOMS_TOKEN_TTL_SECS`.
 
