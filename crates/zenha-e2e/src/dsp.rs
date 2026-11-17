@@ -102,14 +102,17 @@ pub fn analyze_tone(samples: &[f32], sample_rate: u32, hz: f64) -> ToneMeasureme
     }
 }
 
-/// Averages interleaved frames of `channels` samples into one mono signal.
+/// Averages the front left and right channels of interleaved frames into one mono signal.
+///
+/// Stereo audio played on a surround endpoint lands only on the front pair, so averaging
+/// every channel would dilute it.
 pub fn downmix(interleaved: &[f32], channels: usize) -> Vec<f32> {
     if channels <= 1 {
         return interleaved.to_vec();
     }
     interleaved
         .chunks_exact(channels)
-        .map(|frame| frame.iter().sum::<f32>() / channels as f32)
+        .map(|frame| (frame[0] + frame[1]) / 2.0)
         .collect()
 }
 
@@ -223,5 +226,7 @@ mod tests {
         assert_eq!(downmix(&[1.0, 0.0, 0.5, 0.5], 2), vec![0.5, 0.5]);
         assert_eq!(downmix(&[1.0, 2.0], 1), vec![1.0, 2.0]);
         assert_eq!(downmix(&[1.0, 2.0, 3.0], 2), vec![1.5]);
+        let surround = [0.4, 0.2, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
+        assert_eq!(downmix(&surround, 8), vec![0.3]);
     }
 }
