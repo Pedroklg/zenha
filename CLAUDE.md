@@ -24,7 +24,7 @@ Plano e tasks: `docs/plan.md`. Arquitetura: `docs/architecture.md`. Decisões: `
 - `unsafe` negado por lint; exceção só em `zenha-core`, com `#[expect(unsafe_code)]` e comentário `SAFETY:`.
 - Erros: `thiserror` em libs, `anyhow` com `.context(...)` em binários.
 - Código sem comentários; no máximo um comentário curto em trecho não trivial.
-- Identificadores e logs em inglês; docs e texto de interface em português.
+- Identificadores, logs e comentários de código em inglês; docs e texto de interface em português.
 - Segredos nunca em log: `Config` tem `Debug` manual que os omite.
 - Dependências em `[workspace.dependencies]`; `livekit`, `livekit-api` e `libwebrtc` com versão exata.
 
