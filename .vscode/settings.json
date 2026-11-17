@@ -5,5 +5,5 @@
   "[rust]": {
     "editor.defaultFormatter": "rust-lang.rust-analyzer"
   },
-  "cmake.sourceDirectory": "C:/Users/Usuario/Documents/voice-rooms/patches/webrtc-sys/test"
+  "cmake.sourceDirectory": "${workspaceFolder}/patches/webrtc-sys/test"
 }
