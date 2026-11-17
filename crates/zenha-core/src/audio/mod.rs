@@ -1,0 +1,15 @@
+//! Áudio: captura do microfone, supressão de ruído, reprodução, sinais sonoros e volumes.
+
+#[cfg(windows)]
+pub(crate) mod audio_render;
+pub(crate) mod cue;
+#[cfg(windows)]
+pub(crate) mod deep_filter;
+#[cfg(windows)]
+pub(crate) mod default_device;
+#[cfg(windows)]
+pub(crate) mod mic_capture;
+pub(crate) mod noise;
+pub(crate) mod participant_volume;
+#[cfg(windows)]
+pub(crate) mod share_audio;

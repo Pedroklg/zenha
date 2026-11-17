@@ -10,7 +10,7 @@ use zenha_protocol::{
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::api::{Event, Participant, SessionConfig, SessionError};
-use crate::token::TokenClient;
+use crate::net::token::TokenClient;
 
 use super::Session;
 use super::connection::Phase;
@@ -424,7 +424,7 @@ mod tests {
 
     use crate::api::{Command, Event, Participant, SessionConfig, SessionError};
     use crate::backend::BackendEvent;
-    use crate::backoff::ReconnectPolicy;
+    use crate::net::backoff::ReconnectPolicy;
     use crate::handle::EventSink;
     use crate::testing::{BackendCall, FakeBackend, FakeTokenClient};
 

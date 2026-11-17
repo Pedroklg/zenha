@@ -146,7 +146,7 @@ mod tests {
 
     use crate::api::{Command, Event, RoomKey, SessionError};
     use crate::backend::BackendEvent;
-    use crate::backoff::ReconnectPolicy;
+    use crate::net::backoff::ReconnectPolicy;
     use crate::handle::EventSink;
     use crate::testing::{BackendCall, FakeBackend, FakeTokenClient};
 
