@@ -1,4 +1,4 @@
-//! Medidor do microfone e noise gate.
+//! Microphone meter and noise gate.
 
 use super::*;
 

@@ -1,4 +1,4 @@
-//! Processamento e normalização de fotos de perfil no servidor.
+//! Processing and normalization of profile photos on the server.
 
 use std::fmt::Write as _;
 use std::io::Cursor;
@@ -38,7 +38,7 @@ pub struct ProcessedAvatar {
     pub version: String,
 }
 
-/// Decodifica bytes enviados pelo cliente, recorta no centro e re-codifica como PNG 128x128.
+/// Decodes bytes sent by the client, center-crops and re-encodes as a 128x128 PNG.
 pub fn process_avatar(raw: &[u8]) -> Result<ProcessedAvatar, AvatarProcessError> {
     if raw.is_empty() {
         return Err(AvatarProcessError::Empty);

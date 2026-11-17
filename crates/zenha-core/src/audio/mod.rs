@@ -1,4 +1,4 @@
-//! Áudio: captura do microfone, supressão de ruído, reprodução, sinais sonoros e volumes.
+//! Audio: microphone capture, noise suppression, playback, sound cues and volumes.
 
 #[cfg(windows)]
 pub(crate) mod audio_render;

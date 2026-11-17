@@ -1,4 +1,4 @@
-//! Ponto de entrada do subcomando `bot`: monta o backend e entrega ao laço do bot.
+//! Entry point of the `bot` subcommand: builds the backend and hands it to the bot loop.
 
 use std::io;
 

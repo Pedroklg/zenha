@@ -1,4 +1,4 @@
-//! Ícone e menu da bandeja do sistema no Windows via `tray-icon`.
+//! System tray icon and menu on Windows via `tray-icon`.
 
 #[cfg(windows)]
 use std::sync::mpsc::{Receiver, channel};

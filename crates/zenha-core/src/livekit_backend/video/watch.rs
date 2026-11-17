@@ -1,4 +1,4 @@
-//! Recepção dos quadros da transmissão remota assistida.
+//! Reception of frames from the watched remote stream.
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::{Arc, Mutex, PoisonError};

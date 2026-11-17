@@ -1,4 +1,4 @@
-//! Dados fixos da demonstração: avatar, alvos de captura e dispositivos de áudio.
+//! Fixed demo data: avatar, capture targets and audio devices.
 
 use crate::ui_model::{AudioDeviceView, CaptureTargetView, TargetKindView};
 

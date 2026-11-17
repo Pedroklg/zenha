@@ -1,4 +1,4 @@
-//! Processos filhos, portas e uma chamada HTTP mínima para o servidor de tokens.
+//! Child processes, ports and a minimal HTTP call to the token server.
 
 use std::fs::File;
 use std::io::{Read, Write};

@@ -1,4 +1,4 @@
-//! Compartilhamento de tela e recepção de vídeo sobre o SDK do LiveKit.
+//! Screen sharing and video reception on top of the LiveKit SDK.
 
 mod capture;
 mod convert;

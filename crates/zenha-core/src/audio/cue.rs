@@ -1,4 +1,4 @@
-//! Geração dos sons curtos de confirmação (mute, ensurdecimento e entrada/saída).
+//! Generation of the short confirmation sounds (mute, deafen and join/leave).
 
 use std::f64::consts::TAU;
 
@@ -78,7 +78,7 @@ impl Cue {
     }
 }
 
-/// Amostras mono em -1..1 na taxa pedida.
+/// Mono samples in -1..1 at the requested rate.
 pub fn cue_samples(cue: Cue, sample_rate: u32) -> Vec<f32> {
     if sample_rate == 0 {
         return Vec::new();

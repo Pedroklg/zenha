@@ -1,4 +1,4 @@
-//! Versões semânticas e a decisão de mostrar ou não uma atualização.
+//! Semantic versions and the decision whether to show an update.
 
 use std::fmt;
 

@@ -1,4 +1,4 @@
-//! Registro e escuta de atalhos globais no Windows via `global-hotkey`.
+//! Registering and listening for global hotkeys on Windows via `global-hotkey`.
 
 use std::sync::mpsc::{Receiver, channel};
 

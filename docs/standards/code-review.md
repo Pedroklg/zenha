@@ -30,7 +30,7 @@ Confira todos em toda revisão:
 - **Improvements:**
   - Alocação por quadro/pacote em laço quente de áudio (48 kHz) ou vídeo (30–60 fps) (`CORE-09`) ou fila sem descarte de atraso (`CORE-05`).
   - Erro de lib usando `anyhow` em vez de `thiserror`, ou binário sem `.context(...)` (`GER-02`).
-  - Idioma trocado: identificador/log em português, UI ou `//!` em inglês (`GER-04`).
+  - Idioma trocado: identificador/log em português, UI em inglês ou comentário de código em português (`GER-04`).
   - Estado mutado direto em `views/*.rs` em vez de `UserAction` -> `AppState` (`UI-03`), ou `--demo` (`DemoSession`) quebrado (`UI-09`).
   - Handler HTTP novo sem teste `tower::ServiceExt::oneshot` (`TST-02`), tipo novo em `zenha-protocol` sem round-trip JSON (`PROTO-04`), ou `std::env::var` fora de `from_lookup` (`SRV-08`, `TST-05`).
   - Cast `as` com risco de truncamento onde cabia `try_from` ou `.saturating_*` (`GER-09`).

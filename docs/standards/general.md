@@ -24,7 +24,7 @@ Valem para todas as crates do workspace (`crates/*` e `xtask`).
 
 - Identificadores (tipos, funções, variáveis, módulos, variantes) sempre em inglês.
 - Logs (`tracing::info!`, `warn!`, `error!`, `debug!`, `trace!`) em inglês, começando em letra minúscula, com campos estruturados antes da mensagem (ex.: `tracing::warn!(room = %name, %err, "room lookup failed")`).
-- Doc-comments (`//!`, `///`) em português do Brasil; comentários de linha internos (`//`) em inglês.
+- Comentários de código em inglês: doc-comments (`//!`, `///`) e comentários de linha (`//`).
 - Textos visíveis ao usuário na interface (`zenha-client`) e nos relatórios do `zenha-e2e` em português do Brasil.
 
 ## GER-05: Comentários mínimos e só quando o motivo não é óbvio

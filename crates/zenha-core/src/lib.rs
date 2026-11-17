@@ -1,7 +1,7 @@
-//! Núcleo do cliente: sessão, áudio, captura e vídeo.
+//! Client core: session, audio, capture and video.
 //!
-//! A interface envia [`Command`] e lê [`Event`] por meio de [`SessionHandle`].
-//! Nenhum tipo do SDK do LiveKit aparece na API pública desta crate.
+//! The UI sends [`Command`] and reads [`Event`] through [`SessionHandle`].
+//! No LiveKit SDK type appears in this crate's public API.
 
 mod api;
 mod audio;

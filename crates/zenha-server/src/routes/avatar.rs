@@ -1,4 +1,4 @@
-//! Rotas HTTP para envio, leitura e remoção de foto de perfil (`PUT`/`GET`/`DELETE /avatar`).
+//! HTTP routes for uploading, reading and removing a profile photo (`PUT`/`GET`/`DELETE /avatar`).
 
 use axum::Json;
 use axum::body::Bytes;

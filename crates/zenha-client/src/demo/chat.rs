@@ -1,4 +1,4 @@
-//! Chat simulado: mensagens, histórico, arquivos e respostas automáticas.
+//! Simulated chat: messages, history, files and automatic replies.
 
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};

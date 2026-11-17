@@ -1,5 +1,5 @@
-//! Saída de áudio própria por WASAPI: estéreo, 48 kHz, preenchida por um callback.
-//! Só compila no Windows.
+//! Own audio output through WASAPI: stereo, 48 kHz, filled by a callback.
+//! Only compiles on Windows.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};

@@ -1,4 +1,4 @@
-//! Estado da sala conectada, participantes e transições entre lobby e sala.
+//! Connected room state, participants and transitions between lobby and room.
 
 use std::time::{Duration, Instant};
 

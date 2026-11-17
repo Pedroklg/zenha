@@ -1,4 +1,4 @@
-//! Modo `--demo`: sessão simulada com salas, participantes, chat e compartilhamento falsos.
+//! `--demo` mode: simulated session with fake rooms, participants, chat and sharing.
 
 mod chat;
 mod commands;
@@ -23,7 +23,7 @@ pub const DEMO_PASSWORD: &str = "demo";
 pub const DEMO_AVATAR_IDENTITY: &str = "demo-ana";
 pub const DEMO_AVATAR_VERSION: &str = "demo";
 const FAILING_ROOM: &str = "falha";
-/// Senha da sala "VIP" (e da filha "Cantinho") no modo demonstração.
+/// Password of the "VIP" room (and its child "Cantinho") in demo mode.
 pub const DEMO_ROOM_PASSWORD: &str = "demo";
 const REPLIES: [&str; 4] = [
     "Boa!",

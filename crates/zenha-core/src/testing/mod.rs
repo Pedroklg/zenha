@@ -1,4 +1,4 @@
-//! Dublês de teste do backend de mídia e do cliente de token, usados pelos testes e pelo `zenha-e2e`.
+//! Test doubles for the media backend and token client, used by tests and by `zenha-e2e`.
 
 mod backend;
 mod token;

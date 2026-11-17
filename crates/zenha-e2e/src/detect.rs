@@ -1,22 +1,22 @@
-//! Decisão de "o tom está tocando" a partir de medições da sonda, sempre contra uma linha de base.
+//! Deciding whether "the tone is playing" from probe measurements, always against a baseline.
 
 use serde::Serialize;
 
 use crate::dsp::ToneMeasurement;
 
-/// Frequência do tom de teste: um quarto de tom entre Ré# e Mi, fora das notas da música comum.
+/// Test tone frequency: a quarter tone between D# and E, outside the notes of common music.
 pub const TONE_HZ: f64 = 1290.0;
-/// Amplitude de pico (fração do fundo de escala); RMS de cerca de 0,021, ou -33,5 dBFS.
+/// Peak amplitude (fraction of full scale); RMS of about 0.021, or -33.5 dBFS.
 pub const TONE_AMPLITUDE: f64 = 0.03;
-/// Piso absoluto do RMS do tom: 10 vezes abaixo do nível esperado, sobra margem para volume do app e Opus.
+/// Absolute floor of the tone RMS: 10 times below the expected level, leaving margin for app volume and Opus.
 pub const MIN_TONE_RMS: f64 = 0.002;
-/// O tom precisa superar a linha de base em 5 vezes (14 dB), o que descarta música no PC.
+/// The tone must exceed the baseline by 5 times (14 dB), which rules out music on the PC.
 pub const BASELINE_FACTOR: f64 = 5.0;
-/// Fração mínima da potência total no tom (1%, ou -20 dB); só falha com som de fundo acima de -13 dBFS.
+/// Minimum fraction of total power in the tone (1%, or -20 dB); only fails with background sound above -13 dBFS.
 pub const MIN_TONE_RATIO: f64 = 0.01;
-/// Ausência: o tom cai abaixo de 15% do nível medido quando presente.
+/// Absence: the tone drops below 15% of the level measured when present.
 pub const ABSENT_FRACTION: f64 = 0.15;
-/// Acima disto de RMS total na linha de base o relatório avisa que há som tocando no PC.
+/// Above this total RMS in the baseline the report warns that sound is playing on the PC.
 pub const NOISY_BASELINE_RMS: f64 = 0.02;
 
 #[derive(Debug, Clone, PartialEq, Serialize)]

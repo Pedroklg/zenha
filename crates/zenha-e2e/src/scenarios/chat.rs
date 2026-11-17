@@ -1,4 +1,4 @@
-//! Cenários de chat e de envio de arquivos.
+//! Chat and file sending scenarios.
 
 use std::fs::{self, File};
 use std::io::{BufWriter, Read, Write};

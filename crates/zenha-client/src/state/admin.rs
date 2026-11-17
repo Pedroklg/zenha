@@ -1,4 +1,4 @@
-//! Estado administrativo, validação de salas/convites e diálogos de moderação.
+//! Admin state, room/invite validation and moderation dialogs.
 
 use std::fmt;
 
@@ -20,7 +20,7 @@ pub enum AdminDialog {
         parent: Option<String>,
         error: Option<String>,
     },
-    /// Edita nome, senha e sala-mãe; senha vazia mantém a atual, salvo com `remove_password`.
+    /// Edits name, password and parent room; an empty password keeps the current one, unless `remove_password`.
     EditRoom {
         id: String,
         title: String,
@@ -307,7 +307,7 @@ pub(super) fn upsert_admin_room(rooms: &mut Vec<RoomSummary>, room: AdminRoom) {
     rooms.insert(pos, entry);
 }
 
-/// Salas que podem ser mãe de `editing`: as de primeiro nível, se `editing` não tiver filhas.
+/// Rooms that can be parent of `editing`: top-level ones, if `editing` has no children.
 pub fn parent_options<'a>(rooms: &'a [RoomSummary], editing: Option<&str>) -> Vec<&'a RoomSummary> {
     if editing.is_some_and(|id| rooms.iter().any(|r| r.parent.as_deref() == Some(id))) {
         return Vec::new();
@@ -318,7 +318,7 @@ pub fn parent_options<'a>(rooms: &'a [RoomSummary], editing: Option<&str>) -> Ve
         .collect()
 }
 
-/// Senha a enviar: `Some("")` remove, `None` mantém a atual.
+/// Password to send: `Some("")` removes, `None` keeps the current one.
 fn new_password(password: &str, remove: bool) -> Result<Option<String>, String> {
     if remove {
         return Ok(Some(String::new()));

@@ -1,4 +1,4 @@
-//! Áudio do backend LiveKit: dispositivos, microfone, tom de teste e áudio da tela.
+//! LiveKit backend audio: devices, microphone, test tone and screen audio.
 
 mod devices;
 mod microphone;

@@ -1,5 +1,5 @@
-//! Som da transmissão: loopback WASAPI por processo, em quadros de 10 ms, estéreo, 48 kHz.
-//! Só compila no Windows.
+//! Stream sound: per-process WASAPI loopback, in 10 ms frames, stereo, 48 kHz.
+//! Only compiles on Windows.
 
 use std::collections::VecDeque;
 use std::sync::Arc;

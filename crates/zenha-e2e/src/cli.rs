@@ -1,4 +1,4 @@
-//! Argumentos de linha de comando, sem dependências externas.
+//! Command-line arguments, with no external dependencies.
 
 use std::path::PathBuf;
 

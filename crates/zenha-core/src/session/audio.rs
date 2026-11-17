@@ -1,4 +1,4 @@
-//! Controle de áudio, supressão de ruído, volume por participante e dispositivos.
+//! Audio control, noise suppression, per-participant volume and devices.
 
 use crate::api::{Event, NoiseSuppression};
 

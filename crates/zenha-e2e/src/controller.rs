@@ -1,4 +1,4 @@
-//! Controle de um bot como processo filho: comandos no stdin, histórico de eventos do stdout.
+//! Controlling a bot as a child process: commands on stdin, event history from stdout.
 
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Write};

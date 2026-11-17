@@ -1,4 +1,4 @@
-//! Seção de atalhos globais das configurações.
+//! Global hotkeys section of the settings.
 
 use super::*;
 

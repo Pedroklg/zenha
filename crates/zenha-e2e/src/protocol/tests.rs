@@ -1,4 +1,4 @@
-//! Testes do protocolo de comandos e eventos.
+//! Tests for the command and event protocol.
 
 use zenha_core::{
     AdminAction, Command, Cue, Event, FrameSlot, RemovalReason, SessionError,

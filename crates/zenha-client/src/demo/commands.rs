@@ -1,4 +1,4 @@
-//! Comandos da interface e ações de administração tratadas pela sessão simulada.
+//! UI commands and admin actions handled by the simulated session.
 
 use std::time::Duration;
 

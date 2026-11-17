@@ -1,4 +1,4 @@
-//! Avatares dos participantes guardados como PNG no SQLite.
+//! Participant avatars stored as PNG in SQLite.
 
 use rusqlite::{OptionalExtension, params};
 

@@ -1,4 +1,4 @@
-//! Consulta à última release no GitHub e escolha do instalador.
+//! Query of the latest GitHub release and installer selection.
 
 use std::sync::mpsc;
 use std::time::Duration;

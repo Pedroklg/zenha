@@ -1,4 +1,4 @@
-//! Publicação e encerramento da transmissão de tela como faixa de vídeo local.
+//! Publishing and ending the screen share as a local video track.
 
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};

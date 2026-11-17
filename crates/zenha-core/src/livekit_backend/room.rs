@@ -1,4 +1,4 @@
-//! Conexão de sala do LiveKit, estado de participantes e compartilhamento de vídeo.
+//! LiveKit room connection, participant state and video sharing.
 
 use std::collections::HashMap;
 use std::sync::atomic::Ordering;

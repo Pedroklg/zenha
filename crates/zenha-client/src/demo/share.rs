@@ -1,4 +1,4 @@
-//! Compartilhamento de tela e dispositivos de áudio simulados.
+//! Simulated screen sharing and audio devices.
 
 use std::time::Duration;
 

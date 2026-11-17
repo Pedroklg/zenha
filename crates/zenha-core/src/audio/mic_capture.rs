@@ -1,4 +1,4 @@
-//! Captura do microfone por WASAPI em quadros de 10 ms, mono, 48 kHz. Só compila no Windows.
+//! Microphone capture through WASAPI in 10 ms frames, mono, 48 kHz. Only compiles on Windows.
 
 use std::collections::VecDeque;
 use std::sync::Arc;

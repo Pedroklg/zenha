@@ -1,4 +1,4 @@
-//! `FakeTokenClient`: cliente de token falso, com respostas programáveis e chamadas registradas.
+//! `FakeTokenClient`: fake token client with programmable responses and recorded calls.
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
@@ -151,7 +151,7 @@ impl FakeTokenClient {
         lock(&self.state).rooms = rooms;
     }
 
-    /// Tranca `room`: o token exige `key`, obtida ao desbloquear com `password` (dona: `owner`).
+    /// Locks `room`: the token requires `key`, obtained by unlocking with `password` (owner: `owner`).
     pub fn lock_room(&self, room: &str, owner: &str, password: &str, key: &str) {
         lock(&self.state).room_locks.insert(
             room.to_owned(),
@@ -163,7 +163,7 @@ impl FakeTokenClient {
         );
     }
 
-    /// Chaves enviadas em cada `fetch_rooms`.
+    /// Keys sent in each `fetch_rooms`.
     pub fn rooms_keys(&self) -> Vec<BTreeMap<String, String>> {
         lock(&self.state).rooms_keys.clone()
     }

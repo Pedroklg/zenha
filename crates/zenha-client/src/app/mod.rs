@@ -1,4 +1,4 @@
-//! Aplicativo `eframe`: estado da `App` e criação; o resto fica nos módulos filhos.
+//! `eframe` application: `App` state and creation; the rest lives in the child modules.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

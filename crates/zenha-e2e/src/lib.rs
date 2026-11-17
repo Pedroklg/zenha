@@ -1,4 +1,4 @@
-//! Harness de testes ponta a ponta: bots por processo, sonda de áudio e relatório.
+//! End-to-end test harness: per-process bots, audio probe and report.
 
 pub mod bot;
 pub mod bot_main;

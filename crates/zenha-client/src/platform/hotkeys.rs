@@ -1,4 +1,4 @@
-//! Conversão entre eventos de teclado do `egui` e o formato de atalhos do `global-hotkey`.
+//! Conversion between `egui` keyboard events and the `global-hotkey` shortcut format.
 
 use eframe::egui::{self, Key};
 

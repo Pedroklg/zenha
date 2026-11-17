@@ -1,4 +1,4 @@
-//! Download do instalador com limite de tamanho, hash SHA-256 e redirecionamentos restritos.
+//! Installer download with size limit, SHA-256 hash and restricted redirects.
 
 use std::fs::{self, File};
 use std::io::{BufWriter, Write};

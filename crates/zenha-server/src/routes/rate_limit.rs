@@ -1,4 +1,4 @@
-//! Limitadores de taxa por janela deslizante para chat e login administrativo.
+//! Sliding-window rate limiters for chat and admin login.
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Mutex, MutexGuard};

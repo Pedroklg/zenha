@@ -1,4 +1,4 @@
-//! Envio e recebimento de arquivos: nomes seguros, tipo, caminho de destino e remontagem.
+//! Sending and receiving files: safe names, type, destination path and reassembly.
 
 #[cfg(any(windows, test))]
 pub(crate) mod receive;

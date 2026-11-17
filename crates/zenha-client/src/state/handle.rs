@@ -1,4 +1,4 @@
-//! Transição de estado a partir de cada `UserAction`.
+//! State transition for each `UserAction`.
 
 use zenha_core::AdminAction;
 

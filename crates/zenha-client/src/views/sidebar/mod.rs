@@ -1,4 +1,4 @@
-//! Barra lateral com lista de salas, ocupantes e rodapé do usuário.
+//! Sidebar with room list, occupants and user footer.
 
 mod footer;
 mod rooms;

@@ -10,10 +10,10 @@ use crate::audio::cue::Cue;
 use crate::backend::{BackendEvent, ConnectedRoom, MediaBackend};
 use crate::video::{CaptureTarget, FrameSlot, SharePreset, VideoFrame};
 
-/// Backend sem mídia: conecta sempre e mostra só o participante local.
+/// Backend without media: always connects and shows only the local participant.
 ///
-/// Existe para exercitar o servidor de tokens e a interface enquanto o backend
-/// do LiveKit não está implementado. Nada é enviado ao servidor de mídia.
+/// Exists to exercise the token server and the UI while the LiveKit backend
+/// is not implemented. Nothing is sent to the media server.
 #[derive(Debug)]
 pub struct NoMediaBackend {
     identity: String,

@@ -1,4 +1,4 @@
-//! Grade de participantes e seus cartões.
+//! Participant grid and its cards.
 
 use std::collections::BTreeMap;
 

@@ -1,4 +1,4 @@
-//! Motor DeepFilterNet 3 (tract, só Windows) atrás do trait `Denoiser`.
+//! DeepFilterNet 3 engine (tract, Windows only) behind the `Denoiser` trait.
 
 use df::tract::{DfParams, DfTract, RuntimeParams};
 use ndarray::Array2;

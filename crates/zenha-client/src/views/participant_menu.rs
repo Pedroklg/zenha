@@ -1,4 +1,4 @@
-//! Menu contextual de volume individual e ações administrativas sobre participantes.
+//! Context menu for individual volume and admin actions on participants.
 
 use eframe::egui::{self, RichText};
 use zenha_protocol::RoomSummary;

@@ -1,4 +1,4 @@
-//! Testes dos helpers de texto da sala.
+//! Tests for the room text helpers.
 
 use crate::ui_model::ParticipantView;
 

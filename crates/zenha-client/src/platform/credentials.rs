@@ -1,10 +1,10 @@
-//! Persistência da senha do servidor no Gerenciador de Credenciais do Windows.
+//! Persisting the server password in Windows Credential Manager.
 
 const SERVICE: &str = "zenha";
 
-/// Carrega a senha salva para `server` no Credential Manager do Windows.
-/// Retorna `None` se não houver entrada salva, se `server` estiver vazio, ou em
-/// plataformas não-Windows; falhas de acesso são apenas registradas em log.
+/// Loads the saved password for `server` from Windows Credential Manager.
+/// Returns `None` if there is no saved entry, if `server` is empty, or on
+/// non-Windows platforms; access failures are only logged.
 #[cfg(windows)]
 pub fn load(server: &str) -> Option<String> {
     let (user, entry) = entry_for(server)?;
@@ -23,7 +23,7 @@ pub fn load(_server: &str) -> Option<String> {
     None
 }
 
-/// Salva a senha de `server` no Credential Manager do Windows de forma síncrona.
+/// Saves the password for `server` in Windows Credential Manager synchronously.
 #[cfg(windows)]
 pub fn store(server: &str, password: &str) {
     if password.is_empty() {
@@ -40,7 +40,7 @@ pub fn store(server: &str, password: &str) {
 #[cfg(not(windows))]
 pub fn store(_server: &str, _password: &str) {}
 
-/// Remove a senha salva para `server` no Credential Manager do Windows de forma síncrona.
+/// Removes the saved password for `server` from Windows Credential Manager synchronously.
 #[cfg(windows)]
 pub fn forget(server: &str) {
     let Some((user, entry)) = entry_for(server) else {
@@ -57,7 +57,7 @@ pub fn forget(server: &str) {
 #[cfg(not(windows))]
 pub fn forget(_server: &str) {}
 
-/// Salva a senha em uma thread curta para não bloquear a interface gráfica.
+/// Saves the password on a short-lived thread so the GUI is not blocked.
 pub fn store_in_background(server: String, password: String) {
     if server.trim().is_empty() || password.is_empty() {
         return;
@@ -65,7 +65,7 @@ pub fn store_in_background(server: String, password: String) {
     std::thread::spawn(move || store(&server, &password));
 }
 
-/// Remove a senha em uma thread curta para não bloquear a interface gráfica.
+/// Removes the password on a short-lived thread so the GUI is not blocked.
 pub fn forget_in_background(server: String) {
     if server.trim().is_empty() {
         return;

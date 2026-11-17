@@ -1,4 +1,4 @@
-//! Salas simuladas: entrar, desbloquear, silenciar, nome de exibição e listagem.
+//! Simulated rooms: join, unlock, mute, display name and listing.
 
 use std::time::{Duration, Instant};
 
@@ -13,7 +13,7 @@ use super::{
 };
 
 impl DemoSession {
-    /// Salas cuja senha vale para `room`: ela mesma e a sala-mãe.
+    /// Rooms whose password applies to `room`: itself and the parent room.
     pub(super) fn lock_owners(&self, room: &str) -> Vec<&DemoRoom> {
         let find = |id: &str| self.rooms_list.iter().find(|r| r.id == id);
         let own = find(room);

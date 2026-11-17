@@ -1,4 +1,4 @@
-//! Estado de áudio, dispositivos, volumes por participante, atalhos e push-to-talk.
+//! Audio state, devices, per-participant volumes, hotkeys and push-to-talk.
 
 mod devices;
 mod hotkeys;

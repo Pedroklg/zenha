@@ -1,4 +1,4 @@
-//! Sonda WASAPI em modo loopback do dispositivo de saída de teste. Só compila no Windows.
+//! WASAPI loopback probe of the test output device. Compiles on Windows only.
 
 use std::collections::VecDeque;
 use std::sync::Arc;

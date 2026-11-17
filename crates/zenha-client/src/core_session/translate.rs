@@ -1,4 +1,4 @@
-//! Tradução de eventos do núcleo em eventos de interface.
+//! Translation of core events into UI events.
 
 use std::cell::Cell;
 
@@ -43,8 +43,8 @@ fn view(participant: Participant) -> ParticipantView {
     }
 }
 
-/// Converte eventos do núcleo em eventos de interface, guardando o que a
-/// interface espera receber inteiro (participante completo, sala atual).
+/// Converts core events into UI events, keeping what the
+/// interface expects to receive whole (full participant, current room).
 #[derive(Default)]
 pub(super) struct Translator {
     pub(super) room: Option<String>,

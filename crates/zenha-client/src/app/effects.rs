@@ -1,4 +1,4 @@
-//! Efeitos pedidos pelo estado e ações do usuário: comandos, gravação em disco, abertura de arquivos e colagem.
+//! Effects requested by state and user actions: commands, writing to disk, opening files and pasting.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};

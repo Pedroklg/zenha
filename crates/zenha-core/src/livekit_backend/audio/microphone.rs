@@ -1,4 +1,4 @@
-//! Publicação do microfone (plataforma, aprimorado ou tom de teste) e detecção de fala local.
+//! Microphone publishing (platform, enhanced or test tone) and local speech detection.
 
 use std::sync::Arc;
 use std::sync::atomic::Ordering;

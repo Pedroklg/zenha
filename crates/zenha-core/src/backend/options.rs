@@ -1,4 +1,4 @@
-//! Opções de teste do backend do LiveKit. Os valores padrão reproduzem o comportamento do cliente.
+//! Test options for the LiveKit backend. Defaults reproduce the client's behavior.
 
 use std::f64::consts::TAU;
 
@@ -14,20 +14,20 @@ pub const TONE_FRAME_SAMPLES: usize = 480;
 const MIN_TONE_HZ: f64 = 50.0;
 const MAX_TONE_HZ: f64 = 20_000.0;
 
-/// De onde vem o áudio publicado como microfone.
+/// Where the audio published as the microphone comes from.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum MicrophoneSource {
-    /// Microfone real pelo áudio da plataforma (comportamento do cliente).
+    /// Real microphone through the platform audio (client behavior).
     #[default]
     Device,
-    /// Senoide sintética; nenhum áudio de plataforma é criado, então não grava nem reproduz.
+    /// Synthetic sine; no platform audio is created, so it neither records nor plays.
     Tone { hz: f64, amplitude: f64 },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct LiveKitBackendOptions {
     pub microphone: MicrophoneSource,
-    /// Lista e aceita o alvo de captura "Padrão de teste" (barras geradas em Rust).
+    /// Lists and accepts the "Test pattern" capture target (bars generated in Rust).
     pub test_pattern_target: bool,
 }
 
@@ -62,7 +62,7 @@ pub fn test_pattern_target() -> CaptureTarget {
     }
 }
 
-/// Gerador de senoide em PCM de 16 bits, contínuo entre chamadas.
+/// 16-bit PCM sine generator, continuous across calls.
 #[derive(Debug, Clone)]
 pub struct ToneGenerator {
     phase: f64,

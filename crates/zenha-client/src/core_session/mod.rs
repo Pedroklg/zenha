@@ -1,4 +1,4 @@
-//! Ponte entre a interface e `zenha-core`: `CoreSession` implementa `SessionPort`.
+//! Bridge between the UI and `zenha-core`: `CoreSession` implements `SessionPort`.
 
 mod commands;
 mod errors;

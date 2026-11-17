@@ -1,4 +1,4 @@
-//! Rodapé da barra lateral: aviso de atualização e usuário local.
+//! Sidebar footer: update notice and local user.
 
 use eframe::egui::{
     self, Align, Color32, CornerRadius, Layout, Margin, RichText, Sense, Stroke, Vec2,
