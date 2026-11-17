@@ -5445,103 +5445,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rooms-client"
-version = "0.1.12"
-dependencies = [
- "anyhow",
- "directories",
- "eframe",
- "egui_kittest",
- "global-hotkey",
- "image",
- "keyring",
- "reqwest 0.13.5",
- "rfd",
- "rooms-core",
- "rooms-protocol",
- "serde",
- "serde_json",
- "sha2",
- "thiserror 2.0.21",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "tray-icon",
- "winresource",
-]
-
-[[package]]
-name = "rooms-core"
-version = "0.1.12"
-dependencies = [
- "async-trait",
- "deep_filter",
- "futures-util",
- "livekit",
- "ndarray",
- "nnnoiseless",
- "reqwest 0.13.5",
- "rooms-protocol",
- "rustls",
- "serde_json",
- "thiserror 2.0.21",
- "tokio",
- "tracing",
- "uuid",
- "wasapi",
- "windows",
-]
-
-[[package]]
-name = "rooms-e2e"
-version = "0.1.12"
-dependencies = [
- "anyhow",
- "rooms-core",
- "rooms-protocol",
- "serde",
- "serde_json",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "uuid",
- "wasapi",
-]
-
-[[package]]
-name = "rooms-protocol"
-version = "0.1.12"
-dependencies = [
- "serde",
- "serde_json",
- "thiserror 2.0.21",
-]
-
-[[package]]
-name = "rooms-token-server"
-version = "0.1.12"
-dependencies = [
- "anyhow",
- "argon2",
- "async-trait",
- "axum",
- "dotenvy",
- "http-body-util",
- "image",
- "livekit-api",
- "rooms-protocol",
- "rusqlite",
- "serde_json",
- "sha2",
- "subtle",
- "thiserror 2.0.21",
- "tokio",
- "tower",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "roxmltree"
 version = "0.21.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8405,6 +8308,103 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "939f186d9ecebe044315a5cb6d6f78568bbc21152adc954d5a0c2f58bdbc9920"
 dependencies = [
  "serde",
+]
+
+[[package]]
+name = "zenha-client"
+version = "0.1.12"
+dependencies = [
+ "anyhow",
+ "directories",
+ "eframe",
+ "egui_kittest",
+ "global-hotkey",
+ "image",
+ "keyring",
+ "reqwest 0.13.5",
+ "rfd",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "tray-icon",
+ "winresource",
+ "zenha-core",
+ "zenha-protocol",
+]
+
+[[package]]
+name = "zenha-core"
+version = "0.1.12"
+dependencies = [
+ "async-trait",
+ "deep_filter",
+ "futures-util",
+ "livekit",
+ "ndarray",
+ "nnnoiseless",
+ "reqwest 0.13.5",
+ "rustls",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+ "uuid",
+ "wasapi",
+ "windows",
+ "zenha-protocol",
+]
+
+[[package]]
+name = "zenha-e2e"
+version = "0.1.12"
+dependencies = [
+ "anyhow",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+ "wasapi",
+ "zenha-core",
+ "zenha-protocol",
+]
+
+[[package]]
+name = "zenha-protocol"
+version = "0.1.12"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "zenha-server"
+version = "0.1.12"
+dependencies = [
+ "anyhow",
+ "argon2",
+ "async-trait",
+ "axum",
+ "dotenvy",
+ "http-body-util",
+ "image",
+ "livekit-api",
+ "rusqlite",
+ "serde_json",
+ "sha2",
+ "subtle",
+ "thiserror 2.0.21",
+ "tokio",
+ "tower",
+ "tracing",
+ "tracing-subscriber",
+ "zenha-protocol",
 ]
 
 [[package]]

@@ -23,16 +23,16 @@ cargo ci
 
 See [docs/architecture.md](docs/architecture.md) for the diagram.
 
-- `rooms-protocol`: `serde` types and validation only; no I/O, no async.
-- `rooms-core`: the only crate that may depend on `livekit` and `libwebrtc`. No SDK types in its public API (`Command`, `Event`, `SessionError` and its own types).
-- `rooms-client`: talks to `rooms-core` only through `Command` and `Event` channels; the `egui` UI thread never blocks or does I/O.
-- `rooms-token-server`: `axum` server that checks invite codes, issues short-lived LiveKit tokens and keeps rooms and saved chat in SQLite.
+- `zenha-protocol`: `serde` types and validation only; no I/O, no async.
+- `zenha-core`: the only crate that may depend on `livekit` and `libwebrtc`. No SDK types in its public API (`Command`, `Event`, `SessionError` and its own types).
+- `zenha-client`: talks to `zenha-core` only through `Command` and `Event` channels; the `egui` UI thread never blocks or does I/O.
+- `zenha-server`: `axum` server that checks invite codes, issues short-lived LiveKit tokens and keeps rooms and saved chat in SQLite.
 - Screen capture sits behind the `FrameSource` trait.
 
 ## Code rules
 
 - No `unwrap`, `expect`, `panic!`, `todo!` or `dbg!` outside tests (clippy lints).
-- `unsafe` is denied; the only exception is `rooms-core`, with `#[expect(unsafe_code)]` and a `SAFETY:` comment.
+- `unsafe` is denied; the only exception is `zenha-core`, with `#[expect(unsafe_code)]` and a `SAFETY:` comment.
 - Errors: `thiserror` in libraries, `anyhow` with `.context(...)` in binaries.
 - Few comments: explain non-obvious invariants, not what the code does.
 - Identifiers and `tracing` logs in English; UI text in Brazilian Portuguese.

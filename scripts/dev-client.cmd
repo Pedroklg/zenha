@@ -5,4 +5,4 @@ cd /d "%~dp0.."
 if not exist dev-logs mkdir dev-logs
 set RUST_LOG=info
 set LOG=dev-logs\client-%RANDOM%.log
-start "zenha client" /min cmd /c "cargo run -p rooms-client -- %* > %LOG% 2>&1"
+start "zenha client" /min cmd /c "cargo run -p zenha-client -- %* > %LOG% 2>&1"

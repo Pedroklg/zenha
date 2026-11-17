@@ -9,7 +9,7 @@ The app targets a small group with voice and screen sharing. In a P2P mesh, the 
 
 ## Decision
 
-Use `livekit-server` as a prebuilt binary and the Rust SDK (`livekit`, `libwebrtc`) in the client, isolated inside the `rooms-core` crate.
+Use `livekit-server` as a prebuilt binary and the Rust SDK (`livekit`, `libwebrtc`) in the client, isolated inside the `zenha-core` crate.
 
 ## Alternatives Considered
 
@@ -21,5 +21,5 @@ Use `livekit-server` as a prebuilt binary and the Rust SDK (`livekit`, `libwebrt
 ## Consequences
 
 - The server is written in Go, but it is only operated, never modified.
-- The client speaks the LiveKit protocol; switching SFUs requires rewriting the networking layer of `rooms-core`.
+- The client speaks the LiveKit protocol; switching SFUs requires rewriting the networking layer of `zenha-core`.
 - The SDK is 0.x and breaks its API frequently: versions are pinned exactly and updated deliberately.

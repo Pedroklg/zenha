@@ -10,22 +10,22 @@ Valem para todas as crates do workspace (`crates/*` e `xtask`).
 
 ## GER-02: Tratamento de erros (`thiserror` em libs, `anyhow` em binários)
 
-- Crates de biblioteca (`rooms-protocol`, `rooms-core`) definem erros tipados com `#[derive(Debug, thiserror::Error)]` (`ValidationError`, `SessionError`, `ChatStoreError`).
-- Binários (`rooms-client`, `rooms-token-server`, `rooms-e2e`) podem usar `anyhow::Result` na borda de inicialização/CLI, sempre com `.context("...")` ou `.with_context(|| ...)` em I/O.
+- Crates de biblioteca (`zenha-protocol`, `zenha-core`) definem erros tipados com `#[derive(Debug, thiserror::Error)]` (`ValidationError`, `SessionError`, `ChatStoreError`).
+- Binários (`zenha-client`, `zenha-server`, `zenha-e2e`) podem usar `anyhow::Result` na borda de inicialização/CLI, sempre com `.context("...")` ou `.with_context(|| ...)` em I/O.
 - Não engula `Result` relevante com `let _ = ...`; descartes intencionais (como canal fechado no desligamento ou `request_repaint`) devem estar óbvios no contexto.
 
-## GER-03: `unsafe` proibido fora de `rooms-core`
+## GER-03: `unsafe` proibido fora de `zenha-core`
 
 - O workspace define `unsafe_code = "deny"` em `[workspace.lints.rust]`.
-- Nenhuma crate fora de `crates/rooms-core` pode conter blocos, funções, traits ou impls `unsafe`.
-- Dentro de `rooms-core`, toda ocorrência exige `#[expect(unsafe_code, reason = "...")]` (nunca `#[allow(unsafe_code)]`) junto de um comentário `// SAFETY:` logo acima do bloco, explicando a invariante garantida (veja `CORE-03` e `crates/rooms-core/src/share_audio.rs`).
+- Nenhuma crate fora de `crates/zenha-core` pode conter blocos, funções, traits ou impls `unsafe`.
+- Dentro de `zenha-core`, toda ocorrência exige `#[expect(unsafe_code, reason = "...")]` (nunca `#[allow(unsafe_code)]`) junto de um comentário `// SAFETY:` logo acima do bloco, explicando a invariante garantida (veja `CORE-03` e `crates/zenha-core/src/audio/share_audio.rs`).
 
 ## GER-04: Idioma de código, logs, docs e interface
 
 - Identificadores (tipos, funções, variáveis, módulos, variantes) sempre em inglês.
 - Logs (`tracing::info!`, `warn!`, `error!`, `debug!`, `trace!`) em inglês, começando em letra minúscula, com campos estruturados antes da mensagem (ex.: `tracing::warn!(room = %name, %err, "room lookup failed")`).
 - Doc-comments (`//!`, `///`) em português do Brasil; comentários de linha internos (`//`) em inglês.
-- Textos visíveis ao usuário na interface (`rooms-client`) e nos relatórios do `rooms-e2e` em português do Brasil.
+- Textos visíveis ao usuário na interface (`zenha-client`) e nos relatórios do `zenha-e2e` em português do Brasil.
 
 ## GER-05: Comentários mínimos e só quando o motivo não é óbvio
 
@@ -35,7 +35,7 @@ Valem para todas as crates do workspace (`crates/*` e `xtask`).
 
 ## GER-06: Segredos nunca em logs, erros ou `Debug` derivado
 
-- Tipos que guardam senhas, códigos de convite, tokens JWT ou chaves da API do LiveKit nunca usam `#[derive(Debug)]`: implementam `fmt::Debug` manualmente omitindo os campos sensíveis (`"<redacted>"` ou `finish_non_exhaustive()`), como em `SessionConfig` (`crates/rooms-core/src/api.rs`) e `Config` (`crates/rooms-token-server/src/config.rs`).
+- Tipos que guardam senhas, códigos de convite, tokens JWT ou chaves da API do LiveKit nunca usam `#[derive(Debug)]`: implementam `fmt::Debug` manualmente omitindo os campos sensíveis (`"<redacted>"` ou `finish_non_exhaustive()`), como em `SessionConfig` (`crates/zenha-core/src/api.rs`) e `Config` (`crates/zenha-server/src/config.rs`).
 - Nenhum `tracing::*!` ou erro HTTP/UI pode interpolar `invite_code`, `livekit_api_secret`, `token` ou `password`.
 
 ## GER-07: Dependências centralizadas em `[workspace.dependencies]`
@@ -62,7 +62,7 @@ Valem para todas as crates do workspace (`crates/*` e `xtask`).
 
 ## GER-11: Constantes nomeadas para limites, tempos e tamanhos
 
-- Timeouts, taxas de amostragem (`48_000`), tamanhos de quadro (`480`), limites de backlog, intervalos de repaint e portas padrão ficam em `const` em `SCREAMING_SNAKE_CASE` no topo do módulo (ou em `rooms-protocol` quando compartilhados).
+- Timeouts, taxas de amostragem (`48_000`), tamanhos de quadro (`480`), limites de backlog, intervalos de repaint e portas padrão ficam em `const` em `SCREAMING_SNAKE_CASE` no topo do módulo (ou em `zenha-protocol` quando compartilhados).
 
 ## GER-12: Tamanho e clareza de funções e módulos
 

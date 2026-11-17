@@ -5,11 +5,11 @@ Regras aplicadas no desenvolvimento e no code review. Cada regra tem um ID está
 | Arquivo | Escopo | IDs |
 |---|---|---|
 | [general.md](general.md) | Todo código Rust do workspace (`crates/*`, `xtask`) | `GER-01` a `GER-12` |
-| [core-media.md](core-media.md) | `crates/rooms-core` (LiveKit, `unsafe`, áudio, vídeo, Tokio) | `CORE-01` a `CORE-12` |
-| [client-ui.md](client-ui.md) | `crates/rooms-client` (`eframe`/`egui`, thread da UI, estado) | `UI-01` a `UI-09` |
-| [protocol.md](protocol.md) | `crates/rooms-protocol` (`serde`, limites, compatibilidade) | `PROTO-01` a `PROTO-05` |
-| [token-server.md](token-server.md) | `crates/rooms-token-server` (`axum`, Argon2, JWT, SQLite) | `SRV-01` a `SRV-08` |
-| [testing.md](testing.md) | Testes unitários, integração e `crates/rooms-e2e` | `TST-01` a `TST-07` |
+| [core-media.md](core-media.md) | `crates/zenha-core` (LiveKit, `unsafe`, áudio, vídeo, Tokio) | `CORE-01` a `CORE-12` |
+| [client-ui.md](client-ui.md) | `crates/zenha-client` (`eframe`/`egui`, thread da UI, estado) | `UI-01` a `UI-09` |
+| [protocol.md](protocol.md) | `crates/zenha-protocol` (`serde`, limites, compatibilidade) | `PROTO-01` a `PROTO-05` |
+| [token-server.md](token-server.md) | `crates/zenha-server` (`axum`, Argon2, JWT, SQLite) | `SRV-01` a `SRV-08` |
+| [testing.md](testing.md) | Testes unitários, integração e `crates/zenha-e2e` | `TST-01` a `TST-07` |
 | [ci-deploy.md](ci-deploy.md) | `.github/workflows/`, `deploy/`, `installer/`, `xtask` | `OPS-01` a `OPS-06` |
 | [code-review.md](code-review.md) | Guia de review: checklist bloqueante e divisão máquina × revisor | — |
 
@@ -17,7 +17,7 @@ Regras aplicadas no desenvolvimento e no code review. Cada regra tem um ID está
 
 - As regras valem para **código novo e código tocado na branch ou task**.
 - Código legado fora do diff não é migrado de carona; ocorrência irmã só entra no review quando faz parte da mesma mudança ou quando a alteração quebrou um contrato compartilhado.
-- Ao tocar um módulo grande já existente (como `crates/rooms-client/src/state/` ou `crates/rooms-core/src/session/`), não agrave o acoplamento e extraia lógica pura nova em funções testáveis, sem exigir reescrita do módulo inteiro.
+- Ao tocar um módulo grande já existente (como `crates/zenha-client/src/state/` ou `crates/zenha-core/src/session/`), não agrave o acoplamento e extraia lógica pura nova em funções testáveis, sem exigir reescrita do módulo inteiro.
 
 ## Severidades
 

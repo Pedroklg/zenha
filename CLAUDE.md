@@ -1,4 +1,4 @@
-# voice-rooms
+# zenha
 
 App desktop Windows em Rust: salas de voz, chat de texto e transmissão de tela para um grupo pequeno de amigos. SFU: `livekit-server` auto-hospedado (binário pronto). Todo o código próprio é Rust.
 
@@ -12,16 +12,16 @@ Plano e tasks: `docs/plan.md`. Arquitetura: `docs/architecture.md`. Decisões: `
 
 ## Regras de arquitetura
 
-- Só `crates/rooms-core` pode depender de `livekit` e `libwebrtc`. Tipos do SDK não aparecem na API pública dela.
-- `rooms-client` nunca importa `livekit`; conversa com `rooms-core` por `Command` (ida) e `Event` (volta), via canais.
-- A thread da interface nunca bloqueia nem faz I/O. Rede e sessão rodam no runtime Tokio da `rooms-core`.
-- `rooms-protocol` só tem tipos `serde`, sem I/O e sem async.
+- Só `crates/zenha-core` pode depender de `livekit` e `libwebrtc`. Tipos do SDK não aparecem na API pública dela.
+- `zenha-client` nunca importa `livekit`; conversa com `zenha-core` por `Command` (ida) e `Event` (volta), via canais.
+- A thread da interface nunca bloqueia nem faz I/O. Rede e sessão rodam no runtime Tokio da `zenha-core`.
+- `zenha-protocol` só tem tipos `serde`, sem I/O e sem async.
 - Captura de tela fica atrás do trait `FrameSource`, para trocar o capturador sem mexer no resto.
 
 ## Regras de código
 
 - Sem `unwrap`, `expect`, `panic!`, `todo!` ou `dbg!` fora de testes (lint).
-- `unsafe` negado por lint; exceção só em `rooms-core`, com `#[expect(unsafe_code)]` e comentário `SAFETY:`.
+- `unsafe` negado por lint; exceção só em `zenha-core`, com `#[expect(unsafe_code)]` e comentário `SAFETY:`.
 - Erros: `thiserror` em libs, `anyhow` com `.context(...)` em binários.
 - Código sem comentários; no máximo um comentário curto em trecho não trivial.
 - Identificadores e logs em inglês; docs e texto de interface em português.

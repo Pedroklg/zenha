@@ -9,7 +9,7 @@ Complementa [general.md](general.md). Escopo: `.github/workflows/`, `deploy/`, `
 
 ## OPS-02: Dockerfile reproduzível (`--locked`) e sem privilégio de root
 
-- `deploy/Dockerfile` compila `rooms-token-server` com `cargo build --release --locked --package rooms-token-server` na mesma versão do compilador definida em `rust-toolchain.toml`.
+- `deploy/Dockerfile` compila `zenha-server` com `cargo build --release --locked --package zenha-server` na mesma versão do compilador definida em `rust-toolchain.toml`.
 - A imagem final (`debian:stable-slim`) instala apenas `ca-certificates` com `--no-install-recommends`, cria usuário sem privilégio `zenha:zenha` (`10001:10001`, `/usr/sbin/nologin`), ajusta `/var/lib/zenha` e executa sob `USER zenha:zenha`.
 
 ## OPS-03: Imagens fixadas e segredos restritos à VM no deploy
@@ -21,7 +21,7 @@ Complementa [general.md](general.md). Escopo: `.github/workflows/`, `deploy/`, `
 ## OPS-04: Segurança de rede e infraestrutura (`deploy/infra/`)
 
 - Na lista de portas de `deploy/infra/modules/host` (usada por todos os provedores), apenas as portas estritamente necessárias (`80/TCP`, `443/TCP`, `7881/TCP`, `7882/UDP`) ficam abertas para a internet; SSH (`22/TCP`) permanece fechado por padrão (`ssh_allowed_cidr = ""`).
-- `rooms-token-server` e a porta HTTP interna do `livekit-server` escutam apenas em loopback na VM, expostos externamente exclusivamente via TLS no Caddy.
+- `zenha-server` e a porta HTTP interna do `livekit-server` escutam apenas em loopback na VM, expostos externamente exclusivamente via TLS no Caddy.
 
 ## OPS-05: Release validada antes de empacotar
 

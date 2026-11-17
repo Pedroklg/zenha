@@ -29,11 +29,11 @@ Cada `error`/`warning` dessas saídas em arquivo ou linha do diff entra na lista
 
 1. Leia `docs/standards/README.md`, `docs/standards/code-review.md` e `docs/standards/general.md`.
 2. Leia o arquivo de regras de cada área tocada:
-   - `crates/rooms-core/` → `docs/standards/core-media.md`
-   - `crates/rooms-client/` → `docs/standards/client-ui.md`
-   - `crates/rooms-protocol/` → `docs/standards/protocol.md`
-   - `crates/rooms-token-server/` → `docs/standards/token-server.md`
-   - `crates/rooms-e2e/` e testes → `docs/standards/testing.md`
+   - `crates/zenha-core/` → `docs/standards/core-media.md`
+   - `crates/zenha-client/` → `docs/standards/client-ui.md`
+   - `crates/zenha-protocol/` → `docs/standards/protocol.md`
+   - `crates/zenha-server/` → `docs/standards/token-server.md`
+   - `crates/zenha-e2e/` e testes → `docs/standards/testing.md`
    - `deploy/`, `.github/`, `installer/`, `xtask/`, `Cargo.toml`, `deny.toml` → `docs/standards/ci-deploy.md`
 3. Leia a função inteira em volta de cada hunk e, quando preciso, quem chama, os testes do módulo e os pontos de ligação de `Command`/`Event` (`CORE-12`).
 4. Passe pelo checklist de bloqueantes de `docs/standards/code-review.md`.

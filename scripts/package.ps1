@@ -8,14 +8,14 @@ if ($LASTEXITCODE -ne 0) {
     throw "cargo metadata falhou com codigo $LASTEXITCODE"
 }
 $meta = ($metaRaw -join "`n") | ConvertFrom-Json
-$pkg = $meta.packages | Where-Object { $_.name -eq 'rooms-client' } | Select-Object -First 1
+$pkg = $meta.packages | Where-Object { $_.name -eq 'zenha-client' } | Select-Object -First 1
 if (-not $pkg -or [string]::IsNullOrWhiteSpace($pkg.version)) {
-    throw 'Nao foi possivel obter a versao de rooms-client via cargo metadata'
+    throw 'Nao foi possivel obter a versao de zenha-client via cargo metadata'
 }
 $version = $pkg.version
 
 Write-Host "==> Compilando release do Zenha ($version)"
-cargo build --release -p rooms-client
+cargo build --release -p zenha-client
 if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
 }

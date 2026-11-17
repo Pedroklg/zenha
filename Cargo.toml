@@ -12,8 +12,8 @@ license = "MIT OR Apache-2.0"
 publish = false
 
 [workspace.dependencies]
-rooms-protocol = { path = "crates/rooms-protocol" }
-rooms-core = { path = "crates/rooms-core" }
+zenha-protocol = { path = "crates/zenha-protocol" }
+zenha-core = { path = "crates/zenha-core" }
 
 anyhow = "1.0"
 argon2 = "=0.6.0"

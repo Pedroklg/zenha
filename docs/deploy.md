@@ -1,6 +1,6 @@
 # Deploying the server
 
-This guide runs `livekit-server`, `rooms-token-server` and Caddy on one Azure Linux VM, provisioned with OpenTofu, with DNS on Cloudflare and updates through GitHub Actions. A Hetzner Cloud stack is in [`deploy/infra/hetzner/`](../deploy/infra/hetzner/).
+This guide runs `livekit-server`, `zenha-server` and Caddy on one Azure Linux VM, provisioned with OpenTofu, with DNS on Cloudflare and updates through GitHub Actions. A Hetzner Cloud stack is in [`deploy/infra/hetzner/`](../deploy/infra/hetzner/).
 
 Commands are bash (Git Bash or WSL on Windows) unless marked PowerShell. In Git Bash, set `MSYS_NO_PATHCONV=1` so Azure resource IDs such as `/subscriptions/...` are not rewritten as Windows paths. Replace `voice.example.com`, `rtc.voice.example.com`, `<owner>` and `<public-ip>` with your values.
 
@@ -40,7 +40,7 @@ flowchart LR
 
 - **VM**: `Standard_B2ats_v2` (2 vCPU, 1 GiB), Ubuntu 24.04 LTS, 30 GiB Standard SSD, static Standard public IPv4, region `chilecentral` by default.
 - **Containers** ([`deploy/docker-compose.yml`](../deploy/docker-compose.yml), host networking): `livekit/livekit-server:v1.13.11`, `ghcr.io/<owner>/zenha-token-server:<tag>`, `caddy:2.11.9-alpine`. Caddy serves `TOKEN_DOMAIN` from `127.0.0.1:8787` and `RTC_DOMAIN` from `127.0.0.1:7880`.
-- **Secrets**: the LiveKit key and secret and the Argon2 hashes (`ROOMS_INVITE_CODE_HASH`, optional `ROOMS_ADMIN_CODE_HASH`) exist only on the VM, in `/opt/zenha/.env` and `/opt/zenha/livekit.yaml` (mode `0600`). CI only changes `ZENHA_IMAGE` and restarts the stack.
+- **Secrets**: the LiveKit key and secret and the Argon2 hashes (`ZENHA_INVITE_CODE_HASH`, optional `ZENHA_ADMIN_CODE_HASH`) exist only on the VM, in `/opt/zenha/.env` and `/opt/zenha/livekit.yaml` (mode `0600`). CI only changes `ZENHA_IMAGE` and restarts the stack.
 - **Inbound ports** (NSG):
 
 | Port | Use |
@@ -113,14 +113,14 @@ nslookup rtc.voice.example.com 1.1.1.1
 
 ## 4. Bootstrap the server
 
-[`deploy/setup-server.sh`](../deploy/setup-server.sh) runs once as root on the VM and is safe to rerun. It installs `docker-compose.yml` and `Caddyfile` into `/opt/zenha`, generates the LiveKit key pair (or keeps the existing one), takes the Argon2 hashes (or hashes plaintext passwords with `rooms-token-server hash-password`), writes `/opt/zenha/livekit.yaml` and `/opt/zenha/.env` with mode `0600`, runs `docker compose pull && docker compose up -d` and checks `http://127.0.0.1:8787/health`.
+[`deploy/setup-server.sh`](../deploy/setup-server.sh) runs once as root on the VM and is safe to rerun. It installs `docker-compose.yml` and `Caddyfile` into `/opt/zenha`, generates the LiveKit key pair (or keeps the existing one), takes the Argon2 hashes (or hashes plaintext passwords with `zenha-server hash-password`), writes `/opt/zenha/livekit.yaml` and `/opt/zenha/.env` with mode `0600`, runs `docker compose pull && docker compose up -d` and checks `http://127.0.0.1:8787/health`.
 
 Generate the hashes on your PC so plaintext passwords never reach Azure logs:
 
 ```bash
-echo "your-invite-password" | cargo run --quiet -p rooms-token-server -- hash-password
+echo "your-invite-password" | cargo run --quiet -p zenha-server -- hash-password
 # Optional; without it /admin/* returns 404:
-echo "your-admin-password"  | cargo run --quiet -p rooms-token-server -- hash-password
+echo "your-admin-password"  | cargo run --quiet -p zenha-server -- hash-password
 ```
 
 **Without SSH.** `run-command` does not pass `KEY=value` arguments, so prepend the settings to a copy of the script. Keep the shebang on line 1: without it the script runs under `sh`, which rejects `set -o pipefail`.
@@ -131,9 +131,9 @@ echo "your-admin-password"  | cargo run --quiet -p rooms-token-server -- hash-pa
   echo "export TOKEN_DOMAIN='voice.example.com'"
   echo "export RTC_DOMAIN='rtc.voice.example.com'"
   echo "export ZENHA_IMAGE='ghcr.io/<owner>/zenha-token-server:v0.1.0'"
-  echo 'export ROOMS_INVITE_CODE_HASH='\''$argon2id$v=19$m=19456,t=2,p=1$...'\'
+  echo 'export ZENHA_INVITE_CODE_HASH='\''$argon2id$v=19$m=19456,t=2,p=1$...'\'
   # Optional: enable /admin/*
-  echo 'export ROOMS_ADMIN_CODE_HASH='\''$argon2id$v=19$m=19456,t=2,p=1$...'\'
+  echo 'export ZENHA_ADMIN_CODE_HASH='\''$argon2id$v=19$m=19456,t=2,p=1$...'\'
   # Optional: pin the public IP instead of STUN discovery
   # echo "export NODE_IP='<public-ip>'"
   tail -n +2 deploy/setup-server.sh
@@ -155,7 +155,7 @@ ssh -i ~/.ssh/zenha_azure azureuser@<public-ip> \
   "sudo TOKEN_DOMAIN=voice.example.com RTC_DOMAIN=rtc.voice.example.com ZENHA_IMAGE=ghcr.io/<owner>/zenha-token-server:v0.1.0 bash /tmp/setup-server.sh"
 ```
 
-Run in a terminal without `ROOMS_INVITE_CODE_HASH`, the script asks silently for the hash or the plaintext invite password.
+Run in a terminal without `ZENHA_INVITE_CODE_HASH`, the script asks silently for the hash or the plaintext invite password.
 
 ## 5. GitHub Actions deploy (OIDC)
 
@@ -283,7 +283,7 @@ az vm run-command invoke --resource-group zenha-rg --name zenha-vm \
 
 ### Saved chat database
 
-The token server keeps saved messages, rooms (seeded once from `ROOMS_ROOM_LIST`) and the rotated invite hash in SQLite (WAL mode) at `ROOMS_CHAT_DB`. In production that is `/var/lib/zenha/chat.db` on the Compose volume `zenha_zenha_data`.
+The token server keeps saved messages, rooms (seeded once from `ZENHA_ROOM_LIST`) and the rotated invite hash in SQLite (WAL mode) at `ZENHA_CHAT_DB`. In production that is `/var/lib/zenha/chat.db` on the Compose volume `zenha_zenha_data`.
 
 - Messages and room titles are stored in **plaintext** with **no expiry**. Unsaved messages never reach the server. Senders delete their own messages with `DELETE /rooms/{room}/chat/{id}`; admins can delete any with `DELETE /admin/rooms/{room}/chat/{id}`.
 - Backup to your PC: `scripts\server.cmd backup` (uses `~/.ssh/zenha_azure`, starts the VM if needed, opens SSH to your IP only during the copy, saves to `backups\`). Or back up on the VM while it runs (check the volume name with `docker volume ls`):
@@ -292,7 +292,7 @@ The token server keeps saved messages, rooms (seeded once from `ROOMS_ROOM_LIST`
   docker run --rm -v zenha_zenha_data:/data -v /opt/zenha/backups:/backup alpine \
     sh -c 'apk add --no-cache sqlite >/dev/null && sqlite3 /data/chat.db ".backup /backup/chat-$(date -u +%Y%m%dT%H%M%SZ).db"'
   ```
-- Reset: deletes all saved messages, custom rooms (they reseed from `ROOMS_ROOM_LIST`) and the rotated invite code (back to `ROOMS_INVITE_CODE_HASH`):
+- Reset: deletes all saved messages, custom rooms (they reseed from `ZENHA_ROOM_LIST`) and the rotated invite code (back to `ZENHA_INVITE_CODE_HASH`):
   ```bash
   cd /opt/zenha
   docker compose stop token-server
@@ -302,20 +302,20 @@ The token server keeps saved messages, rooms (seeded once from `ROOMS_ROOM_LIST`
 
 ### Admin
 
-Admin routes are off by default: without `ROOMS_ADMIN_CODE_HASH`, every `/admin/*` route returns `404`.
+Admin routes are off by default: without `ZENHA_ADMIN_CODE_HASH`, every `/admin/*` route returns `404`.
 
 To set or rotate the admin password:
 
-1. Hash it with `echo "password" | cargo run --quiet -p rooms-token-server -- hash-password`, or on the VM with `docker run --rm -i "$ZENHA_IMAGE" hash-password`.
-2. Set `ROOMS_ADMIN_CODE_HASH='$argon2id$...'` in `/opt/zenha/.env` (single quotes, so `$` is not expanded), or rerun `setup-server.sh` with `ADMIN_PASSWORD=...` or `ROOMS_ADMIN_CODE_HASH=...`.
+1. Hash it with `echo "password" | cargo run --quiet -p zenha-server -- hash-password`, or on the VM with `docker run --rm -i "$ZENHA_IMAGE" hash-password`.
+2. Set `ZENHA_ADMIN_CODE_HASH='$argon2id$...'` in `/opt/zenha/.env` (single quotes, so `$` is not expanded), or rerun `setup-server.sh` with `ADMIN_PASSWORD=...` or `ZENHA_ADMIN_CODE_HASH=...`.
 3. Restart: `cd /opt/zenha && docker compose up -d token-server`.
 
-`POST /admin/login` returns an admin JWT (lifetime `ROOMS_TOKEN_TTL_SECS`) with no LiveKit media grants. Failed logins are delayed and rate-limited per `client_id` and per client IP (`X-Forwarded-For` from Caddy). With `Authorization: Bearer <admin_token>` an admin can:
+`POST /admin/login` returns an admin JWT (lifetime `ZENHA_TOKEN_TTL_SECS`) with no LiveKit media grants. Failed logins are delayed and rate-limited per `client_id` and per client IP (`X-Forwarded-For` from Caddy). With `Authorization: Bearer <admin_token>` an admin can:
 
 - Create (up to 50), rename, reorder and delete rooms, and set a room's password or parent room: `POST /admin/rooms`, `PATCH` and `DELETE /admin/rooms/{id}`. The last room cannot be deleted; deleting a room removes its LiveKit room and saved chat. Clients get `rooms.changed`.
 - Moderate a participant: `POST /admin/rooms/{room}/participants/{identity}/` `mute`, `stop-share` (mutes the share and sends `admin.stop_share`), `kick` or `move` (sends `admin.move` to the client, since LiveKit's `MoveParticipant` is Cloud-only).
 - Delete any saved message: `DELETE /admin/rooms/{room}/chat/{id}` (broadcasts `admin.chat_delete`).
-- Rotate the invite code: `POST /admin/invite` (8 to 128 characters). The new Argon2 hash is stored in `chat.db` and overrides `ROOMS_INVITE_CODE_HASH`, also across restarts.
+- Rotate the invite code: `POST /admin/invite` (8 to 128 characters). The new Argon2 hash is stored in `chat.db` and overrides `ZENHA_INVITE_CODE_HASH`, also across restarts.
 
 ## 9. Costs
 

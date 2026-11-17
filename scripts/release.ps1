@@ -17,7 +17,7 @@ if ((git rev-parse --abbrev-ref HEAD) -ne 'main') { throw 'Rode a partir da bran
 if (git status --porcelain --untracked-files=no) { throw 'Ha mudancas nao commitadas' }
 
 $meta = (cargo metadata --no-deps --format-version 1) -join "`n" | ConvertFrom-Json
-$current = ($meta.packages | Where-Object { $_.name -eq 'rooms-client' }).version
+$current = ($meta.packages | Where-Object { $_.name -eq 'zenha-client' }).version
 if ($current -ne $Version) {
     $branch = "release/$tag"
     Invoke-Step "branch $branch" { git switch -q -c $branch }
@@ -35,7 +35,7 @@ if ($current -ne $Version) {
     Invoke-Step 'merge bump' { git merge --no-ff -q $branch -m "Merge branch '$branch'" }
     Invoke-Step 'delete branch' { git branch -q -d $branch }
     $meta = (cargo metadata --no-deps --format-version 1) -join "`n" | ConvertFrom-Json
-    $current = ($meta.packages | Where-Object { $_.name -eq 'rooms-client' }).version
+    $current = ($meta.packages | Where-Object { $_.name -eq 'zenha-client' }).version
     if ($current -ne $Version) { throw "Falha ao subir a versao: Cargo.toml esta em $current" }
 }
 

@@ -8,21 +8,21 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 use std::time::Instant;
 
-const CORE_DIR: &str = "crates/rooms-core/";
-const PROTOCOL_DIR: &str = "crates/rooms-protocol/";
-const SERVER_DIR: &str = "crates/rooms-token-server/src/";
-const CORE_API: &str = "crates/rooms-core/src/api.rs";
+const CORE_DIR: &str = "crates/zenha-core/";
+const PROTOCOL_DIR: &str = "crates/zenha-protocol/";
+const SERVER_DIR: &str = "crates/zenha-server/src/";
+const CORE_API: &str = "crates/zenha-core/src/api.rs";
 const SDK_CRATES: &[&str] = &["livekit", "libwebrtc"];
 const EXACT_PINS: &[&str] = &["livekit", "livekit-api", "libwebrtc"];
 const PROTOCOL_DEPS: &[&str] = &["serde", "thiserror"];
 const PROTOCOL_FORBIDDEN: &[&str] = &["async fn", "tokio", "std::fs", "std::net"];
 const CORE_PUBLIC_FILES: &[&str] = &[
-    "crates/rooms-core/src/lib.rs",
-    "crates/rooms-core/src/api.rs",
-    "crates/rooms-core/src/backend.rs",
-    "crates/rooms-core/src/handle.rs",
-    "crates/rooms-core/src/video.rs",
-    "crates/rooms-core/src/capture.rs",
+    "crates/zenha-core/src/lib.rs",
+    "crates/zenha-core/src/api.rs",
+    "crates/zenha-core/src/backend/mod.rs",
+    "crates/zenha-core/src/handle.rs",
+    "crates/zenha-core/src/video/mod.rs",
+    "crates/zenha-core/src/video/capture.rs",
 ];
 const SECRET_FIELDS: &[&str] = &[
     "api_secret",
@@ -46,13 +46,12 @@ const SQL_MARKERS: &[&str] = &[
 ];
 const TRACING_MACROS: &[&str] = &["trace!(", "debug!(", "info!(", "warn!(", "error!("];
 const CORE_12_BINDINGS: &[&str] = &[
-    "crates/rooms-core/src/backend.rs",
-    "crates/rooms-core/src/session.rs",
-    "crates/rooms-core/src/testing.rs",
-    "crates/rooms-core/src/no_media.rs",
-    "crates/rooms-core/src/livekit_backend.rs",
-    "crates/rooms-client/src/",
-    "crates/rooms-e2e/src/protocol.rs",
+    "crates/zenha-core/src/backend/",
+    "crates/zenha-core/src/session/",
+    "crates/zenha-core/src/testing/",
+    "crates/zenha-core/src/livekit_backend/",
+    "crates/zenha-client/src/",
+    "crates/zenha-e2e/src/protocol/",
 ];
 
 struct Finding {
@@ -291,7 +290,7 @@ fn sdk_outside_core(src: &Source, out: &mut Vec<Finding>) {
                     &src.path,
                     line,
                     "CORE-01",
-                    format!("só rooms-core pode depender de `{name}`; leve o uso para rooms-core e exponha um `Command`/`Event`"),
+                    format!("só zenha-core pode depender de `{name}`; leve o uso para zenha-core e exponha um `Command`/`Event`"),
                 ));
             }
         }
@@ -303,7 +302,7 @@ fn sdk_outside_core(src: &Source, out: &mut Vec<Finding>) {
                 &src.path,
                 line,
                 "CORE-01",
-                format!("`{sdk}` usado fora de rooms-core; mova o código para rooms-core e fale com ela por `Command`/`Event`"),
+                format!("`{sdk}` usado fora de zenha-core; mova o código para zenha-core e fale com ela por `Command`/`Event`"),
             ));
         }
     }
@@ -322,7 +321,7 @@ fn sdk_in_core_public_api(src: &Source, out: &mut Vec<Finding>) {
                 &src.path,
                 line,
                 "CORE-01",
-                format!("item público de rooms-core expõe tipo de `{sdk}`; troque por um tipo próprio da crate ou deixe o item `pub(crate)`"),
+                format!("item público de zenha-core expõe tipo de `{sdk}`; troque por um tipo próprio da crate ou deixe o item `pub(crate)`"),
             ));
         }
     }
@@ -339,7 +338,7 @@ fn protocol_purity(src: &Source, out: &mut Vec<Finding>) {
                     &src.path,
                     line,
                     "PROTO-01",
-                    format!("rooms-protocol só depende de serde e thiserror; remova `{name}` ou mova a lógica para quem usa o protocolo"),
+                    format!("zenha-protocol só depende de serde e thiserror; remova `{name}` ou mova a lógica para quem usa o protocolo"),
                 ));
             }
         }
@@ -354,7 +353,7 @@ fn protocol_purity(src: &Source, out: &mut Vec<Finding>) {
                 &src.path,
                 line,
                 "PROTO-01",
-                format!("rooms-protocol não faz I/O nem async (`{token}`); deixe só tipos serde e validação pura"),
+                format!("zenha-protocol não faz I/O nem async (`{token}`); deixe só tipos serde e validação pura"),
             ));
         }
     }
@@ -410,7 +409,7 @@ fn unsafe_outside_core(src: &Source, out: &mut Vec<Finding>) {
                 &src.path,
                 line,
                 "GER-03",
-                "liberação de `unsafe` fora de rooms-core; reescreva sem unsafe ou mova o trecho para rooms-core com `#[expect(..)]` e `// SAFETY:`",
+                "liberação de `unsafe` fora de zenha-core; reescreva sem unsafe ou mova o trecho para zenha-core com `#[expect(..)]` e `// SAFETY:`",
             ));
         }
     }
@@ -682,13 +681,13 @@ mod tests {
     fn sdk_outside_core_skips_core_comments_and_tests() {
         let client = "use livekit::Room;\n// livekit::x\n#[cfg(test)]\nuse livekit::y;\n";
         assert_eq!(
-            rules(sdk_outside_core, "crates/rooms-client/src/a.rs", client),
+            rules(sdk_outside_core, "crates/zenha-client/src/a.rs", client),
             [1]
         );
-        assert!(rules(sdk_outside_core, "crates/rooms-core/src/a.rs", client).is_empty());
+        assert!(rules(sdk_outside_core, "crates/zenha-core/src/a.rs", client).is_empty());
         let manifest = "[dependencies]\nlivekit.workspace = true\nlivekit-api.workspace = true\n";
         assert_eq!(
-            rules(sdk_outside_core, "crates/rooms-e2e/Cargo.toml", manifest),
+            rules(sdk_outside_core, "crates/zenha-e2e/Cargo.toml", manifest),
             [2]
         );
     }
@@ -705,23 +704,23 @@ mod tests {
         assert_eq!(
             rules(
                 protocol_purity,
-                "crates/rooms-protocol/Cargo.toml",
+                "crates/zenha-protocol/Cargo.toml",
                 manifest
             ),
             [4]
         );
         let code = "pub struct A;\npub async fn b() {}\n";
         assert_eq!(
-            rules(protocol_purity, "crates/rooms-protocol/src/lib.rs", code),
+            rules(protocol_purity, "crates/zenha-protocol/src/lib.rs", code),
             [2]
         );
     }
 
     #[test]
     fn crate_deps_must_come_from_the_workspace() {
-        let manifest = "[package]\nname = \"x\"\n[target.'cfg(windows)'.dependencies]\nrfd = { version = \"0.15\" }\nkeyring.workspace = true\nrooms-core = { workspace = true, features = [\"test-util\"] }\n";
+        let manifest = "[package]\nname = \"x\"\n[target.'cfg(windows)'.dependencies]\nrfd = { version = \"0.15\" }\nkeyring.workspace = true\nzenha-core = { workspace = true, features = [\"test-util\"] }\n";
         assert_eq!(
-            rules(workspace_deps, "crates/rooms-client/Cargo.toml", manifest),
+            rules(workspace_deps, "crates/zenha-client/Cargo.toml", manifest),
             [4]
         );
         let root = "[workspace.dependencies]\nlivekit = { version = \"0.10.1\" }\nlivekit-api = { version = \"=0.10.1\" }\n";
@@ -732,18 +731,14 @@ mod tests {
     fn unsafe_attributes_are_only_allowed_in_core() {
         let code = "#[expect(\n    unsafe_code,\n    reason = \"ffi\"\n)]\n#[allow(unsafe_code)]\nlet m = \"unsafe_code\";\n";
         assert_eq!(rules(unsafe_outside_core, "xtask/src/a.rs", code), [2, 5]);
-        assert!(rules(unsafe_outside_core, "crates/rooms-core/src/a.rs", code).is_empty());
+        assert!(rules(unsafe_outside_core, "crates/zenha-core/src/a.rs", code).is_empty());
     }
 
     #[test]
     fn derived_debug_with_secret_field_is_flagged() {
         let code = "#[derive(Debug, Clone)]\npub struct Config {\n    pub bind: String,\n    pub livekit_api_secret: String,\n}\n#[derive(Clone)]\npub struct Safe {\n    api_secret: String,\n}\n#[derive(Debug)]\npub struct Login {\n    pub invite_code: String,\n}\n#[derive(Debug)]\npub struct Invite {\n    pub password: String,\n}\n#[derive(Debug)]\npub struct Resp {\n    pub token: String,\n}\n";
         assert_eq!(
-            rules(
-                debug_secrets,
-                "crates/rooms-token-server/src/config.rs",
-                code
-            ),
+            rules(debug_secrets, "crates/zenha-server/src/config.rs", code),
             [1, 10, 14, 18]
         );
     }
@@ -752,17 +747,13 @@ mod tests {
     fn sql_and_deploy_and_ignore_rules() {
         let sql = "let q = format!(\"SELECT * FROM {t}\");\nlet id = format!(\"msg-{i}\");\n";
         assert_eq!(
-            rules(
-                sql_format,
-                "crates/rooms-token-server/src/chat_store.rs",
-                sql
-            ),
+            rules(sql_format, "crates/zenha-server/src/store/rooms.rs", sql),
             [1]
         );
         let compose = "image: caddy:2.11.9-alpine\nimage: livekit/livekit-server:latest\n";
         assert_eq!(rules(latest_tag, "deploy/docker-compose.yml", compose), [2]);
         let test = "#[test]\n#[ignore]\nfn a() {}\n#[ignore = \"needs hardware\"]\nfn b() {}\n";
-        assert_eq!(rules(bare_ignore, "crates/rooms-e2e/src/a.rs", test), [2]);
+        assert_eq!(rules(bare_ignore, "crates/zenha-e2e/src/a.rs", test), [2]);
     }
 
     #[test]
@@ -784,16 +775,16 @@ mod tests {
     #[test]
     fn core_12_lists_untouched_bindings_when_enums_change() {
         let api = "pub struct A;\npub enum Command {\n    Join,\n    Leave,\n}\npub enum Event {\n    Joined,\n}\n";
-        let others = "diff --git a/crates/rooms-core/src/session.rs b/crates/rooms-core/src/session.rs\n@@ -9 +9 @@\ndiff --git a/crates/rooms-client/src/state.rs b/crates/rooms-client/src/state.rs\n@@ -1,0 +2 @@\n";
-        let api_head = "diff --git a/crates/rooms-core/src/api.rs b/crates/rooms-core/src/api.rs\n";
+        let others = "diff --git a/crates/zenha-core/src/session/mod.rs b/crates/zenha-core/src/session/mod.rs\n@@ -9 +9 @@\ndiff --git a/crates/zenha-client/src/state.rs b/crates/zenha-client/src/state.rs\n@@ -1,0 +2 @@\n";
+        let api_head = "diff --git a/crates/zenha-core/src/api.rs b/crates/zenha-core/src/api.rs\n";
         let in_command =
             format!("{api_head}@@ -3,0 +4 @@ pub enum Command {{\n+    Mute,\n{others}");
         let outside = format!("{api_head}@@ -1 +1 @@\n-pub struct A;\n+pub struct B;\n{others}");
         let (line, missing) = core_12_missing(&in_command, api).unwrap_or_default();
         assert_eq!(line, 2);
-        assert!(!missing.contains(&"crates/rooms-core/src/session.rs"));
-        assert!(!missing.contains(&"crates/rooms-client/src/"));
-        assert!(missing.contains(&"crates/rooms-e2e/src/protocol.rs"));
+        assert!(!missing.contains(&"crates/zenha-core/src/session/"));
+        assert!(!missing.contains(&"crates/zenha-client/src/"));
+        assert!(missing.contains(&"crates/zenha-e2e/src/protocol/"));
         assert_eq!(core_12_missing(&outside, api), None);
         assert_eq!(core_12_missing(others, api), None);
     }
