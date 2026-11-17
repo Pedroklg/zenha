@@ -49,7 +49,7 @@ const CORE_12_BINDINGS: &[&str] = &[
     "crates/zenha-core/src/backend/",
     "crates/zenha-core/src/session/",
     "crates/zenha-core/src/testing/",
-    "crates/zenha-core/src/livekit/",
+    "crates/zenha-core/src/livekit_backend/",
     "crates/zenha-client/src/",
     "crates/zenha-e2e/src/protocol/",
 ];

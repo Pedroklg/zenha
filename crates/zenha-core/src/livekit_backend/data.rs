@@ -6,7 +6,7 @@ use livekit::prelude::DataPacket;
 use zenha_protocol::AVATAR_ATTR;
 
 use crate::api::{FileTransfer, SessionError};
-use crate::livekit::files;
+use crate::livekit_backend::files;
 
 use super::LiveKitBackend;
 

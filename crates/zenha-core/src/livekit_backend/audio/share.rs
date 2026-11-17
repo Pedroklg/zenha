@@ -12,22 +12,22 @@ use tokio::sync::mpsc;
 use crate::audio::share_audio::{
     AudioScope, SHARE_AUDIO_CHANNELS, SHARE_AUDIO_SAMPLE_RATE, ShareAudioCapture,
 };
-use crate::livekit::TaskGuard;
+use crate::livekit_backend::TaskGuard;
 
 const SHARE_AUDIO_TRACK_NAME: &str = "screen-audio";
 const SHARE_AUDIO_QUEUE_MS: u32 = 100;
 const SHARE_AUDIO_BACKLOG_FRAMES: usize = 20;
 
 /// Sound published along with the local screen share.
-pub(in crate::livekit) struct ShareAudio {
+pub(in crate::livekit_backend) struct ShareAudio {
     room: Arc<Room>,
-    pub(in crate::livekit) sid: Arc<StdMutex<TrackSid>>,
+    pub(in crate::livekit_backend) sid: Arc<StdMutex<TrackSid>>,
     _pump: TaskGuard,
     _capture: ShareAudioCapture,
 }
 
 /// Publishes the sound of `scope` as the audio of the screen share.
-pub(in crate::livekit) async fn publish_share_audio(
+pub(in crate::livekit_backend) async fn publish_share_audio(
     room: Arc<Room>,
     scope: AudioScope,
 ) -> Option<ShareAudio> {
@@ -87,7 +87,7 @@ pub(in crate::livekit) async fn publish_share_audio(
     })
 }
 
-pub(in crate::livekit) async fn stop_share_audio(audio: ShareAudio) {
+pub(in crate::livekit_backend) async fn stop_share_audio(audio: ShareAudio) {
     let ShareAudio { room, sid, .. } = audio;
     let sid = sid
         .lock()

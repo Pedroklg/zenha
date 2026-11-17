@@ -27,7 +27,7 @@ use crate::backend::options::LiveKitBackendOptions;
 use crate::backend::support::GATE_OFF;
 use crate::backend::{ConnectedRoom, MediaBackend};
 use crate::files::receive::FileReceiver;
-use crate::livekit::video::{LocalShare, Watch};
+use crate::livekit_backend::video::{LocalShare, Watch};
 use crate::video::{CaptureTarget, FrameSlot, SharePreset, VideoFrame};
 
 use self::audio::{Selection, ShareAudio};

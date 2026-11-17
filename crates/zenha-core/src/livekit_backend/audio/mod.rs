@@ -14,8 +14,8 @@ use livekit::webrtc::audio_stream::native::NativeAudioStream;
 use crate::api::{AudioDevices, NoiseSuppression, SessionError};
 use crate::audio::mic_capture::MicCapture;
 use crate::audio::participant_volume::volume_gain;
-use crate::livekit::room::{apply_microphone_mute, apply_participant_volume, blocking};
-use crate::livekit::{LiveKitBackend, TaskGuard};
+use crate::livekit_backend::room::{apply_microphone_mute, apply_participant_volume, blocking};
+use crate::livekit_backend::{LiveKitBackend, TaskGuard};
 
 use devices::{apply_input, apply_output, input_devices, output_devices, processing_for};
 pub(super) use devices::{apply_selection, open_audio};

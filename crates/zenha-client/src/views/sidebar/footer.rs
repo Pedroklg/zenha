@@ -143,10 +143,7 @@ struct FooterStatus {
     tooltip: String,
 }
 
-fn footer_status(
-    connection: Option<ConnectionStatus>,
-    ptt_hint: Option<&str>,
-) -> FooterStatus {
+fn footer_status(connection: Option<ConnectionStatus>, ptt_hint: Option<&str>) -> FooterStatus {
     match connection {
         None => FooterStatus {
             color: theme::INACTIVE_DOT,

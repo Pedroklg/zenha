@@ -17,8 +17,8 @@ use crate::backend::BackendEvent;
 use crate::backend::support::{SpeakingTracker, display_name};
 use crate::files::FILE_TOPIC;
 use crate::files::receive::FileReceiver;
-use crate::livekit::files;
-use crate::livekit::video::Watch;
+use crate::livekit_backend::files;
+use crate::livekit_backend::video::Watch;
 
 use super::Flags;
 use super::audio::audio_tap;

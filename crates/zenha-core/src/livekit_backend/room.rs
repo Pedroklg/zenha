@@ -21,7 +21,7 @@ use crate::backend::options::{
 };
 use crate::backend::support::{display_name, sanitize_error};
 use crate::backend::{BackendEvent, ConnectedRoom, MediaBackend};
-use crate::livekit::video::{self, DesktopCaptureSource};
+use crate::livekit_backend::video::{self, DesktopCaptureSource};
 use crate::video::capture::{FrameSource, TestPatternSource};
 use crate::video::{CaptureTarget, FrameSlot, SharePreset, VideoFrame};
 

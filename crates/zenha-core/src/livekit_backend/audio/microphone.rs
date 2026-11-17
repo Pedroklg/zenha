@@ -24,7 +24,7 @@ use crate::backend::options::{TONE_FRAME_SAMPLES, TONE_SAMPLE_RATE, ToneGenerato
 use crate::backend::support::{
     LevelMeter, LocalSpeech, SPEAKING_AUDIO_LEVEL, enhanced_voice, gate_threshold,
 };
-use crate::livekit::{Flags, TaskGuard};
+use crate::livekit_backend::{Flags, TaskGuard};
 
 const MICROPHONE_TRACK_NAME: &str = "microphone";
 const TONE_QUEUE_MS: u32 = 100;
@@ -32,7 +32,7 @@ const ENHANCED_QUEUE_MS: u32 = 60;
 const ENHANCED_BACKLOG_FRAMES: usize = 20;
 const SPEECH_POLL: Duration = Duration::from_millis(100);
 
-pub(in crate::livekit) async fn publish_selected_microphone(
+pub(in crate::livekit_backend) async fn publish_selected_microphone(
     room: &Room,
     audio: &PlatformAudio,
     selection: &Selection,
@@ -62,7 +62,7 @@ pub(in crate::livekit) async fn publish_selected_microphone(
 }
 
 /// Reports the local participant's speaking state from local audio, ahead of the server.
-pub(in crate::livekit) struct LocalSpeaker {
+pub(in crate::livekit_backend) struct LocalSpeaker {
     speech: LocalSpeech,
     identity: String,
     events: UnboundedSender<BackendEvent>,
@@ -70,7 +70,7 @@ pub(in crate::livekit) struct LocalSpeaker {
 }
 
 impl LocalSpeaker {
-    pub(in crate::livekit) fn new(
+    pub(in crate::livekit_backend) fn new(
         room: &Room,
         events: &UnboundedSender<BackendEvent>,
         flags: &Arc<Flags>,
@@ -112,7 +112,7 @@ impl Drop for LocalSpeaker {
 }
 
 /// The platform microphone hands no samples to the app, so its level comes from the sender stats.
-pub(in crate::livekit) fn watch_speech(
+pub(in crate::livekit_backend) fn watch_speech(
     track: LocalAudioTrack,
     mut speaker: LocalSpeaker,
 ) -> TaskGuard {
@@ -268,7 +268,7 @@ async fn publish_microphone(room: &Room, audio: &PlatformAudio) -> Option<LocalA
     }
 }
 
-pub(in crate::livekit) async fn publish_tone(
+pub(in crate::livekit_backend) async fn publish_tone(
     room: &Room,
     hz: f64,
     amplitude: f64,

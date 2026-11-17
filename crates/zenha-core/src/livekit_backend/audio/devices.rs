@@ -109,7 +109,7 @@ pub(super) fn apply_output(
     Ok(Some(info.name))
 }
 
-pub(in crate::livekit) fn apply_selection(audio: &PlatformAudio, selection: &Selection) {
+pub(in crate::livekit_backend) fn apply_selection(audio: &PlatformAudio, selection: &Selection) {
     for device in audio.recording_devices() {
         tracing::info!(index = device.index, id = %device.id, name = %device.name, "audio input device available");
     }
@@ -140,7 +140,7 @@ pub(super) fn processing_for(mode: NoiseSuppression) -> AudioProcessingOptions {
     }
 }
 
-pub(in crate::livekit) fn open_audio(mode: NoiseSuppression) -> Option<PlatformAudio> {
+pub(in crate::livekit_backend) fn open_audio(mode: NoiseSuppression) -> Option<PlatformAudio> {
     match PlatformAudio::new() {
         Ok(audio) => {
             if let Err(err) = audio.configure_audio_processing(processing_for(mode)) {

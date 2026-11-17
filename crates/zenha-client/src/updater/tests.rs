@@ -10,8 +10,8 @@ use std::time::Duration;
 
 use sha2::{Digest, Sha256};
 
-use super::download::{download_to_paths_blocking, is_allowed_download_redirect};
 use super::download::*;
+use super::download::{download_to_paths_blocking, is_allowed_download_redirect};
 use super::install::*;
 use super::release::*;
 use super::version::*;

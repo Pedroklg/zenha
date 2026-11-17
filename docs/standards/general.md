@@ -67,4 +67,4 @@ Valem para todas as crates do workspace (`crates/*` e `xtask`).
 ## GER-12: Tamanho e clareza de funções e módulos
 
 - Funções novas devem manter baixa complexidade e fluxo linear com `early return` (`let Some(...) = ... else { return ... };`) em vez de `if`/`match` muito aninhados.
-- Ao acrescentar lógica nova independente a módulos extensos (`state/`, `session/`, `livekit/`, `routes/`), extraia submódulos ou helpers coesos em vez de inflar o bloco monolítico.
+- Ao acrescentar lógica nova independente a módulos extensos (`state/`, `session/`, `livekit_backend/`, `routes/`), extraia submódulos ou helpers coesos em vez de inflar o bloco monolítico.
