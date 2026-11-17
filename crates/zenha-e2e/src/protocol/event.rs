@@ -379,7 +379,11 @@ impl BotEvent {
             | Event::ParticipantAvatarChanged { .. }
             | Event::LocalAvatarChanged { .. }
             | Event::AvatarCached { .. }
-            | Event::RoomUnlocked { .. } => return None,
+            | Event::RoomUnlocked { .. }
+            | Event::AdminWebhooks(_)
+            | Event::AdminWebhookCreated(_)
+            | Event::AdminWebhookDeleted { .. }
+            | Event::WebhookPosted(_) => return None,
             Event::CommandFailed(error) => Self::CommandFailed {
                 error: error.into(),
             },
