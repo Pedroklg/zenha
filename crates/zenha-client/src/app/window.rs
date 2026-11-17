@@ -1,4 +1,4 @@
-//! Visibilidade da janela: ocultar na bandeja, minimizar e trazer para a frente.
+//! Window visibility: hide to tray, minimize and bring to front.
 
 use eframe::egui;
 

@@ -1,4 +1,4 @@
-//! Controle de microfone por push-to-talk e seleção de modo de voz.
+//! Push-to-talk microphone control and voice mode selection.
 
 use std::time::{Duration, Instant};
 

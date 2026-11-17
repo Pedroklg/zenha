@@ -1,4 +1,4 @@
-//! Texto de interface e classificação dos erros da sessão.
+//! Interface text and classification of session errors.
 
 use zenha_core::{CaptureEnd, SessionError};
 

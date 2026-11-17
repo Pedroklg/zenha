@@ -1,4 +1,4 @@
-//! Avisos dispensáveis da sala.
+//! Dismissible room notices.
 
 use eframe::egui::{self, Color32, CornerRadius, Margin, Stroke};
 

@@ -1,4 +1,4 @@
-//! Preparação de imagens coladas da área de transferência para envio no chat.
+//! Preparing images pasted from the clipboard for sending in chat.
 
 use std::fmt;
 use std::fs::{self, OpenOptions};
@@ -50,12 +50,12 @@ pub struct SavedPastedImage {
     pub size: u64,
 }
 
-/// Pasta temporária usada para salvar imagens coladas antes do envio.
+/// Temporary folder used to save pasted images before sending.
 pub fn paste_temp_dir() -> PathBuf {
     std::env::temp_dir().join(PASTE_DIR_NAME)
 }
 
-/// Codifica a imagem colada em PNG e grava um arquivo temporário em `dir`.
+/// Encodes the pasted image as PNG and writes a temporary file in `dir`.
 pub fn save_pasted_image(
     image: &ColorImage,
     dir: &Path,
@@ -87,7 +87,7 @@ fn delete_pasted_file(path: &Path) {
     }
 }
 
-/// Remove arquivos temporários `print-*.png` antigos deixados por sessões anteriores.
+/// Removes old `print-*.png` temporary files left by previous sessions.
 pub fn cleanup_old_pastes(dir: &Path) {
     let entries = match fs::read_dir(dir) {
         Ok(entries) => entries,

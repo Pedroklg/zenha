@@ -1,4 +1,4 @@
-//! Controle de volume da transmissão e volumes individuais por participante.
+//! Stream volume control and individual per-participant volumes.
 
 use std::collections::BTreeMap;
 

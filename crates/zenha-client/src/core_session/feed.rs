@@ -1,4 +1,4 @@
-//! Feeds de quadros de vídeo da interface.
+//! UI video frame feeds.
 
 use std::sync::Arc;
 

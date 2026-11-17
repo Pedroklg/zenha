@@ -1,4 +1,4 @@
-//! Diálogos da sala: senha, administração e confirmação de atualização.
+//! Room dialogs: password, administration and update confirmation.
 
 use eframe::egui::{self, Color32, CornerRadius, Margin, RichText, Stroke};
 use zenha_protocol::{MAX_ROOM_PASSWORD_LEN, MAX_ROOM_TITLE_LEN, RoomSummary};
@@ -219,7 +219,7 @@ pub fn update_confirm_dialog(ctx: &egui::Context, confirming: bool) -> Vec<UserA
 struct RoomEditFields<'a> {
     title: &'a mut String,
     password: &'a mut String,
-    /// `Some` quando a sala já tem senha e ela pode ser removida.
+    /// `Some` when the room already has a password and it can be removed.
     remove_password: Option<&'a mut bool>,
     parent: &'a mut Option<String>,
     parents: Vec<&'a RoomSummary>,

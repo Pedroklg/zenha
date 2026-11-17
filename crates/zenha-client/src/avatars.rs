@@ -1,4 +1,4 @@
-//! Fotos de perfil: decodificadas fora da thread da interface e guardadas como texturas no contexto do egui.
+//! Profile photos: decoded off the UI thread and stored as textures in the egui context.
 
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, Sender, channel};

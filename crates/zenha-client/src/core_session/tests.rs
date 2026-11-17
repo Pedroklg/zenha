@@ -1,4 +1,4 @@
-//! Testes da tradução de eventos e comandos.
+//! Tests for event and command translation.
 
 use zenha_core::{
     AudioDevice, CaptureEnd, CaptureKind, CaptureTarget, Command, Event, FrameSlot, Participant,

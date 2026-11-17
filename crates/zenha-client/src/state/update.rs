@@ -1,4 +1,4 @@
-//! Estado do aviso de atualização disponível e máquina de estados do rodapé.
+//! State of the available-update notice and the footer state machine.
 
 use std::path::PathBuf;
 

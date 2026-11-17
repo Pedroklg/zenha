@@ -1,4 +1,4 @@
-//! Centro da sala: cabeçalho, barra inferior de controles e área principal.
+//! Room center: header, bottom control bar and main area.
 
 use std::collections::BTreeMap;
 

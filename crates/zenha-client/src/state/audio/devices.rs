@@ -1,4 +1,4 @@
-//! Seleção e listagem de dispositivos de entrada e saída de áudio.
+//! Selection and listing of audio input and output devices.
 
 use crate::state::AppState;
 use crate::ui_model::{AudioDeviceView, UiCommand};

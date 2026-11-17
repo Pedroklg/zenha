@@ -1,4 +1,4 @@
-//! Laço do frame: `eframe::App` com a lógica por frame e o desenho da interface.
+//! Frame loop: `eframe::App` with the per-frame logic and the interface drawing.
 
 use std::time::{Duration, Instant};
 

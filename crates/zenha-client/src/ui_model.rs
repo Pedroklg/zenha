@@ -275,13 +275,13 @@ pub enum UiEvent {
         identity: String,
     },
     ParticipantUpdated(ParticipantView),
-    /// Foto de perfil de alguém já gravada no cache em disco.
+    /// Profile photo of someone already written to the on-disk cache.
     AvatarCached {
         identity: String,
         version: String,
         path: PathBuf,
     },
-    /// Versão da foto do usuário local depois de enviar ou remover; `None` = sem foto.
+    /// Version of the local user's photo after uploading or removing; `None` = no photo.
     LocalAvatarChanged {
         version: Option<String>,
     },
@@ -298,7 +298,7 @@ pub enum UiEvent {
     RoomsFailed {
         message: String,
     },
-    /// Senha aceita; `room` é a sala dona da senha (a pedida ou a sala-mãe dela).
+    /// Password accepted; `room` is the room owning the password (the requested one or its parent).
     RoomUnlocked {
         room: String,
         key: RoomKey,
@@ -306,7 +306,7 @@ pub enum UiEvent {
     RoomUnlockFailed {
         message: String,
     },
-    /// O servidor recusou a entrada sem chave válida para a sala.
+    /// The server refused entry without a valid key for the room.
     RoomLocked {
         room: String,
     },

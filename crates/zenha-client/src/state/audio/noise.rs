@@ -1,4 +1,4 @@
-//! Supressão de ruído, porta de ruído e leitura de nível do microfone.
+//! Noise suppression, noise gate and microphone level reading.
 
 use crate::platform::settings::NoiseMode;
 use crate::state::AppState;

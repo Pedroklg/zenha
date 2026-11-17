@@ -70,26 +70,26 @@ pub struct Settings {
     pub output_device: Option<String>,
     pub noise_suppression: NoiseMode,
     pub voice_mode: VoiceMode,
-    /// Volume do som das transmissões, de 0 a 100; ausente significa 100.
+    /// Stream sound volume, 0 to 100; absent means 100.
     pub stream_volume: Option<u8>,
-    /// Volume individual de cada participante remoto, de 0 a 200; ausente significa 100.
+    /// Individual volume of each remote participant, 0 to 200; absent means 100.
     pub participant_volumes: BTreeMap<String, u16>,
-    /// Limiar da porta de ruído em dBFS (-70 a -20); ausente significa desligada.
+    /// Noise gate threshold in dBFS (-70 to -20); absent means off.
     pub noise_gate_db: Option<i8>,
-    /// Atalho global no formato do `global-hotkey` (ex.: "shift+control+KeyM"); ausente = nenhum.
+    /// Global hotkey in the `global-hotkey` format (e.g. "shift+control+KeyM"); absent = none.
     pub mute_hotkey: Option<String>,
     pub deafen_hotkey: Option<String>,
     pub ptt_hotkey: Option<String>,
     pub close_to_tray: bool,
     pub room_sounds: bool,
     pub dismissed_update_version: Option<String>,
-    /// Versão da foto de perfil enviada ao servidor; ausente significa sem foto.
+    /// Version of the profile photo uploaded to the server; absent means no photo.
     pub avatar_version: Option<String>,
-    /// Chaves das salas com senha já desbloqueadas, por servidor e sala.
+    /// Keys of already-unlocked password-protected rooms, by server and room.
     pub room_keys: RoomKeys,
 }
 
-/// Chaves de acesso a salas com senha, por servidor e sala; nunca guarda a senha.
+/// Access keys for password-protected rooms, by server and room; never stores the password.
 #[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct RoomKeys(BTreeMap<String, BTreeMap<String, String>>);
@@ -106,7 +106,7 @@ impl RoomKeys {
             .insert(room.to_owned(), key.to_owned());
     }
 
-    /// Remove as chaves das salas dadas; devolve `true` se alguma existia.
+    /// Removes the keys of the given rooms; returns `true` if any existed.
     pub fn remove(&mut self, server: &str, rooms: &[&str]) -> bool {
         let Some(keys) = self.0.get_mut(server) else {
             return false;

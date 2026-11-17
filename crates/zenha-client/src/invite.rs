@@ -1,8 +1,8 @@
-//! Formatação e leitura de links de convite `zenha://entrar`.
+//! Formatting and parsing of `zenha://entrar` invite links.
 
 use std::fmt;
 
-/// Dados extraídos de um link de convite do Zenha.
+/// Data extracted from a Zenha invite link.
 #[derive(Clone, PartialEq, Eq)]
 pub struct Invite {
     pub server: String,
@@ -20,7 +20,7 @@ impl fmt::Debug for Invite {
 
 const PREFIX: &str = "zenha://entrar?";
 
-/// Formata um link `zenha://entrar?servidor=<pct>&senha=<pct>`.
+/// Formats a `zenha://entrar?servidor=<pct>&senha=<pct>` link.
 pub fn format(server: &str, password: &str) -> String {
     format!(
         "{PREFIX}servidor={}&senha={}",
@@ -29,8 +29,8 @@ pub fn format(server: &str, password: &str) -> String {
     )
 }
 
-/// Interpreta um link `zenha://entrar?...` aceitando espaços em volta e
-/// parâmetros em qualquer ordem. Recusa servidor vazio ou sem `http://`/`https://`.
+/// Parses a `zenha://entrar?...` link, accepting surrounding whitespace and
+/// parameters in any order. Rejects an empty server or one without `http://`/`https://`.
 pub fn parse(text: &str) -> Option<Invite> {
     let query = text.trim().strip_prefix(PREFIX)?;
     let mut server: Option<String> = None;

@@ -1,4 +1,4 @@
-//! Atualização automática via GitHub Releases: checagem de versão, download verificado e execução do instalador.
+//! Automatic update via GitHub Releases: version check, verified download and installer execution.
 
 mod download;
 mod install;

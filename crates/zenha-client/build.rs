@@ -1,4 +1,4 @@
-//! Embute o ícone e os metadados de versão no executável do Windows.
+//! Embeds the icon and version metadata into the Windows executable.
 
 use std::env;
 use std::io;

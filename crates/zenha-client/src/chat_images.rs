@@ -1,4 +1,4 @@
-//! Miniaturas das imagens do chat: decodificadas fora da thread da interface.
+//! Chat image thumbnails: decoded off the UI thread.
 
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
@@ -145,7 +145,7 @@ struct ViewerEntry {
     slot: Slot,
 }
 
-/// Cache de textura única para a imagem aberta no visualizador modal do chat.
+/// Single-texture cache for the image open in the chat modal viewer.
 pub struct ViewerImage {
     current: Option<ViewerEntry>,
     next_seq: u64,
@@ -166,8 +166,8 @@ impl Default for ViewerImage {
 }
 
 impl ViewerImage {
-    /// Retorna o estado da imagem em tamanho grande, decodificando em segundo
-    /// plano quando necessário e mantendo apenas a imagem atualmente aberta.
+    /// Returns the state of the full-size image, decoding in the
+    /// background when needed and keeping only the currently open image.
     pub fn texture(&mut self, ctx: &egui::Context, id: &str, path: &Path) -> ThumbState {
         self.drain(ctx);
         if let Some(entry) = self.current.as_ref().filter(|entry| entry.id == id) {
@@ -176,8 +176,8 @@ impl ViewerImage {
         self.start(ctx, id, path)
     }
 
-    /// Mantém apenas a textura correspondente a `open_id`, liberando a anterior
-    /// assim que o visualizador fecha ou muda de imagem.
+    /// Keeps only the texture for `open_id`, releasing the previous one
+    /// as soon as the viewer closes or switches image.
     pub fn retain_id(&mut self, open_id: Option<&str>) {
         match open_id {
             None => {

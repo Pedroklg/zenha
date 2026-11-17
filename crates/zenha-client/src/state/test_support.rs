@@ -1,4 +1,4 @@
-//! Utilitários compartilhados entre os testes unitários do módulo de estado.
+//! Utilities shared across the state module's unit tests.
 
 use std::collections::BTreeMap;
 

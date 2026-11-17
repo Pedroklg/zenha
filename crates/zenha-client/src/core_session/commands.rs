@@ -1,4 +1,4 @@
-//! Conversão de comandos da interface em comandos do núcleo.
+//! Conversion of UI commands into core commands.
 
 use zenha_core::{Command, NoiseSuppression, SharePreset};
 
