@@ -1,6 +1,7 @@
 //! Incoming webhooks: creation under a quota, lookup by id and removal.
 
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
+use sha2::{Digest, Sha256};
 use zenha_protocol::{AdminWebhook, MAX_WEBHOOKS_COUNT};
 
 use super::messages::now_unix_ms;
@@ -11,6 +12,11 @@ pub struct WebhookRecord {
     pub room: String,
     pub name: String,
     pub token_hash: String,
+}
+
+/// Hex SHA-256 of a webhook token, the only form in which it is stored.
+pub fn token_hash(token: &str) -> String {
+    format!("{:x}", Sha256::digest(token.as_bytes()))
 }
 
 impl ChatStore {

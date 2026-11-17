@@ -495,5 +495,9 @@ async fn broadcast_rooms_changed(state: &AppState) {
     }
 }
 
+mod webhooks;
+
+pub(super) use self::webhooks::{admin_create_webhook, admin_delete_webhook, admin_list_webhooks};
+
 #[cfg(test)]
 mod tests;

@@ -92,6 +92,11 @@ pub fn router(state: AppState) -> Router {
             delete(admin::admin_delete_chat),
         )
         .route("/admin/invite", post(admin::admin_rotate_invite))
+        .route(
+            "/admin/webhooks",
+            get(admin::admin_list_webhooks).post(admin::admin_create_webhook),
+        )
+        .route("/admin/webhooks/{id}", delete(admin::admin_delete_webhook))
         .with_state(state)
 }
 
@@ -125,6 +130,10 @@ enum ApiError {
     MessageNotFound,
     #[error("avatar not found")]
     AvatarNotFound,
+    #[error("webhook not found")]
+    WebhookNotFound,
+    #[error("maximum webhook limit reached")]
+    WebhookLimitReached,
     #[error("message id already exists")]
     MessageConflict,
     #[error("maximum room limit reached")]
@@ -169,10 +178,12 @@ impl IntoResponse for ApiError {
             | Self::RoomNotFound
             | Self::TargetNotFound
             | Self::MessageNotFound
-            | Self::AvatarNotFound => StatusCode::NOT_FOUND,
-            Self::MessageConflict | Self::RoomLimitReached | Self::CannotDeleteLastRoom => {
-                StatusCode::CONFLICT
-            }
+            | Self::AvatarNotFound
+            | Self::WebhookNotFound => StatusCode::NOT_FOUND,
+            Self::MessageConflict
+            | Self::RoomLimitReached
+            | Self::WebhookLimitReached
+            | Self::CannotDeleteLastRoom => StatusCode::CONFLICT,
             Self::PayloadTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
             Self::RateLimited => StatusCode::TOO_MANY_REQUESTS,
             Self::TokenFailure | Self::ChatStoreFailure => StatusCode::INTERNAL_SERVER_ERROR,

@@ -19,7 +19,7 @@ pub use self::rooms::{
     CreateRoomOutcome, DeleteRoomCheck, DeleteRoomOutcome, RoomRecord, RoomUpdate,
     UpdateRoomOutcome,
 };
-pub use self::webhooks::WebhookRecord;
+pub use self::webhooks::{WebhookRecord, token_hash};
 
 const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 const INVITE_HASH_SETTING_KEY: &str = "invite_code_hash";
