@@ -10,6 +10,7 @@ use crate::ui_model::{CaptureTargetView, FeedHandle, SharePresetView};
 const THUMBNAIL_CARD_WIDTH: f32 = 176.0;
 const THUMBNAIL_PREVIEW_SIZE: Vec2 = Vec2::new(164.0, 92.0);
 const THUMBNAIL_GRID_COLS: usize = 3;
+const PICKER_ID: &str = "share_picker";
 const THUMBNAIL_SPINNER_TIMEOUT: Duration = Duration::from_millis(1300);
 
 #[derive(Default)]
@@ -177,6 +178,7 @@ pub fn picker(
     };
     let mut open = true;
     egui::Window::new("Transmitir tela")
+        .id(egui::Id::new(PICKER_ID))
         .open(&mut open)
         .collapsible(false)
         .resizable(false)
@@ -325,38 +327,41 @@ fn target_tile(
         .corner_radius(CornerRadius::same(8))
         .inner_margin(Margin::same(6))
         .show(ui, |ui| {
-            ui.set_width(THUMBNAIL_PREVIEW_SIZE.x);
-            let (thumb_rect, _) = ui.allocate_exact_size(THUMBNAIL_PREVIEW_SIZE, Sense::hover());
-            ui.painter()
-                .rect_filled(thumb_rect, CornerRadius::same(4), theme::VIDEO_BG);
-            if let Some(texture) = cache.textures.get(&target.id) {
-                let size = texture.size_vec2();
-                let (w, h) = aspect_fit(
-                    (thumb_rect.width(), thumb_rect.height()),
-                    (size.x as usize, size.y as usize),
-                );
-                let dst = egui::Rect::from_center_size(thumb_rect.center(), Vec2::new(w, h));
-                let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+            ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
+                ui.set_width(THUMBNAIL_PREVIEW_SIZE.x);
+                let (thumb_rect, _) =
+                    ui.allocate_exact_size(THUMBNAIL_PREVIEW_SIZE, Sense::hover());
                 ui.painter()
-                    .image(texture.id(), dst, uv, egui::Color32::WHITE);
-            } else if loading {
-                ui.place(thumb_rect, egui::Spinner::new().size(20.0));
-            } else {
-                ui.painter().text(
-                    thumb_rect.center(),
-                    egui::Align2::CENTER_CENTER,
-                    "Sem prévia",
-                    egui::FontId::proportional(11.0),
-                    theme::TEXT_WEAK,
+                    .rect_filled(thumb_rect, CornerRadius::same(4), theme::VIDEO_BG);
+                if let Some(texture) = cache.textures.get(&target.id) {
+                    let size = texture.size_vec2();
+                    let (w, h) = aspect_fit(
+                        (thumb_rect.width(), thumb_rect.height()),
+                        (size.x as usize, size.y as usize),
+                    );
+                    let dst = egui::Rect::from_center_size(thumb_rect.center(), Vec2::new(w, h));
+                    let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+                    ui.painter()
+                        .image(texture.id(), dst, uv, egui::Color32::WHITE);
+                } else if loading {
+                    ui.place(thumb_rect, egui::Spinner::new().size(20.0));
+                } else {
+                    ui.painter().text(
+                        thumb_rect.center(),
+                        egui::Align2::CENTER_CENTER,
+                        "Sem prévia",
+                        egui::FontId::proportional(11.0),
+                        theme::TEXT_WEAK,
+                    );
+                }
+                ui.add_space(6.0);
+                ui.add_sized(
+                    Vec2::new(THUMBNAIL_PREVIEW_SIZE.x, 18.0),
+                    egui::Label::new(RichText::new(&target.name).size(12.5).color(theme::TEXT))
+                        .truncate()
+                        .selectable(false),
                 );
-            }
-            ui.add_space(6.0);
-            ui.add_sized(
-                Vec2::new(THUMBNAIL_PREVIEW_SIZE.x, 18.0),
-                egui::Label::new(RichText::new(&target.name).size(12.5).color(theme::TEXT))
-                    .truncate()
-                    .selectable(false),
-            );
+            });
         });
     let response = ui.interact(
         card.response.rect,
@@ -367,4 +372,49 @@ fn target_tile(
         actions.push(UserAction::SelectCaptureTarget(target.id.clone()));
     }
     response.on_hover_text(&target.name);
+}
+
+#[cfg(test)]
+mod picker_tests {
+    use egui_kittest::Harness;
+
+    use super::*;
+    use crate::ui_model::TargetKindView;
+
+    #[test]
+    fn picker_fits_a_small_window_with_many_targets() {
+        let target = |i: usize, kind| CaptureTargetView {
+            id: format!("t{i}"),
+            name: format!("Janela com um nome bem comprido {i}"),
+            kind,
+        };
+        let picker = SharePicker {
+            open: true,
+            loaded: true,
+            targets: (0..3)
+                .map(|i| target(i, TargetKindView::Screen))
+                .chain((3..9).map(|i| target(i, TargetKindView::Window)))
+                .collect(),
+            ..SharePicker::default()
+        };
+        let mut harness = Harness::builder()
+            .with_size(Vec2::new(960.0, 620.0))
+            .build_ui_state(
+                |ui, (state, cache): &mut (SharePicker, ThumbnailCache)| {
+                    theme::install(ui.ctx());
+                    super::picker(ui.ctx(), state, cache);
+                },
+                (picker, ThumbnailCache::default()),
+            );
+        harness.run_steps(3);
+        let screen = harness.ctx.content_rect();
+        let window = harness
+            .ctx
+            .memory(|m| m.area_rect(egui::Id::new(PICKER_ID)))
+            .expect("picker window");
+        assert!(
+            screen.contains_rect(window),
+            "{window:?} outside {screen:?}"
+        );
+    }
 }
