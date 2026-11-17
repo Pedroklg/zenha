@@ -47,9 +47,15 @@ fn migrate_rooms(conn: &Connection) -> Result<(), ChatStoreError> {
     let columns = stmt
         .query_map([], |row| row.get::<_, String>(0))?
         .collect::<Result<Vec<_>, _>>()?;
-    for column in ["password_hash", "parent"] {
+    for (column, ddl) in [
+        (
+            "password_hash",
+            "ALTER TABLE rooms ADD COLUMN password_hash TEXT",
+        ),
+        ("parent", "ALTER TABLE rooms ADD COLUMN parent TEXT"),
+    ] {
         if !columns.iter().any(|c| c == column) {
-            conn.execute(&format!("ALTER TABLE rooms ADD COLUMN {column} TEXT"), [])?;
+            conn.execute(ddl, [])?;
         }
     }
     Ok(())
