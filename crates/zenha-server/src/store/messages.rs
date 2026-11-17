@@ -122,7 +122,7 @@ pub fn clamp_sent_at(sent_at_unix_ms: u64, server_now_ms: u64) -> u64 {
     sent_at_unix_ms.min(server_now_ms.saturating_add(MAX_FUTURE_SKEW_MS))
 }
 
-fn now_unix_ms() -> u64 {
+pub fn now_unix_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
