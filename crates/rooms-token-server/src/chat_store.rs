@@ -42,6 +42,44 @@ pub enum DeleteOutcome {
 pub enum CreateRoomOutcome {
     Created(AdminRoom),
     LimitReached,
+    InvalidParent,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UpdateRoomOutcome {
+    Updated(AdminRoom),
+    NotFound,
+    InvalidParent,
+}
+
+/// Mudanças numa sala; `None` mantém o campo e `Some(None)` limpa a senha ou a sala-mãe.
+#[derive(Default)]
+pub struct RoomUpdate {
+    pub title: Option<String>,
+    pub position: Option<usize>,
+    pub password_hash: Option<Option<String>>,
+    pub parent: Option<Option<String>>,
+}
+
+#[derive(Clone)]
+pub struct RoomRecord {
+    pub id: String,
+    pub title: String,
+    pub position: usize,
+    pub parent: Option<String>,
+    pub password_hash: Option<String>,
+}
+
+impl RoomRecord {
+    pub fn admin(&self) -> AdminRoom {
+        AdminRoom {
+            id: self.id.clone(),
+            title: self.title.clone(),
+            position: self.position,
+            locked: self.password_hash.is_some(),
+            parent: self.parent.clone(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -109,6 +147,7 @@ impl ChatStore {
                 version TEXT NOT NULL
             );",
         )?;
+        migrate_rooms(&conn)?;
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
         })
@@ -212,34 +251,32 @@ impl ChatStore {
         .await
     }
 
+    #[cfg(test)]
     pub async fn list_rooms(&self) -> Result<Vec<AdminRoom>, ChatStoreError> {
-        self.with_conn(list_rooms_sync).await
+        let records = self.room_records().await?;
+        Ok(records.iter().map(RoomRecord::admin).collect())
     }
 
-    pub async fn room_exists(&self, id: String) -> Result<bool, ChatStoreError> {
-        self.with_conn(move |conn| {
-            let found: Option<i64> = conn
-                .query_row("SELECT 1 FROM rooms WHERE id = ?1", params![id], |row| {
-                    row.get(0)
-                })
-                .optional()?;
-            Ok(found.is_some())
-        })
-        .await
+    pub async fn room_records(&self) -> Result<Vec<RoomRecord>, ChatStoreError> {
+        self.with_conn(|conn| load_room_records(conn)).await
     }
 
-    pub async fn create_room(&self, title: String) -> Result<CreateRoomOutcome, ChatStoreError> {
-        self.with_conn(move |conn| create_room_sync(conn, &title))
+    pub async fn create_room(
+        &self,
+        title: String,
+        password_hash: Option<String>,
+        parent: Option<String>,
+    ) -> Result<CreateRoomOutcome, ChatStoreError> {
+        self.with_conn(move |conn| create_room_sync(conn, &title, password_hash, parent))
             .await
     }
 
     pub async fn update_room(
         &self,
         id: String,
-        title: Option<String>,
-        position: Option<usize>,
-    ) -> Result<Option<AdminRoom>, ChatStoreError> {
-        self.with_conn(move |conn| update_room_sync(conn, &id, title.as_deref(), position))
+        update: RoomUpdate,
+    ) -> Result<UpdateRoomOutcome, ChatStoreError> {
+        self.with_conn(move |conn| update_room_sync(conn, &id, update))
             .await
     }
 
@@ -556,65 +593,113 @@ fn seed_rooms_sync(conn: &mut Connection, rooms: &[String]) -> Result<(), ChatSt
     Ok(())
 }
 
-fn list_rooms_sync(conn: &mut Connection) -> Result<Vec<AdminRoom>, ChatStoreError> {
-    let mut stmt =
-        conn.prepare("SELECT id, title, position FROM rooms ORDER BY position ASC, id ASC")?;
+fn migrate_rooms(conn: &Connection) -> Result<(), ChatStoreError> {
+    let mut stmt = conn.prepare("SELECT name FROM pragma_table_info('rooms')")?;
+    let columns = stmt
+        .query_map([], |row| row.get::<_, String>(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    for column in ["password_hash", "parent"] {
+        if !columns.iter().any(|c| c == column) {
+            conn.execute(&format!("ALTER TABLE rooms ADD COLUMN {column} TEXT"), [])?;
+        }
+    }
+    Ok(())
+}
+
+fn load_room_records(conn: &Connection) -> Result<Vec<RoomRecord>, ChatStoreError> {
+    let mut stmt = conn.prepare(
+        "SELECT id, title, parent, password_hash FROM rooms ORDER BY position ASC, id ASC",
+    )?;
     let rows = stmt.query_map([], |row| {
-        let pos: i64 = row.get(2)?;
-        Ok(AdminRoom {
-            id: row.get(0)?,
-            title: row.get(1)?,
-            position: usize::try_from(pos).unwrap_or(0),
-        })
+        Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
     })?;
     let mut out = Vec::new();
-    for row in rows {
-        out.push(row?);
+    for (position, row) in rows.enumerate() {
+        let (id, title, parent, password_hash) = row?;
+        out.push(RoomRecord {
+            id,
+            title,
+            position,
+            parent,
+            password_hash,
+        });
     }
     Ok(out)
+}
+
+/// Uma sala só pode ter como mãe outra sala de primeiro nível, e uma sala com filhas não vira filha.
+fn parent_is_valid(rooms: &[RoomRecord], id: &str, parent: &str) -> bool {
+    parent != id
+        && rooms.iter().any(|r| r.id == parent && r.parent.is_none())
+        && !rooms.iter().any(|r| r.parent.as_deref() == Some(id))
 }
 
 fn create_room_sync(
     conn: &mut Connection,
     title: &str,
+    password_hash: Option<String>,
+    parent: Option<String>,
 ) -> Result<CreateRoomOutcome, ChatStoreError> {
     let trimmed = title.trim();
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    let existing = load_ordered_rooms(&tx)?;
+    let existing = load_room_records(&tx)?;
     if existing.len() >= MAX_ROOMS_COUNT {
         return Ok(CreateRoomOutcome::LimitReached);
     }
-    let existing_ids: Vec<String> = existing.iter().map(|(id, _)| id.clone()).collect();
+    let existing_ids: Vec<String> = existing.iter().map(|r| r.id.clone()).collect();
     let id = unique_room_id(trimmed, &existing_ids);
+    if parent
+        .as_deref()
+        .is_some_and(|p| !parent_is_valid(&existing, &id, p))
+    {
+        return Ok(CreateRoomOutcome::InvalidParent);
+    }
     let position = existing.len();
     let pos_i64 = i64::try_from(position).unwrap_or(i64::MAX);
     tx.execute(
-        "INSERT INTO rooms (id, title, position) VALUES (?1, ?2, ?3)",
-        params![id, trimmed, pos_i64],
+        "INSERT INTO rooms (id, title, position, parent, password_hash)
+         VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![id, trimmed, pos_i64, parent, password_hash],
     )?;
     tx.commit()?;
-    Ok(CreateRoomOutcome::Created(AdminRoom {
-        id,
-        title: trimmed.to_owned(),
-        position,
-    }))
+    Ok(CreateRoomOutcome::Created(
+        RoomRecord {
+            id,
+            title: trimmed.to_owned(),
+            position,
+            parent,
+            password_hash,
+        }
+        .admin(),
+    ))
 }
 
 fn update_room_sync(
     conn: &mut Connection,
     id: &str,
-    title: Option<&str>,
-    position: Option<usize>,
-) -> Result<Option<AdminRoom>, ChatStoreError> {
+    update: RoomUpdate,
+) -> Result<UpdateRoomOutcome, ChatStoreError> {
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    let mut rooms = load_ordered_rooms(&tx)?;
-    let Some(mut idx) = rooms.iter().position(|(room_id, _)| room_id == id) else {
-        return Ok(None);
+    let mut rooms = load_room_records(&tx)?;
+    let Some(mut idx) = rooms.iter().position(|r| r.id == id) else {
+        return Ok(UpdateRoomOutcome::NotFound);
     };
-    if let Some(new_title) = title {
-        rooms[idx].1 = new_title.trim().to_owned();
+    if let Some(Some(parent)) = &update.parent
+        && !parent_is_valid(&rooms, id, parent)
+    {
+        return Ok(UpdateRoomOutcome::InvalidParent);
     }
-    if let Some(target) = position {
+    let room = &mut rooms[idx];
+    if let Some(new_title) = update.title {
+        room.title = new_title.trim().to_owned();
+    }
+    if let Some(parent) = update.parent {
+        room.parent = parent;
+    }
+    if let Some(hash) = update.password_hash {
+        room.password_hash = hash;
+    }
+    if let Some(target) = update.position {
         let clamped = target.min(rooms.len().saturating_sub(1));
         if clamped != idx {
             let item = rooms.remove(idx);
@@ -622,19 +707,23 @@ fn update_room_sync(
             idx = clamped;
         }
     }
-    for (pos, (room_id, room_title)) in rooms.iter().enumerate() {
+    for (pos, room) in rooms.iter_mut().enumerate() {
+        room.position = pos;
         let pos_i64 = i64::try_from(pos).unwrap_or(i64::MAX);
         tx.execute(
-            "UPDATE rooms SET title = ?1, position = ?2 WHERE id = ?3",
-            params![room_title, pos_i64, room_id],
+            "UPDATE rooms SET title = ?1, position = ?2, parent = ?3, password_hash = ?4
+             WHERE id = ?5",
+            params![
+                room.title,
+                pos_i64,
+                room.parent,
+                room.password_hash,
+                room.id
+            ],
         )?;
     }
     tx.commit()?;
-    Ok(Some(AdminRoom {
-        id: rooms[idx].0.clone(),
-        title: rooms[idx].1.clone(),
-        position: idx,
-    }))
+    Ok(UpdateRoomOutcome::Updated(rooms[idx].admin()))
 }
 
 fn check_can_delete_room_sync(
@@ -665,6 +754,10 @@ fn commit_delete_room_sync(
         return Ok(DeleteRoomOutcome::LastRoom);
     }
     tx.execute("DELETE FROM rooms WHERE id = ?1", params![id])?;
+    tx.execute(
+        "UPDATE rooms SET parent = NULL WHERE parent = ?1",
+        params![id],
+    )?;
     tx.execute("DELETE FROM chat_messages WHERE room = ?1", params![id])?;
     let remaining = rooms.into_iter().filter(|(room_id, _)| room_id != id);
     for (pos, (room_id, _)) in remaining.enumerate() {
@@ -1074,22 +1167,31 @@ mod tests {
                     id: "geral".to_owned(),
                     title: "geral".to_owned(),
                     position: 0,
+                    ..AdminRoom::default()
                 },
                 AdminRoom {
                     id: "jogos".to_owned(),
                     title: "jogos".to_owned(),
                     position: 1,
+                    ..AdminRoom::default()
                 },
                 AdminRoom {
                     id: "afk".to_owned(),
                     title: "afk".to_owned(),
                     position: 2,
+                    ..AdminRoom::default()
                 },
             ]
         );
 
         store
-            .update_room("geral".to_owned(), Some("Sala Geral".to_owned()), None)
+            .update_room(
+                "geral".to_owned(),
+                RoomUpdate {
+                    title: Some("Sala Geral".to_owned()),
+                    ..RoomUpdate::default()
+                },
+            )
             .await
             .unwrap();
         store
@@ -1138,21 +1240,34 @@ mod tests {
             .seed_rooms_if_empty_sync(&["geral".to_owned(), "jogos".to_owned()])
             .unwrap();
 
-        let created = store.create_room("Música & Voz".to_owned()).await.unwrap();
+        let created = store
+            .create_room("Música & Voz".to_owned(), None, None)
+            .await
+            .unwrap();
         assert_eq!(
             created,
             CreateRoomOutcome::Created(AdminRoom {
                 id: "musica-voz".to_owned(),
                 title: "Música & Voz".to_owned(),
                 position: 2,
+                ..AdminRoom::default()
             })
         );
 
-        let moved = store
-            .update_room("musica-voz".to_owned(), Some("Música".to_owned()), Some(0))
+        let UpdateRoomOutcome::Updated(moved) = store
+            .update_room(
+                "musica-voz".to_owned(),
+                RoomUpdate {
+                    title: Some("Música".to_owned()),
+                    position: Some(0),
+                    ..RoomUpdate::default()
+                },
+            )
             .await
             .unwrap()
-            .unwrap();
+        else {
+            panic!("room should be updated");
+        };
         assert_eq!(moved.position, 0);
         assert_eq!(moved.title, "Música");
 
@@ -1217,11 +1332,17 @@ mod tests {
         );
 
         for i in 1..MAX_ROOMS_COUNT {
-            let outcome = store.create_room(format!("Sala {i}")).await.unwrap();
+            let outcome = store
+                .create_room(format!("Sala {i}"), None, None)
+                .await
+                .unwrap();
             assert!(matches!(outcome, CreateRoomOutcome::Created(_)));
         }
         assert_eq!(
-            store.create_room("Extra".to_owned()).await.unwrap(),
+            store
+                .create_room("Extra".to_owned(), None, None)
+                .await
+                .unwrap(),
             CreateRoomOutcome::LimitReached
         );
     }
@@ -1314,5 +1435,102 @@ mod tests {
             reopened.get_avatar("client-ana".to_owned()).await.unwrap(),
             None
         );
+    }
+
+    #[tokio::test]
+    async fn room_parents_stay_one_level_and_deleting_a_parent_frees_children() {
+        let store = ChatStore::open_in_memory().unwrap();
+        store
+            .seed_rooms_if_empty_sync(&["geral".to_owned(), "jogos".to_owned()])
+            .unwrap();
+        let parent = |p: &str| RoomUpdate {
+            parent: Some(Some(p.to_owned())),
+            ..RoomUpdate::default()
+        };
+
+        assert_eq!(
+            store
+                .create_room("Filha".to_owned(), None, Some("nada".to_owned()))
+                .await
+                .unwrap(),
+            CreateRoomOutcome::InvalidParent
+        );
+        let CreateRoomOutcome::Created(child) = store
+            .create_room(
+                "Filha".to_owned(),
+                Some("hash".to_owned()),
+                Some("geral".to_owned()),
+            )
+            .await
+            .unwrap()
+        else {
+            panic!("child should be created");
+        };
+        assert!(child.locked);
+        assert_eq!(child.parent.as_deref(), Some("geral"));
+
+        for (id, target) in [("jogos", "filha"), ("geral", "jogos"), ("geral", "geral")] {
+            assert_eq!(
+                store
+                    .update_room(id.to_owned(), parent(target))
+                    .await
+                    .unwrap(),
+                UpdateRoomOutcome::InvalidParent,
+                "{id} -> {target}"
+            );
+        }
+
+        let UpdateRoomOutcome::Updated(cleared) = store
+            .update_room(
+                "filha".to_owned(),
+                RoomUpdate {
+                    password_hash: Some(None),
+                    ..RoomUpdate::default()
+                },
+            )
+            .await
+            .unwrap()
+        else {
+            panic!("room should be updated");
+        };
+        assert!(!cleared.locked);
+        assert_eq!(cleared.parent.as_deref(), Some("geral"));
+
+        assert_eq!(
+            store.commit_delete_room("geral".to_owned()).await.unwrap(),
+            DeleteRoomOutcome::Deleted
+        );
+        let records = store.room_records().await.unwrap();
+        assert!(records.iter().all(|r| r.parent.is_none()));
+    }
+
+    #[tokio::test]
+    async fn migration_adds_room_columns_to_an_existing_database() {
+        let temp = TempDb::new();
+        {
+            let conn = Connection::open(&temp.path).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE rooms (id TEXT PRIMARY KEY, title TEXT NOT NULL, position INTEGER NOT NULL);
+                 INSERT INTO rooms (id, title, position) VALUES ('geral', 'Geral', 0);",
+            )
+            .unwrap();
+        }
+        let store = ChatStore::open(&temp.path).unwrap();
+        let records = store.room_records().await.unwrap();
+        assert_eq!(records.len(), 1);
+        assert!(records[0].parent.is_none() && records[0].password_hash.is_none());
+        let updated = store
+            .update_room(
+                "geral".to_owned(),
+                RoomUpdate {
+                    password_hash: Some(Some("hash".to_owned())),
+                    ..RoomUpdate::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert!(matches!(updated, UpdateRoomOutcome::Updated(room) if room.locked));
+        drop(store);
+        assert!(ChatStore::open(&temp.path).is_ok());
     }
 }

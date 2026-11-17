@@ -4,18 +4,24 @@ use std::time::Duration;
 
 use axum::Router;
 use axum::body::Body;
+use axum::http::StatusCode;
 use axum::http::{Request, header};
 use axum::response::Response;
 use http_body_util::BodyExt;
 use livekit_api::access_token::{AccessToken, VideoGrants};
-use rooms_protocol::{ErrorResponse, SaveChatRequest, TokenRequest};
+use rooms_protocol::{
+    ErrorResponse, SaveChatRequest, TokenRequest, UnlockRoomRequest, UnlockRoomResponse,
+};
+use tower::ServiceExt;
 
-use crate::chat_store::ChatStore;
+use crate::chat_store::{ChatStore, RoomUpdate};
 use crate::config::Config;
 use crate::directory::FakeDirectory;
 
 use super::rooms::INVITE_HEADER;
-use super::{AdminLoginLimiter, AppState, AvatarRateLimiter, ChatRateLimiter, router};
+use super::{
+    AdminLoginLimiter, AppState, AvatarRateLimiter, ChatRateLimiter, RoomUnlockLimiter, router,
+};
 
 pub(super) const INVITE: &str = "s3cret-invite";
 pub(super) const ADMIN_PASSWORD: &str = "admin-pass-1234";
@@ -78,6 +84,7 @@ pub(super) fn state_with(
         chat_limiter: Arc::new(ChatRateLimiter::default()),
         avatar_limiter: Arc::new(AvatarRateLimiter::default()),
         admin_login_limiter: Arc::new(AdminLoginLimiter::default()),
+        unlock_limiter: Arc::new(RoomUnlockLimiter::default()),
         admin_failure_delay,
     }
 }
@@ -108,6 +115,7 @@ pub(super) fn token_body_with_id(
         display_name: display_name.to_owned(),
         room: room.to_owned(),
         invite_code: invite.to_owned(),
+        room_key: None,
     })
     .unwrap()
 }
@@ -192,4 +200,58 @@ pub(super) fn save_chat_body(id: &str, text: &str, sent_at_unix_ms: u64) -> Stri
         sent_at_unix_ms,
     })
     .unwrap()
+}
+
+pub(super) async fn locked_store() -> Arc<ChatStore> {
+    let config = test_config();
+    let store = seeded_store(&config.rooms);
+    let hash = crate::config::hash_secret("senha-vip").unwrap();
+    store
+        .create_room("Filha".to_owned(), None, Some("geral".to_owned()))
+        .await
+        .unwrap();
+    store
+        .update_room(
+            "geral".to_owned(),
+            RoomUpdate {
+                password_hash: Some(Some(hash)),
+                ..RoomUpdate::default()
+            },
+        )
+        .await
+        .unwrap();
+    store
+}
+
+pub(super) fn locked_app(store: &Arc<ChatStore>) -> Router {
+    router(state_with(
+        test_config(),
+        default_fake_dir(),
+        Some(store.clone()),
+        Duration::ZERO,
+    ))
+}
+
+pub(super) fn unlock_request(room: &str, invite: &str, password: &str) -> Request<Body> {
+    let body = serde_json::to_string(&UnlockRoomRequest {
+        invite_code: invite.to_owned(),
+        password: password.to_owned(),
+    })
+    .unwrap();
+    Request::builder()
+        .method("POST")
+        .uri(format!("/rooms/{room}/unlock"))
+        .header("content-type", "application/json")
+        .body(Body::from(body))
+        .unwrap()
+}
+
+pub(super) async fn unlock(app: &Router, room: &str, password: &str) -> UnlockRoomResponse {
+    let response = app
+        .clone()
+        .oneshot(unlock_request(room, INVITE, password))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    serde_json::from_slice(&body_bytes(response).await).unwrap()
 }

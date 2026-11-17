@@ -7,7 +7,9 @@ use rooms_protocol::{
     TokenRequest, TokenResponse, validate_client_id, validate_display_name, validate_room_name,
 };
 
-use super::{ApiError, AppState, room_is_listed, verify_invite};
+use crate::room_access::{key_matches, lock_owners};
+
+use super::{ApiError, AppState, room_records, verify_invite};
 
 pub(super) async fn issue_token(
     State(state): State<AppState>,
@@ -23,8 +25,21 @@ pub(super) async fn issue_token(
     validate_display_name(&request.display_name)
         .map_err(|_| ApiError::Invalid("invalid display name"))?;
     validate_room_name(&request.room).map_err(|_| ApiError::Invalid("invalid room name"))?;
-    if !room_is_listed(&state, &request.room).await? {
-        return Err(ApiError::RoomNotFound);
+    let rooms = room_records(&state).await?;
+    let record = rooms
+        .iter()
+        .find(|r| r.id == request.room)
+        .ok_or(ApiError::RoomNotFound)?;
+    let owners = lock_owners(&rooms, record);
+    let secret = &state.config.livekit_api_secret;
+    let has_access = owners.is_empty()
+        || request.room_key.as_deref().is_some_and(|key| {
+            owners
+                .iter()
+                .any(|(owner, hash)| key_matches(secret, owner, hash, key))
+        });
+    if !has_access {
+        return Err(ApiError::RoomLocked);
     }
 
     let name = request.display_name.trim();
@@ -47,7 +62,7 @@ mod tests {
     use axum::Router;
     use axum::http::StatusCode;
     use livekit_api::access_token::TokenVerifier;
-    use rooms_protocol::TokenResponse;
+    use rooms_protocol::{ROOM_LOCKED_ERROR, TokenRequest, TokenResponse};
     use tower::ServiceExt;
 
     use crate::config::Config;
@@ -55,8 +70,8 @@ mod tests {
     use super::super::router;
     use super::super::test_support::{
         API_KEY, API_SECRET, INVITE, TTL, app, body_bytes, default_fake_dir, error_message,
-        rooms_request, seeded_store, state_with, test_config, token_body, token_body_with_id,
-        token_request,
+        locked_app, locked_store, rooms_request, seeded_store, state_with, test_config, token_body,
+        token_body_with_id, token_request, unlock,
     };
 
     fn app_with_config(config: Config) -> Router {
@@ -188,5 +203,48 @@ mod tests {
                 .unwrap();
             assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{bad:?}");
         }
+    }
+
+    #[tokio::test]
+    async fn token_requires_a_valid_key_for_locked_rooms_and_accepts_the_parent_key() {
+        let store = locked_store().await;
+        let app = locked_app(&store);
+        let with_key = |room: &str, key: Option<&str>| {
+            serde_json::to_string(&TokenRequest {
+                client_id: "client-pedro".to_owned(),
+                display_name: "Pedro".to_owned(),
+                room: room.to_owned(),
+                invite_code: INVITE.to_owned(),
+                room_key: key.map(str::to_owned),
+            })
+            .unwrap()
+        };
+
+        for (room, key) in [("geral", None), ("geral", Some("bad")), ("filha", None)] {
+            let response = app
+                .clone()
+                .oneshot(token_request(&with_key(room, key)))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::FORBIDDEN, "{room} {key:?}");
+            assert_eq!(error_message(response).await, ROOM_LOCKED_ERROR);
+        }
+
+        let key = unlock(&app, "geral", "senha-vip").await.room_key;
+        for room in ["geral", "filha"] {
+            let response = app
+                .clone()
+                .oneshot(token_request(&with_key(room, Some(&key))))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK, "{room}");
+        }
+
+        let response = app
+            .clone()
+            .oneshot(token_request(&with_key("jogos", None)))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
     }
 }
