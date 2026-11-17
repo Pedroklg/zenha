@@ -211,13 +211,59 @@ impl CaptureHealth {
     }
 }
 
+const SPEECH_HANGOVER: Duration = Duration::from_millis(300);
+/// Enhanced mic: RMS level, after noise suppression, that counts as voice when the gate is off.
+pub(crate) const SPEAKING_LEVEL_DB: f32 = -45.0;
+/// Platform mic: peak `audioLevel` (0..1) of the sender stats that counts as voice, about -30 dBFS.
+pub(crate) const SPEAKING_AUDIO_LEVEL: f64 = 0.03;
+
+pub(crate) fn enhanced_voice(reading: GateReading, threshold_db: Option<f32>) -> bool {
+    reading.open && reading.level_db >= threshold_db.unwrap_or(SPEAKING_LEVEL_DB)
+}
+
+/// Local speaking state: voice turns it on at once, silence only after a short hangover.
+#[derive(Debug, Default)]
+pub(crate) struct LocalSpeech {
+    speaking: bool,
+    last_voice: Option<Instant>,
+}
+
+impl LocalSpeech {
+    /// `silenced` (muted or deafened) turns it off at once. Returns the new state on a change.
+    pub(crate) fn update(&mut self, voice: bool, silenced: bool, now: Instant) -> Option<bool> {
+        if silenced {
+            self.last_voice = None;
+        } else if voice {
+            self.last_voice = Some(now);
+        }
+        let speaking = self
+            .last_voice
+            .is_some_and(|last| now.saturating_duration_since(last) < SPEECH_HANGOVER);
+        (speaking != self.speaking).then(|| {
+            self.speaking = speaking;
+            speaking
+        })
+    }
+}
+
+/// Speaking state reported by the server; the local identity is left out because it is
+/// detected locally with much less delay.
 #[derive(Debug, Default)]
 pub(crate) struct SpeakingTracker {
+    local: String,
     current: HashSet<String>,
 }
 
 impl SpeakingTracker {
-    pub(crate) fn update(&mut self, now: HashSet<String>) -> Vec<BackendEvent> {
+    pub(crate) fn new(local: String) -> Self {
+        Self {
+            local,
+            current: HashSet::new(),
+        }
+    }
+
+    pub(crate) fn update(&mut self, mut now: HashSet<String>) -> Vec<BackendEvent> {
+        now.remove(&self.local);
         let mut started: Vec<String> = now.difference(&self.current).cloned().collect();
         let mut stopped: Vec<String> = self.current.difference(&now).cloned().collect();
         started.sort();
@@ -315,6 +361,50 @@ mod tests {
             vec![speaking("b", false), speaking("c", false)]
         );
         assert!(tracker.update(set(&[])).is_empty());
+    }
+
+    #[test]
+    fn speaking_tracker_ignores_the_local_identity() {
+        let mut tracker = SpeakingTracker::new("me".to_owned());
+        assert_eq!(tracker.update(set(&["me", "a"])), vec![speaking("a", true)]);
+        assert_eq!(tracker.update(set(&["me"])), vec![speaking("a", false)]);
+        assert!(tracker.update(set(&[])).is_empty());
+    }
+
+    #[test]
+    fn local_speech_starts_at_once_and_stops_after_the_hangover() {
+        let t0 = Instant::now();
+        let ms = |n| t0 + Duration::from_millis(n);
+        let mut speech = LocalSpeech::default();
+        assert_eq!(speech.update(false, false, ms(0)), None);
+        assert_eq!(speech.update(true, false, ms(10)), Some(true));
+        assert_eq!(speech.update(true, false, ms(20)), None);
+        assert_eq!(speech.update(false, false, ms(200)), None);
+        assert_eq!(speech.update(true, false, ms(250)), None);
+        assert_eq!(speech.update(false, false, ms(540)), None);
+        assert_eq!(speech.update(false, false, ms(550)), Some(false));
+        assert_eq!(speech.update(false, false, ms(900)), None);
+    }
+
+    #[test]
+    fn silencing_stops_local_speech_at_once() {
+        let t0 = Instant::now();
+        let mut speech = LocalSpeech::default();
+        assert_eq!(speech.update(true, false, t0), Some(true));
+        assert_eq!(speech.update(true, true, t0), Some(false));
+        assert_eq!(speech.update(true, true, t0), None);
+        assert_eq!(speech.update(false, false, t0), None);
+        assert_eq!(speech.update(true, false, t0), Some(true));
+    }
+
+    #[test]
+    fn enhanced_voice_needs_an_open_gate_and_enough_level() {
+        let reading = |level_db, open| GateReading { level_db, open };
+        assert!(enhanced_voice(reading(-40.0, true), None));
+        assert!(!enhanced_voice(reading(-50.0, true), None));
+        assert!(!enhanced_voice(reading(-20.0, false), None));
+        assert!(enhanced_voice(reading(-55.0, true), Some(-60.0)));
+        assert!(!enhanced_voice(reading(-35.0, true), Some(-30.0)));
     }
 
     #[test]

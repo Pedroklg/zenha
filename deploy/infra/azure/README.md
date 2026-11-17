@@ -1,13 +1,12 @@
 # Azure infrastructure (OpenTofu)
 
-Creates the Zenha VM in an existing resource group: VNet and subnet, NSG (ports from [`../modules/host`](../modules/host/main.tf)), static Standard public IPv4 with a DNS label, NIC, a `Standard_B2ats_v2` Ubuntu 24.04 VM with cloud-init, and optionally the start/stop schedule ([`schedule.tf`](schedule.tf)).
+Creates the Zenha VM in an existing resource group: VNet and subnet, NSG (ports from [`../modules/host`](../modules/host/main.tf)), static Standard public IPv4 with a DNS label, NIC, a `Standard_B2ats_v2` Ubuntu 24.04 VM with cloud-init.
 
 | File | Contents |
 | --- | --- |
 | [`main.tf`](main.tf) | Network, IP, NIC, VM |
-| [`schedule.tf`](schedule.tf) | Logic App workflows and their role assignments |
-| [`variables.tf`](variables.tf) | Inputs and defaults (`zenha-rg`, `chilecentral`, `zenha` prefix, schedule times) |
-| [`outputs.tf`](outputs.tf) | `public_ip_address`, `fqdn`, `vm_name`, `schedule_workflow_names` |
+| [`variables.tf`](variables.tf) | Inputs and defaults (`zenha-rg`, `chilecentral`, `zenha` prefix) |
+| [`outputs.tf`](outputs.tf) | `public_ip_address`, `fqdn`, `vm_name` |
 | [`terraform.tfvars.example`](terraform.tfvars.example) | Copy to `terraform.tfvars` (gitignored) |
 
 Requires OpenTofu 1.6+ and the Azure CLI logged in with `ARM_SUBSCRIPTION_ID` set.
@@ -45,31 +44,4 @@ These steps adopt resources created by the former Bicep templates (`main.bicep` 
    tofu import azurerm_network_interface_security_group_association.main "$RG/Microsoft.Network/networkInterfaces/zenha-nic"
    tofu import azurerm_linux_virtual_machine.main "$RG/Microsoft.Compute/virtualMachines/zenha-vm"
    ```
-3. Import the schedule. If it was never deployed and you do not want it, set `schedule_enabled = false` and skip to step 4.
-   ```bash
-   for s in start-mon-fri start-sat-sun deallocate-tue-sat deallocate-sun-mon; do
-     wf="$RG/Microsoft.Logic/workflows/zenha-schedule-$s"
-     tofu import "azurerm_logic_app_workflow.schedule[\"$s\"]" "$wf"
-     tofu import "azurerm_logic_app_trigger_recurrence.schedule[\"$s\"]" "$wf/triggers/Recurrence"
-     tofu import "azurerm_logic_app_action_custom.schedule[\"$s\"]" "$wf/actions/VmPowerAction"
-   done
-   ```
-   Find the `Virtual Machine Contributor` role assignment of each workflow by matching its `principalId`:
-   ```bash
-   az role assignment list \
-     --scope "$RG/Microsoft.Compute/virtualMachines/zenha-vm" \
-     --query "[?roleDefinitionName=='Virtual Machine Contributor'].{id:id, principalId:principalId}" \
-     -o table
-   az resource list -g zenha-rg --resource-type Microsoft.Logic/workflows \
-     --query "[?starts_with(name, 'zenha-schedule-')].{name:name, principalId:identity.principalId}" \
-     -o table
-   ```
-   Then import each one with its GUID:
-   ```bash
-   RA="$RG/Microsoft.Compute/virtualMachines/zenha-vm/providers/Microsoft.Authorization/roleAssignments"
-   tofu import 'azurerm_role_assignment.schedule_vm_contributor["start-mon-fri"]' "$RA/<guid-start-mon-fri>"
-   tofu import 'azurerm_role_assignment.schedule_vm_contributor["start-sat-sun"]' "$RA/<guid-start-sat-sun>"
-   tofu import 'azurerm_role_assignment.schedule_vm_contributor["deallocate-tue-sat"]' "$RA/<guid-deallocate-tue-sat>"
-   tofu import 'azurerm_role_assignment.schedule_vm_contributor["deallocate-sun-mon"]' "$RA/<guid-deallocate-sun-mon>"
-   ```
-4. Run `tofu plan` and check for 0 to destroy and 0 to replace before `tofu apply`.
+3. Run `tofu plan` and check for 0 to destroy and 0 to replace before `tofu apply`.

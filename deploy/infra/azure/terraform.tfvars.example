@@ -11,4 +11,3 @@ admin_username      = "azureuser"
 ssh_public_key      = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIReplaceWithYourOwnPublicKey comment"
 dns_label_prefix    = "zenha-voice-example"
 ssh_allowed_cidr    = ""
-schedule_enabled    = true
