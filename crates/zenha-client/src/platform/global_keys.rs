@@ -6,7 +6,7 @@ use eframe::egui;
 use global_hotkey::hotkey::HotKey;
 use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState};
 
-use crate::hotkeys::HotkeyAction;
+use crate::platform::hotkeys::HotkeyAction;
 
 pub struct GlobalKeys {
     manager: GlobalHotKeyManager,

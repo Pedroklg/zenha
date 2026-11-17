@@ -9,7 +9,7 @@ mod volumes;
 
 use std::collections::BTreeMap;
 
-use crate::settings::{NoiseMode, Settings, VoiceMode};
+use crate::platform::settings::{NoiseMode, Settings, VoiceMode};
 use crate::ui_model::AudioDeviceView;
 
 use devices::selected_label;

@@ -9,28 +9,28 @@ use eframe::egui;
 use crate::avatars::Avatars;
 use crate::chat_images::{ChatImages, ViewerImage, pending_paste_thumb_id};
 use crate::cli::{self, StartupLink};
-use crate::clipboard_image::{self, PasteImageError, SavedPastedImage};
+use crate::platform::clipboard_image::{self, PasteImageError, SavedPastedImage};
 use crate::core_session::CoreSession;
-use crate::credentials;
+use crate::platform::credentials;
 use crate::demo::DemoSession;
 use crate::dialogs;
 use crate::format::server_host;
 #[cfg(windows)]
-use crate::global_keys::GlobalKeys;
+use crate::platform::global_keys::GlobalKeys;
 #[cfg(windows)]
-use crate::hotkeys::HotkeyAction;
+use crate::platform::hotkeys::HotkeyAction;
 #[cfg(windows)]
-use crate::settings::VoiceMode;
-use crate::settings::{self, Settings};
+use crate::platform::settings::VoiceMode;
+use crate::platform::settings::{self, Settings};
 #[cfg(windows)]
-use crate::single_instance::Listener;
+use crate::platform::single_instance::Listener;
 use crate::state::{
     AppState, ChatEntry, CredentialOp, PendingPastedImage, Screen, UpdateEffect, UserAction,
     display_name_error, room_display_title,
 };
 use crate::theme;
 #[cfg(windows)]
-use crate::tray::{Tray, TrayAction};
+use crate::platform::tray::{Tray, TrayAction};
 use crate::ui_model::{SessionPort, UiCommand, UiEvent};
 use crate::update::{self, AvailableUpdate, UpdateDownloadEvent};
 use crate::views;
@@ -991,7 +991,7 @@ mod tests {
     use super::{App, open_path_in_os, window_is_hidden};
     use crate::cli::StartupLink;
     use crate::demo;
-    use crate::settings::Settings;
+    use crate::platform::settings::Settings;
     use crate::state::{Screen, UserAction};
 
     fn demo_settings(display_name: &str) -> Settings {
@@ -1129,7 +1129,7 @@ mod tests {
         let mut harness = demo_harness_with_settings(
             egui::Vec2::new(1280.0, 720.0),
             Settings {
-                noise_suppression: crate::settings::NoiseMode::Enhanced,
+                noise_suppression: crate::platform::settings::NoiseMode::Enhanced,
                 noise_gate_db: Some(-45),
                 ..demo_settings(demo::SELF_NAME)
             },
@@ -1238,7 +1238,7 @@ mod tests {
 
         let dir = std::env::temp_dir().join(format!("zenha-kittest-paste-{}", std::process::id()));
         let image = egui::ColorImage::new([2, 2], vec![egui::Color32::RED; 4]);
-        let saved = crate::clipboard_image::save_pasted_image(&image, &dir).unwrap();
+        let saved = crate::platform::clipboard_image::save_pasted_image(&image, &dir).unwrap();
         let saved_path = saved.path.clone();
         let saved_name = saved.name.clone();
         let ctx = harness.ctx.clone();
@@ -1272,7 +1272,7 @@ mod tests {
             "canceling pasted image should delete temporary PNG"
         );
 
-        let saved_enter = crate::clipboard_image::save_pasted_image(&image, &dir).unwrap();
+        let saved_enter = crate::platform::clipboard_image::save_pasted_image(&image, &dir).unwrap();
         let saved_enter_path = saved_enter.path.clone();
         harness.state_mut().dispatch(
             &ctx,
@@ -1491,7 +1491,7 @@ mod tests {
         let mut harness = demo_harness_with_settings(
             egui::Vec2::new(1280.0, 720.0),
             Settings {
-                noise_suppression: crate::settings::NoiseMode::Enhanced,
+                noise_suppression: crate::platform::settings::NoiseMode::Enhanced,
                 ..demo_settings(demo::SELF_NAME)
             },
         );

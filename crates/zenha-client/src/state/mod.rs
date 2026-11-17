@@ -28,8 +28,8 @@ pub use share::{LocalShare, SharePicker, ShareState, WatchState, aspect_fit};
 pub use update::{UpdateBanner, UpdateEffect, UpdatePhase};
 
 use crate::cli::{compile_time_default_server, resolve_initial_server};
-use crate::hotkeys::HotkeyAction;
-use crate::settings::{NoiseMode, RoomKeys, Settings, VoiceMode};
+use crate::platform::hotkeys::HotkeyAction;
+use crate::platform::settings::{NoiseMode, RoomKeys, Settings, VoiceMode};
 use crate::ui_model::{SharePresetView, UiCommand, UiEvent};
 use admin::upsert_admin_room;
 use audio::{saved_volume_commands, update_participant_volume};

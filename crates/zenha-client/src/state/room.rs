@@ -12,7 +12,7 @@ use super::audio::{
 use super::chat::ChatState;
 use super::share::ShareState;
 use super::{AppState, Screen};
-use crate::settings::{NoiseMode, VoiceMode};
+use crate::platform::settings::{NoiseMode, VoiceMode};
 use crate::ui_model::{ParticipantView, UiCommand, UiEvent};
 
 pub const ROOMS_REFRESH_INTERVAL: Duration = Duration::from_secs(3);

@@ -45,7 +45,7 @@ impl AppState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::settings::Settings;
+    use crate::platform::settings::Settings;
     use crate::state::test_support::{
         devices_event, in_room, mic, room, state_with_code, valid_settings,
     };

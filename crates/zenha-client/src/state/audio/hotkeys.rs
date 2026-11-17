@@ -1,7 +1,7 @@
 //! Estado e configuração de atalhos globais de teclado.
 
-use crate::hotkeys::HotkeyAction;
-use crate::settings::Settings;
+use crate::platform::hotkeys::HotkeyAction;
+use crate::platform::settings::Settings;
 use crate::state::AppState;
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]

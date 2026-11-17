@@ -2,7 +2,7 @@
 
 use zenha_core::Cue;
 
-use crate::settings::VoiceMode;
+use crate::platform::settings::VoiceMode;
 use crate::state::{AppState, Screen};
 use crate::ui_model::UiCommand;
 
@@ -152,7 +152,7 @@ impl AppState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::hotkeys::HotkeyAction;
+    use crate::platform::hotkeys::HotkeyAction;
     use crate::state::UserAction;
     use crate::state::test_support::{in_room, person, room, state_with_code, valid_settings};
     use crate::ui_model::UiEvent;

@@ -13,7 +13,7 @@ use zenha_core::{
     TestPatternSource, TransferState, VideoFrame, is_image_mime,
 };
 
-use crate::settings::NoiseMode;
+use crate::platform::settings::NoiseMode;
 use crate::ui_model::{
     AudioDeviceView, CaptureTargetView, ChatMessageView, Credentials, FeedHandle, FileTransferView,
     FrameFeed, ParticipantView, SessionPort, SharePresetView, TargetKindView, TransferStateView,

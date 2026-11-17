@@ -4,23 +4,15 @@ mod app;
 mod avatars;
 mod chat_images;
 mod cli;
-mod clipboard_image;
 mod core_session;
-mod credentials;
 mod demo;
 mod dialogs;
 mod format;
-#[cfg(windows)]
-mod global_keys;
-mod hotkeys;
 mod icons;
 mod invite;
-mod settings;
-#[cfg(windows)]
-mod single_instance;
+mod platform;
 mod state;
 mod theme;
-mod tray;
 mod ui_model;
 mod update;
 mod views;
@@ -42,15 +34,15 @@ fn main() -> anyhow::Result<()> {
         None
     } else {
         let raw_link = std::env::args().skip(1).find(|arg| !arg.trim().is_empty());
-        match single_instance::start(raw_link.as_deref()) {
-            single_instance::Startup::Run(listener) => listener,
-            single_instance::Startup::Exit => return Ok(()),
+        match platform::single_instance::start(raw_link.as_deref()) {
+            platform::single_instance::Startup::Run(listener) => listener,
+            platform::single_instance::Startup::Exit => return Ok(()),
         }
     };
-    let raw_settings_path = settings::default_path();
+    let raw_settings_path = platform::settings::default_path();
     let mut settings = raw_settings_path
         .as_deref()
-        .map(settings::load)
+        .map(platform::settings::load)
         .unwrap_or_default();
     let (settings_path, saved_password) = if demo_flag {
         settings.client_id = demo::SELF_IDENTITY.to_owned();
@@ -59,15 +51,15 @@ fn main() -> anyhow::Result<()> {
         // Keep --demo isolated from the user's real config file and Credential Manager.
         (None, Some(demo::DEMO_PASSWORD.to_owned()))
     } else {
-        if settings::ensure_client_id(&mut settings)
+        if platform::settings::ensure_client_id(&mut settings)
             && let Some(path) = raw_settings_path.as_deref()
-            && let Err(err) = settings::save(path, &settings)
+            && let Err(err) = platform::settings::save(path, &settings)
         {
             tracing::warn!(%err, "could not save generated client id");
         }
         let server = settings.token_server_url.trim();
         let password = (!server.is_empty())
-            .then(|| credentials::load(server))
+            .then(|| platform::credentials::load(server))
             .flatten();
         (raw_settings_path, password)
     };
@@ -75,7 +67,7 @@ fn main() -> anyhow::Result<()> {
     if let Err(err) = std::thread::Builder::new()
         .name("cleanup-temp-files".into())
         .spawn(|| {
-            clipboard_image::cleanup_old_pastes(&clipboard_image::paste_temp_dir());
+            platform::clipboard_image::cleanup_old_pastes(&platform::clipboard_image::paste_temp_dir());
             update::cleanup_update_dir(&update::update_temp_dir());
         })
     {

@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use super::room::RoomState;
 use super::{AppState, Screen, UserAction};
-use crate::settings::{NoiseMode, Settings, VoiceMode};
+use crate::platform::settings::{NoiseMode, Settings, VoiceMode};
 use crate::ui_model::{
     AudioDeviceView, ChatMessageView, FileTransferView, ParticipantView, TransferStateView, UiEvent,
 };
