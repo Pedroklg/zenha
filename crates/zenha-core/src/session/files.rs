@@ -1,4 +1,4 @@
-//! Validação e disparo de envio de arquivos na sessão.
+//! Validation and triggering of file sending in the session.
 
 use std::path::PathBuf;
 

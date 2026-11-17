@@ -1,4 +1,4 @@
-//! Supressão de ruído por rede neural, atrás de uma interface própria para poder trocar o motor.
+//! Neural network noise suppression, behind its own interface so the engine can be swapped.
 
 use nnnoiseless::DenoiseState;
 

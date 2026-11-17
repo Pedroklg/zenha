@@ -1,4 +1,4 @@
-//! Loop principal da sessão e despacho de comandos e eventos do backend.
+//! Main session loop and dispatch of commands and backend events.
 
 mod admin;
 mod audio;

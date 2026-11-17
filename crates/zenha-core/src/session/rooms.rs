@@ -1,4 +1,4 @@
-//! Entrada, troca e atualização da lista de salas.
+//! Joining, switching and refreshing the room list.
 
 use std::collections::BTreeMap;
 use std::pin::Pin;
@@ -23,7 +23,7 @@ pub(super) async fn wait_optional(sleep: &mut Option<Pin<Box<Sleep>>>) {
     }
 }
 
-/// Chave para entrar em `room`: a dela ou, se não houver, a da sala-mãe.
+/// Key to join `room`: its own or, if none, the parent room's.
 pub(super) fn room_key_for(
     keys: &BTreeMap<String, String>,
     parent: Option<&str>,

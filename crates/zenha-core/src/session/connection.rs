@@ -1,4 +1,4 @@
-//! Máquina de estados de conexão, teardown e reconexão com backoff.
+//! Connection state machine, teardown and reconnection with backoff.
 
 use std::future::Future;
 use std::pin::Pin;

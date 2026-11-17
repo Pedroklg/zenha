@@ -1,4 +1,4 @@
-//! Contrato do backend de mídia e implementações independentes do SDK.
+//! Media backend contract and SDK-independent implementations.
 
 pub(crate) mod no_media;
 pub(crate) mod options;

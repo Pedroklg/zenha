@@ -1,4 +1,4 @@
-//! Captura de tela pelo `DesktopCapturer` do libwebrtc, consultado em thread própria.
+//! Screen capture through libwebrtc's `DesktopCapturer`, polled on its own thread.
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicBool, Ordering};

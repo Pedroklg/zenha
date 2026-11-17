@@ -1,4 +1,4 @@
-//! Áudio publicado junto com a transmissão de tela.
+//! Audio published along with the screen share.
 
 use std::sync::{Arc, Mutex as StdMutex};
 

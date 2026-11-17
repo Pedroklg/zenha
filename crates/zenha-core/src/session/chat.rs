@@ -1,4 +1,4 @@
-//! Envio, histórico, exclusão e renovação de token de chat na sessão.
+//! Chat sending, history, deletion and token renewal in the session.
 
 use std::future::Future;
 use std::sync::Arc;

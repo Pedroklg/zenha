@@ -1,4 +1,4 @@
-//! `FakeBackend`: backend de mídia falso que registra as chamadas recebidas.
+//! `FakeBackend`: fake media backend that records the calls it receives.
 
 use std::collections::HashMap;
 use std::path::PathBuf;

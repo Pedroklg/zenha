@@ -1,4 +1,4 @@
-//! Tradução de respostas HTTP e falhas de transporte do servidor de tokens em `SessionError`.
+//! Translation of HTTP responses and transport failures from the token server into `SessionError`.
 
 use reqwest::StatusCode;
 use zenha_protocol::{ErrorResponse, ROOM_LOCKED_ERROR};

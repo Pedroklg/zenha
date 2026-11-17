@@ -1,4 +1,4 @@
-//! Cliente HTTP do servidor de tokens: salas, chat, administração e avatares.
+//! Token server HTTP client: rooms, chat, administration and avatars.
 
 use std::collections::BTreeMap;
 use std::time::Duration;

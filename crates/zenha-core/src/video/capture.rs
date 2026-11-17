@@ -58,7 +58,7 @@ pub trait FrameSource: Send + 'static {
     ) -> Result<(), SessionError>;
     fn stop(&mut self);
 
-    /// Captura uma miniatura única de `target` com lado maior de até `max_side` px (RGBA).
+    /// Captures a single thumbnail of `target` with its longest side up to `max_side` px (RGBA).
     fn capture_thumbnail(
         &mut self,
         target: &CaptureTarget,
@@ -285,9 +285,9 @@ pub fn bgra_to_rgba(frame: &BgraFrame<'_>, out: &mut [u8]) {
     }
 }
 
-/// Redimensiona por vizinho mais próximo e converte apenas os pixels amostrados de BGRA para RGBA.
+/// Resizes by nearest neighbor and converts only the sampled pixels from BGRA to RGBA.
 ///
-/// Mantém o tamanho original quando `dst_w == frame.width && dst_h == frame.height`.
+/// Keeps the original size when `dst_w == frame.width && dst_h == frame.height`.
 pub fn bgra_to_rgba_scaled(frame: &BgraFrame<'_>, dst_w: u32, dst_h: u32, out: &mut [u8]) {
     if !frame.is_consistent() || frame.width == 0 || frame.height == 0 || dst_w == 0 || dst_h == 0 {
         return;
@@ -321,7 +321,7 @@ pub fn bgra_to_rgba_scaled(frame: &BgraFrame<'_>, dst_w: u32, dst_h: u32, out: &
     }
 }
 
-/// Reduz um quadro BGRA para até `max_side` no lado maior e converte para `VideoFrame` RGBA.
+/// Shrinks a BGRA frame to at most `max_side` on the longest side and converts it to an RGBA `VideoFrame`.
 pub fn bgra_to_video_frame(
     frame: &BgraFrame<'_>,
     max_side: u32,

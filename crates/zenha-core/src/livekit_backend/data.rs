@@ -1,4 +1,4 @@
-//! Envio de pacotes de dados e de arquivos pela sala.
+//! Sending data packets and files through the room.
 
 use std::path::PathBuf;
 

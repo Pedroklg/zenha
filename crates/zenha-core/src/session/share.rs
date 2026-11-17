@@ -1,4 +1,4 @@
-//! Transmissão de tela, miniaturas de captura e visualização remota.
+//! Screen sharing, capture thumbnails and remote viewing.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};

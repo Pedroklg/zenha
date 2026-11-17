@@ -1,4 +1,4 @@
-//! Envio, remoção e cache em disco das fotos de perfil na sessão.
+//! Upload, removal and on-disk cache of profile pictures in the session.
 
 use std::future::Future;
 use std::path::{Path, PathBuf};

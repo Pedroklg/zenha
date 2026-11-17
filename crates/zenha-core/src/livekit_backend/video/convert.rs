@@ -1,4 +1,4 @@
-//! Conversão de quadros BGRA para I420, com redução prévia quando necessário.
+//! Conversion of BGRA frames to I420, with prior downscaling when needed.
 
 use livekit::webrtc::native::yuv_helper;
 use livekit::webrtc::video_frame::I420Buffer;

@@ -1,4 +1,4 @@
-//! Montagem de URLs e requisições do cliente HTTP do servidor de tokens.
+//! Building URLs and requests for the token server HTTP client.
 
 use std::collections::BTreeMap;
 

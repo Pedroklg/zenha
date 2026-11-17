@@ -1,4 +1,4 @@
-//! Backend de mídia real usando o SDK do LiveKit.
+//! Real media backend using the LiveKit SDK.
 
 mod audio;
 mod data;
@@ -186,7 +186,7 @@ impl Flags {
     }
 }
 
-/// Backend de mídia real: sala do LiveKit, microfone e reprodução pelo áudio da plataforma.
+/// Real media backend: LiveKit room, microphone and playback through the platform audio.
 pub struct LiveKitBackend {
     connection: Mutex<Option<Connection>>,
     flags: Arc<Flags>,
