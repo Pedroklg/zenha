@@ -650,3 +650,67 @@ fn replacing_canceling_switching_or_leaving_clears_pending_paste_and_queues_dele
     state.apply_event(UiEvent::Left);
     assert_eq!(state.take_pending_paste_deletes(), vec![fifth.path]);
 }
+
+fn webhook_post(id: &str) -> zenha_protocol::WebhookPost {
+    zenha_protocol::WebhookPost {
+        id: id.to_owned(),
+        name: "Gamers Club".to_owned(),
+        sent_at_unix_ms: 7,
+        content: Some("oi".to_owned()),
+        embeds: Vec::new(),
+    }
+}
+
+#[test]
+fn webhook_post_joins_the_timeline_and_counts_as_unread_while_collapsed() {
+    let mut state = state_with_code();
+    in_room(&mut state);
+    state.apply_event(UiEvent::ChatReceived(message(1)));
+    state.apply_event(UiEvent::WebhookPosted(webhook_post("a1")));
+    let chat = &room(&state).chat;
+    assert_eq!(chat.messages.len(), 2);
+    assert!(matches!(
+        chat.messages.back(),
+        Some(ChatEntry::Webhook(post)) if post.id == "a1"
+    ));
+    assert_eq!(chat.unread, 0);
+
+    state.handle_action(UserAction::ToggleChat);
+    state.apply_event(UiEvent::WebhookPosted(webhook_post("a2")));
+    state.apply_event(UiEvent::WebhookPosted(webhook_post("a2")));
+    assert_eq!(room(&state).chat.unread, 2);
+    assert_eq!(room(&state).chat.messages.len(), 4);
+}
+
+#[test]
+fn webhook_post_is_ignored_outside_a_room_and_dropped_when_leaving() {
+    let mut state = state_with_code();
+    state.apply_event(UiEvent::WebhookPosted(webhook_post("a0")));
+    assert!(!matches!(state.screen, Screen::InRoom(_)));
+
+    in_room(&mut state);
+    state.apply_event(UiEvent::WebhookPosted(webhook_post("a1")));
+    assert_eq!(room(&state).chat.messages.len(), 1);
+    state.apply_event(UiEvent::Left);
+    in_room(&mut state);
+    assert!(room(&state).chat.messages.is_empty());
+}
+
+#[test]
+fn webhook_post_is_not_touched_by_history_or_delete() {
+    let mut state = state_with_code();
+    in_room(&mut state);
+    state.apply_event(UiEvent::WebhookPosted(webhook_post("a1")));
+    state.apply_event(UiEvent::ChatHistory {
+        messages: vec![saved_message("h1", "ana", "ANA", "antiga")],
+        has_more: false,
+        before: None,
+    });
+    state.apply_event(UiEvent::ChatDeleted {
+        id: "a1".to_owned(),
+        sender: String::new(),
+    });
+    let chat = &room(&state).chat;
+    assert_eq!(chat.messages.len(), 2);
+    assert!(matches!(chat.messages.back(), Some(ChatEntry::Webhook(_))));
+}

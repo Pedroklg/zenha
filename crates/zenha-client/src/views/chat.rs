@@ -1,6 +1,8 @@
 use eframe::egui::{self, CornerRadius, Margin, RichText, Stroke};
 use zenha_protocol::MAX_CHAT_MESSAGE_LEN;
 
+use super::linked_text::linked_text;
+use super::webhook_card;
 use crate::chat_images::{ChatImages, ThumbState, ViewerImage, fit_within, pending_paste_thumb_id};
 use crate::format::{DISPLAY_UTC_OFFSET_MINUTES, format_hhmm, format_size};
 use crate::icons;
@@ -283,6 +285,10 @@ fn messages(
                         file_entry(ui, file, participants, local_identity, images, actions);
                         ui.add_space(10.0);
                     }
+                    ChatEntry::Webhook(post) => {
+                        webhook_card::card(ui, post);
+                        ui.add_space(10.0);
+                    }
                 }
             }
         });
@@ -317,7 +323,7 @@ fn text_entry(
                 icon_resp.on_hover_text("Mensagem salva");
             }
         });
-        ui.label(RichText::new(&message.text).color(theme::TEXT_SECONDARY));
+        linked_text(ui, &message.text, theme::TEXT_SECONDARY);
     });
     if message.saved && (is_self || is_admin) {
         entry.response.container_context_menu(|ui| {

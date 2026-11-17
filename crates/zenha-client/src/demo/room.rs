@@ -112,6 +112,9 @@ impl DemoSession {
                 before: None,
             },
         );
+        let [lobby, started] = Self::webhook_posts();
+        self.schedule(join + self.delays.reply, UiEvent::WebhookPosted(lobby));
+        self.schedule(join + self.delays.reply * 2, UiEvent::WebhookPosted(started));
         self.ana_sharing = true;
         self.schedule(
             join + self.delays.remote_share,

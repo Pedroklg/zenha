@@ -497,3 +497,27 @@ fn locked_room_and_sub_room_need_the_password_once() {
             .any(|e| matches!(e, UiEvent::Joined { room, .. } if room == "cantinho"))
     );
 }
+
+#[test]
+fn join_posts_a_lobby_card_and_a_match_card() {
+    let mut session = DemoSession::with_delays(DemoDelays::instant());
+    let events = joined(&mut session);
+    let posts: Vec<_> = events
+        .iter()
+        .filter_map(|e| match e {
+            UiEvent::WebhookPosted(post) => Some(post),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(posts.len(), 2);
+    assert_eq!(
+        posts[0].embeds[0].url.as_deref(),
+        Some("https://gamersclub.com.br/j/123/abc")
+    );
+    assert!(
+        posts[1].embeds[0].fields[0]
+            .value
+            .starts_with("connect 1.2.3.4:27015;password xyz")
+    );
+    assert!(posts.iter().all(|post| post.validate().is_ok()));
+}
