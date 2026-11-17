@@ -31,8 +31,8 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg",
 keyring = { version = "=3.6.3", default-features = false, features = ["windows-native"] }
 ndarray = "0.15"
 nnnoiseless = { version = "0.5.2", default-features = false }
-livekit = { version = "=0.10.1", default-features = false, features = ["native", "rustls-tls-webpki-roots"] }
-livekit-api = { version = "=0.10.1", default-features = false, features = ["services", "access-token", "rustls-tls-webpki-roots"] }
+livekit = { version = "=0.11.0", default-features = false, features = ["native", "rustls-tls-webpki-roots"] }
+livekit-api = { version = "=0.10.2", default-features = false, features = ["services", "access-token", "rustls-tls-webpki-roots"] }
 rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std", "tls12"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
