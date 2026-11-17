@@ -423,6 +423,10 @@ pub(super) fn apply_room_event(state: &mut RoomState, event: UiEvent) -> Option<
             state.chat.push_message(message, &state.local_identity);
             None
         }
+        UiEvent::WebhookPosted(post) => {
+            state.chat.push_webhook(post);
+            None
+        }
         UiEvent::ChatHistory {
             messages,
             has_more,
@@ -468,6 +472,9 @@ pub(super) fn apply_room_event(state: &mut RoomState, event: UiEvent) -> Option<
         | UiEvent::AdminRoomUpdated(_)
         | UiEvent::AdminRoomDeleted { .. }
         | UiEvent::AdminInviteRotated
+        | UiEvent::AdminWebhooks(_)
+        | UiEvent::AdminWebhookCreated(_)
+        | UiEvent::AdminWebhookDeleted { .. }
         | UiEvent::AdminStoppedScreenShare
         | UiEvent::MovedByAdmin { .. }
         | UiEvent::LocalAvatarChanged { .. }

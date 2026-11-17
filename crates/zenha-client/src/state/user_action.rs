@@ -116,4 +116,7 @@ pub enum UserAction {
     OpenKickParticipant {
         identity: String,
     },
+    CreateWebhook,
+    OpenRevokeWebhook(String),
+    DismissCreatedWebhook,
 }

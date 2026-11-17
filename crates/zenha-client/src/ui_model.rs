@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use zenha_core::{AdminAction, RemovalReason, RoomKey};
-use zenha_protocol::{AdminRoom, RoomSummary};
+use zenha_protocol::{AdminRoom, AdminWebhook, CreatedWebhook, RoomSummary, WebhookPost};
 
 use crate::platform::settings::NoiseMode;
 
@@ -379,6 +379,13 @@ pub enum UiEvent {
     AdminFailed {
         message: String,
     },
+    AdminWebhooks(Vec<AdminWebhook>),
+    AdminWebhookCreated(CreatedWebhook),
+    AdminWebhookDeleted {
+        id: String,
+    },
+    /// Integration post for the current room; never stored.
+    WebhookPosted(WebhookPost),
 }
 
 #[derive(Clone, PartialEq, Eq)]

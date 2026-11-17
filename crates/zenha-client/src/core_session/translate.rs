@@ -260,6 +260,10 @@ impl Translator {
             Event::AdminRoomUpdated(room) => vec![UiEvent::AdminRoomUpdated(room)],
             Event::AdminRoomDeleted { id } => vec![UiEvent::AdminRoomDeleted { id }],
             Event::AdminInviteRotated => vec![UiEvent::AdminInviteRotated],
+            Event::AdminWebhooks(webhooks) => vec![UiEvent::AdminWebhooks(webhooks)],
+            Event::AdminWebhookCreated(created) => vec![UiEvent::AdminWebhookCreated(created)],
+            Event::AdminWebhookDeleted { id } => vec![UiEvent::AdminWebhookDeleted { id }],
+            Event::WebhookPosted(post) => vec![UiEvent::WebhookPosted(post)],
             Event::AdminStoppedScreenShare => vec![UiEvent::AdminStoppedScreenShare],
             Event::MovedByAdmin { to_room } => {
                 if self.room.is_some() {

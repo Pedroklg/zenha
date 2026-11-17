@@ -230,7 +230,7 @@ impl App {
                     .iter()
                     .filter_map(|entry| match entry {
                         ChatEntry::File(file) => Some(file.id.as_str()),
-                        ChatEntry::Text(_) => None,
+                        ChatEntry::Text(_) | ChatEntry::Webhook(_) => None,
                     })
                     .collect();
                 let pending_id = room

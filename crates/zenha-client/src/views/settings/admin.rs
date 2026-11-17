@@ -1,11 +1,13 @@
 //! Admin section of the settings.
 
 use super::*;
+use super::webhooks::webhooks_section;
 
 pub(super) fn admin_section(
     ui: &mut egui::Ui,
     can_admin: bool,
     admin: &mut AdminState,
+    rooms: &[RoomSummary],
     actions: &mut Vec<UserAction>,
 ) {
     section_heading(ui, "Administração", true);
@@ -39,6 +41,7 @@ pub(super) fn admin_section(
                 actions.push(UserAction::RotateInvite);
             }
         });
+        webhooks_section(ui, admin, rooms, actions);
     } else {
         ui.label("Senha de administrador");
         ui.add_space(CONTROL_GAP);

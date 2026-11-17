@@ -7,9 +7,12 @@ mod room;
 mod share;
 #[cfg(test)]
 mod tests;
+mod webhooks;
 
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::{Duration, Instant};
+
+use zenha_protocol::AdminWebhook;
 
 use crate::core_session::TestFeed;
 use crate::ui_model::{ParticipantView, SessionPort, UiCommand, UiEvent};
@@ -107,6 +110,8 @@ pub struct DemoSession {
     unlocked: Vec<String>,
     room_counter: u64,
     admin_active: bool,
+    webhooks: Vec<AdminWebhook>,
+    webhook_counter: u64,
     participants: Vec<ParticipantView>,
     muted: bool,
     noise_gate: Option<i8>,
@@ -169,6 +174,8 @@ impl DemoSession {
             unlocked: Vec::new(),
             room_counter: 0,
             admin_active: false,
+            webhooks: Self::demo_webhooks(),
+            webhook_counter: 0,
             participants: Vec::new(),
             muted: false,
             noise_gate: None,

@@ -3,6 +3,8 @@
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use zenha_protocol::{WebhookEmbed, WebhookField, WebhookPost};
+
 use crate::ui_model::{ChatMessageView, FileTransferView, TransferStateView, UiEvent};
 
 use super::{DemoSession, REPLIES, SELF_IDENTITY, SELF_NAME};
@@ -98,6 +100,54 @@ impl DemoSession {
         let finished = view(TransferStateView::Done { path });
         self.schedule(Duration::ZERO, UiEvent::FileTransfer(started));
         self.schedule(self.delays.reply, UiEvent::FileTransfer(finished));
+    }
+
+    pub(super) fn webhook_posts() -> [WebhookPost; 2] {
+        let now = Self::now_unix_ms();
+        let field = |name: &str, value: &str| WebhookField {
+            name: name.to_owned(),
+            value: value.to_owned(),
+        };
+        let embed = |title: Option<&str>, url: Option<&str>, fields| WebhookEmbed {
+            title: title.map(str::to_owned),
+            url: url.map(str::to_owned),
+            description: None,
+            fields,
+        };
+        let post = |id: &str, embed| WebhookPost {
+            id: id.to_owned(),
+            name: "Gamers Club".to_owned(),
+            sent_at_unix_ms: now,
+            content: None,
+            embeds: vec![embed],
+        };
+        [
+            post(
+                "demolobby",
+                embed(
+                    Some("Clique aqui para abrir a lobby"),
+                    Some("https://gamersclub.com.br/j/123/abc"),
+                    vec![
+                        field("Tipo da sala:", "FECHADA"),
+                        field("Membros:", "ana | 15 | KDR: 1.2"),
+                    ],
+                ),
+            ),
+            post(
+                "demomatch",
+                embed(
+                    None,
+                    None,
+                    vec![
+                        field(
+                            "IP da partida:",
+                            "connect 1.2.3.4:27015;password xyz \n[Conectar ao servidor](steam://connect/1.2.3.4:27015/xyz)",
+                        ),
+                        field("Mapa:", "de_mirage"),
+                    ],
+                ),
+            ),
+        ]
     }
 
     pub(super) fn now_unix_ms() -> u64 {
