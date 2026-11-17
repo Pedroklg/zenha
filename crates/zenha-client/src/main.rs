@@ -14,7 +14,7 @@ mod platform;
 mod state;
 mod theme;
 mod ui_model;
-mod update;
+mod updater;
 mod views;
 
 use eframe::egui;
@@ -68,7 +68,7 @@ fn main() -> anyhow::Result<()> {
         .name("cleanup-temp-files".into())
         .spawn(|| {
             platform::clipboard_image::cleanup_old_pastes(&platform::clipboard_image::paste_temp_dir());
-            update::cleanup_update_dir(&update::update_temp_dir());
+            updater::cleanup_update_dir(&updater::update_temp_dir());
         })
     {
         tracing::debug!(%err, "could not start startup cleanup thread");

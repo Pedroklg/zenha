@@ -32,7 +32,7 @@ use crate::theme;
 #[cfg(windows)]
 use crate::platform::tray::{Tray, TrayAction};
 use crate::ui_model::{SessionPort, UiCommand, UiEvent};
-use crate::update::{self, AvailableUpdate, UpdateDownloadEvent};
+use crate::updater::{self, AvailableUpdate, UpdateDownloadEvent};
 use crate::views;
 
 const REPAINT_INTERVAL: Duration = Duration::from_millis(100);
@@ -75,7 +75,7 @@ pub struct App {
     update_rx: Option<Receiver<AvailableUpdate>>,
     update_download_tx: Sender<UpdateDownloadEvent>,
     update_download_rx: Receiver<UpdateDownloadEvent>,
-    active_download: Option<update::DownloadHandle>,
+    active_download: Option<updater::DownloadHandle>,
     demo_download: Option<DemoUpdateDownload>,
     #[cfg(windows)]
     forwarded_links: Option<Receiver<String>>,
@@ -127,11 +127,11 @@ impl App {
         let (update_download_tx, update_download_rx) = channel();
         let update_rx = if demo_flag {
             state.set_can_auto_update(true);
-            state.set_available_update(update::demo_available_update());
+            state.set_available_update(updater::demo_available_update());
             None
         } else {
-            state.set_can_auto_update(update::is_installed_exe());
-            update::spawn_check(ctx.clone())
+            state.set_can_auto_update(updater::is_installed_exe());
+            updater::spawn_check(ctx.clone())
         };
         #[cfg(windows)]
         let forwarded_links = instance.map(|listener| {
@@ -305,7 +305,7 @@ impl App {
                     downloaded: total,
                     total,
                 });
-            let (_, exe_path) = update::installer_paths(&update::update_temp_dir(), &version)
+            let (_, exe_path) = updater::installer_paths(&updater::update_temp_dir(), &version)
                 .unwrap_or_else(|| (PathBuf::new(), PathBuf::from("Zenha-demo-setup.exe")));
             self.state
                 .apply_update_event(UpdateDownloadEvent::Finished {
@@ -390,7 +390,7 @@ impl App {
                         });
                         ctx.request_repaint();
                     } else {
-                        self.active_download = update::spawn_download(
+                        self.active_download = updater::spawn_download(
                             ctx.clone(),
                             id,
                             version,
@@ -417,7 +417,7 @@ impl App {
                         let cmds = self.state.leave_for_update();
                         self.send_commands(cmds);
                     } else {
-                        match update::launch_installer(&path) {
+                        match updater::launch_installer(&path) {
                             Ok(()) => {
                                 let cmds = self.state.leave_for_update();
                                 self.send_commands(cmds);
