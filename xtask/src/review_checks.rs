@@ -739,11 +739,7 @@ mod tests {
     fn derived_debug_with_secret_field_is_flagged() {
         let code = "#[derive(Debug, Clone)]\npub struct Config {\n    pub bind: String,\n    pub livekit_api_secret: String,\n}\n#[derive(Clone)]\npub struct Safe {\n    api_secret: String,\n}\n#[derive(Debug)]\npub struct Login {\n    pub invite_code: String,\n}\n#[derive(Debug)]\npub struct Invite {\n    pub password: String,\n}\n#[derive(Debug)]\npub struct Resp {\n    pub token: String,\n}\n";
         assert_eq!(
-            rules(
-                debug_secrets,
-                "crates/zenha-server/src/config.rs",
-                code
-            ),
+            rules(debug_secrets, "crates/zenha-server/src/config.rs", code),
             [1, 10, 14, 18]
         );
     }
@@ -752,11 +748,7 @@ mod tests {
     fn sql_and_deploy_and_ignore_rules() {
         let sql = "let q = format!(\"SELECT * FROM {t}\");\nlet id = format!(\"msg-{i}\");\n";
         assert_eq!(
-            rules(
-                sql_format,
-                "crates/zenha-server/src/chat_store.rs",
-                sql
-            ),
+            rules(sql_format, "crates/zenha-server/src/chat_store.rs", sql),
             [1]
         );
         let compose = "image: caddy:2.11.9-alpine\nimage: livekit/livekit-server:latest\n";

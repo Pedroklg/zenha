@@ -38,7 +38,6 @@ pub(super) fn init_schema(conn: &Connection) -> Result<(), ChatStoreError> {
                 version TEXT NOT NULL
             );",
     )?;
-    migrate_rooms(&conn)?;
     migrate_rooms(conn)?;
     Ok(())
 }
