@@ -3,6 +3,7 @@
 mod admin;
 mod avatar;
 mod chat;
+mod hooks;
 mod rate_limit;
 mod rooms;
 #[cfg(test)]
@@ -21,7 +22,9 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, patch, post, put};
 use livekit_api::access_token::{Claims, TokenVerifier};
 use subtle::ConstantTimeEq;
-use zenha_protocol::{ErrorResponse, MAX_AVATAR_UPLOAD_BYTES, validate_room_name};
+use zenha_protocol::{
+    ErrorResponse, MAX_AVATAR_UPLOAD_BYTES, MAX_WEBHOOK_BODY_BYTES, validate_room_name,
+};
 
 use crate::config::Config;
 use crate::directory::{RoomDirectory, RoomModerator};
@@ -97,6 +100,13 @@ pub fn router(state: AppState) -> Router {
             get(admin::admin_list_webhooks).post(admin::admin_create_webhook),
         )
         .route("/admin/webhooks/{id}", delete(admin::admin_delete_webhook))
+        .route(
+            "/hooks/{id}/{token}",
+            post(hooks::post_hook)
+                .options(hooks::hook_preflight)
+                .layer(DefaultBodyLimit::max(MAX_WEBHOOK_BODY_BYTES))
+                .layer(axum::middleware::map_response(hooks::allow_any_origin)),
+        )
         .with_state(state)
 }
 
