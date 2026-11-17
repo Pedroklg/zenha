@@ -686,7 +686,8 @@ pub fn room_password_dialog(
                     .desired_width(f32::INFINITY)
                     .hint_text("Senha da sala"),
             );
-            if ui.ctx().memory(|m| m.focused().is_none()) {
+            let enter = input.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+            if !enter && ui.ctx().memory(|m| m.focused().is_none()) {
                 input.request_focus();
             }
             if let Some(err) = &current.error {
@@ -695,7 +696,6 @@ pub fn room_password_dialog(
             }
             ui.add_space(14.0);
             ui.horizontal(|ui| {
-                let enter = input.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
                 let label = if current.busy {
                     "Entrando..."
                 } else {
@@ -890,7 +890,8 @@ fn room_edit_dialog_ui(
             .desired_width(f32::INFINITY)
             .hint_text("Nome da sala"),
     );
-    if ui.ctx().memory(|m| m.focused().is_none()) {
+    let title_enter = input.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+    if !title_enter && ui.ctx().memory(|m| m.focused().is_none()) {
         input.request_focus();
     }
     ui.add_space(10.0);
@@ -935,8 +936,8 @@ fn room_edit_dialog_ui(
     }
     ui.add_space(14.0);
     ui.horizontal(|ui| {
-        let enter = (input.lost_focus() || password_input.lost_focus())
-            && ui.input(|i| i.key_pressed(egui::Key::Enter));
+        let enter = title_enter
+            || (password_input.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)));
         if ui.add(theme::accent_button(confirm_label)).clicked() || enter {
             actions.push(UserAction::ConfirmAdminDialog);
         }
@@ -1055,5 +1056,45 @@ mod tests {
         assert_eq!(local_display_name(&list, "id-1"), "Lucas");
         assert_eq!(local_display_name(&list, "id-2"), "id-2");
         assert_eq!(local_display_name(&list, ""), "Você");
+    }
+}
+
+#[cfg(test)]
+mod password_dialog_tests {
+    use egui_kittest::Harness;
+    use egui_kittest::kittest::Queryable;
+
+    use super::*;
+    use crate::state::SecretText;
+
+    #[test]
+    fn enter_in_the_room_password_field_submits() {
+        let dialog = RoomPasswordDialog {
+            room: "geral".to_owned(),
+            title: "geral".to_owned(),
+            password: SecretText(String::new()),
+            error: None,
+            busy: false,
+        };
+        let mut harness = Harness::builder().build_ui_state(
+            |ui, state: &mut (Option<RoomPasswordDialog>, Vec<UserAction>)| {
+                theme::install(ui.ctx());
+                let actions = room_password_dialog(ui.ctx(), &mut state.0);
+                state.1.extend(actions);
+            },
+            (Some(dialog), Vec::new()),
+        );
+        harness.run_steps(2);
+        harness
+            .get_by_role(egui::accesskit::Role::PasswordInput)
+            .type_text("abc");
+        harness.run_steps(2);
+        harness.key_press(egui::Key::Enter);
+        harness.run_steps(2);
+        assert!(
+            harness.state().1.contains(&UserAction::SubmitRoomPassword),
+            "{:?}",
+            harness.state().1
+        );
     }
 }
