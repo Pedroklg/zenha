@@ -341,6 +341,8 @@ struct Stats {
     keyframes: u64,
     bytes: u64,
     busy: Duration,
+    last_output: Option<Instant>,
+    max_gap: Duration,
 }
 
 impl Stats {
@@ -355,6 +357,7 @@ impl Stats {
             keyframes = self.keyframes,
             kbps = (self.bytes as f64 * 8.0 / secs / 1000.0).round(),
             avg_submit_ms = format_args!("{busy_ms:.2}"),
+            max_gap_ms = self.max_gap.as_millis(),
             window_secs = format_args!("{secs:.1}"),
             "gpu share stats"
         );
@@ -494,12 +497,16 @@ impl Share {
             let (width, height) = self.pipeline.out_size;
             for output in outputs {
                 stats.encoded += 1;
+                let sent = Instant::now();
+                if let Some(previous) = stats.last_output.replace(sent) {
+                    stats.max_gap = stats.max_gap.max(sent - previous);
+                }
                 stats.keyframes += u64::from(output.keyframe);
                 stats.bytes += output.data.len() as u64;
                 self.source.capture_encoded_frame(&EncodedVideoFrame {
                     codec: EncodedVideoCodec::H264,
                     payload: &output.data,
-                    timestamp_us: 0,
+                    timestamp_us: output.time_us,
                     frame_type: if output.keyframe {
                         EncodedFrameType::Key
                     } else {

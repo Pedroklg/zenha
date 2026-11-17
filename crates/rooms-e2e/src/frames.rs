@@ -47,6 +47,26 @@ pub fn frame_stats(frame: &VideoFrame) -> Option<FrameStats> {
     })
 }
 
+/// Gaps between received frames: 95th percentile and worst in ms, and how many exceed 1.5x the median.
+pub fn pacing(arrivals: &[f64]) -> (f64, f64, u32) {
+    let mut gaps: Vec<f64> = arrivals
+        .windows(2)
+        .map(|w| (w[1] - w[0]) * 1000.0)
+        .collect();
+    if gaps.is_empty() {
+        return (0.0, 0.0, 0);
+    }
+    gaps.sort_by(f64::total_cmp);
+    let median = gaps[gaps.len() / 2];
+    let p95 = gaps[(gaps.len() * 95 / 100).min(gaps.len() - 1)];
+    let stutters = gaps.iter().filter(|gap| **gap > median * 1.5).count();
+    (
+        p95,
+        gaps[gaps.len() - 1],
+        u32::try_from(stutters).unwrap_or(u32::MAX),
+    )
+}
+
 /// Mean RGB of the test pattern, which barely changes while the bars scroll.
 pub fn expected_pattern_mean(width: u32, height: u32) -> [f64; 3] {
     let bgra = TestPatternSource::render(width, height, 0);
@@ -121,5 +141,15 @@ mod tests {
     fn black_frame_does_not_match_the_pattern() {
         let expected = expected_pattern_mean(64, 36);
         assert!(!colour_matches([0.0, 0.0, 0.0], expected));
+    }
+
+    #[test]
+    fn pacing_counts_gaps_well_above_the_median() {
+        let arrivals = [0.0, 0.016, 0.033, 0.050, 0.100, 0.116, 0.133];
+        let (p95, max, stutters) = pacing(&arrivals);
+        assert!((max - 50.0).abs() < 0.01, "{max}");
+        assert!((p95 - 50.0).abs() < 0.01, "{p95}");
+        assert_eq!(stutters, 1);
+        assert_eq!(pacing(&[1.0]), (0.0, 0.0, 0));
     }
 }

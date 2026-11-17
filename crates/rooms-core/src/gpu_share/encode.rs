@@ -35,6 +35,7 @@ const GOP_SECONDS: u32 = 10;
 pub(super) struct EncodedOutput {
     pub data: Vec<u8>,
     pub keyframe: bool,
+    pub time_us: i64,
 }
 
 fn pack(high: u32, low: u32) -> u64 {
@@ -457,6 +458,8 @@ fn read_sample(sample: &IMFSample, sequence_header: &[u8]) -> Result<EncodedOutp
     let keyframe =
         unsafe { sample.GetUINT32(&MFSampleExtension_CleanPoint) }.is_ok_and(|value| value != 0);
     // SAFETY: plain query on the live sample.
+    let time_us = unsafe { sample.GetSampleTime() }.unwrap_or(0) / 10;
+    // SAFETY: plain query on the live sample.
     let buffer = unsafe { sample.ConvertToContiguousBuffer() }.step("ConvertToContiguousBuffer")?;
     let mut data_ptr = std::ptr::null_mut();
     let mut len = 0u32;
@@ -473,7 +476,11 @@ fn read_sample(sample: &IMFSample, sequence_header: &[u8]) -> Result<EncodedOutp
     }
     // SAFETY: balances the successful Lock above.
     let _ = unsafe { buffer.Unlock() };
-    Ok(EncodedOutput { data, keyframe })
+    Ok(EncodedOutput {
+        data,
+        keyframe,
+        time_us,
+    })
 }
 
 impl Drop for Encoder {

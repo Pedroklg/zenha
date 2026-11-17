@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use anyhow::Context;
 use rooms_core::{Command, Event, FrameSlot, SessionHandle};
 
-use crate::frames::frame_stats;
+use crate::frames::{frame_stats, pacing};
 use crate::protocol::{BotCommand, BotEvent, encode_event, parse_command};
 
 const POLL_INTERVAL: Duration = Duration::from_millis(10);
@@ -53,9 +53,19 @@ fn spawn_measure(watched: Watched, duration: Duration, out: Sender<BotEvent>) {
         };
         let first = frames.generation();
         let started = Instant::now();
-        thread::sleep(duration.min(MAX_MEASURE));
+        let mut arrivals = Vec::new();
+        let mut generation = first;
+        while started.elapsed() < duration.min(MAX_MEASURE) {
+            let now = frames.generation();
+            if now != generation {
+                generation = now;
+                arrivals.push(started.elapsed().as_secs_f64());
+            }
+            thread::sleep(Duration::from_millis(1));
+        }
         let seconds = started.elapsed().as_secs_f64();
         let received = frames.generation().saturating_sub(first);
+        let (gap_p95_ms, gap_max_ms, stutters) = pacing(&arrivals);
         let mut seen = 0;
         let latest = frames
             .take_if_newer(&mut seen)
@@ -70,6 +80,9 @@ fn spawn_measure(watched: Watched, duration: Duration, out: Sender<BotEvent>) {
                 height: stats.height,
                 mean_rgb: stats.mean_rgb,
                 luma_stddev: stats.luma_stddev,
+                gap_p95_ms,
+                gap_max_ms,
+                stutters,
             },
             None => BotEvent::FrameMeasurementFailed {
                 reason: "no valid frame has been received".to_owned(),
