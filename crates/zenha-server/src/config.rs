@@ -35,6 +35,9 @@ pub enum ConfigError {
 
 impl Config {
     pub fn from_env() -> Result<Self, ConfigError> {
+        if std::env::vars_os().any(|(key, _)| key.to_string_lossy().starts_with("ROOMS_")) {
+            tracing::warn!("ROOMS_* environment variables are deprecated, rename them to ZENHA_*");
+        }
         Self::from_lookup(|name| {
             std::env::var(name).ok().or_else(|| {
                 let legacy = name.replacen("ZENHA_", "ROOMS_", 1);
