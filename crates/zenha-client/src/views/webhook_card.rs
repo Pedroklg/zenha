@@ -92,7 +92,13 @@ fn field_block(ui: &mut egui::Ui, field: &WebhookField) {
         if let Some(connect) = connect_command(&field.value) {
             ui.add_space(2.0);
             ui.horizontal(|ui| {
-                if ui.small_button("Copiar").clicked() {
+                let copy = egui::Button::new(
+                    egui::RichText::new("Copiar")
+                        .font(theme::semibold(14.0))
+                        .color(theme::TEXT),
+                )
+                .corner_radius(egui::CornerRadius::same(8));
+                if ui.add(copy).clicked() {
                     ui.ctx().copy_text(connect.command.clone());
                 }
                 if ui.add(theme::accent_button("Conectar")).clicked() {
