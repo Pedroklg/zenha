@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use reqwest::header;
 use zenha_protocol::{
     ROOM_KEYS_HEADER, TokenRequest, encode_room_keys, validate_avatar_version, validate_client_id,
-    validate_room_name,
+    validate_room_name, validate_webhook_id,
 };
 
 use super::{HttpTokenClient, INVITE_HEADER};
@@ -67,6 +67,11 @@ impl HttpTokenClient {
     pub(super) fn admin_room_url(&self, id: &str) -> Result<String, SessionError> {
         validate_room_name(id).map_err(|err| SessionError::InvalidInput(err.to_string()))?;
         Ok(self.url(&format!("/admin/rooms/{id}")))
+    }
+
+    pub(super) fn admin_webhook_url(&self, id: &str) -> Result<String, SessionError> {
+        validate_webhook_id(id).map_err(|err| SessionError::InvalidInput(err.to_string()))?;
+        Ok(self.url(&format!("/admin/webhooks/{id}")))
     }
 
     pub(super) fn admin_participant_url(

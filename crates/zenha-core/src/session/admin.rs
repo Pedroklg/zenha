@@ -4,9 +4,11 @@ use std::fmt;
 
 use zenha_protocol::{
     ADMIN_CHAT_DELETE_TOPIC, ADMIN_MOVE_TOPIC, ADMIN_STOP_SHARE_TOPIC, AdminChatDelete,
-    AdminLoginRequest, AdminMove, AdminStopShare, CreateRoomRequest, MoveParticipantRequest,
-    ROOMS_CHANGED_TOPIC, RoomsChanged, UpdateInviteRequest, UpdateRoomRequest, validate_client_id,
+    AdminLoginRequest, AdminMove, AdminStopShare, CreateRoomRequest, CreateWebhookRequest,
+    MAX_WEBHOOK_BODY_BYTES, MoveParticipantRequest, ROOMS_CHANGED_TOPIC, RoomsChanged,
+    UpdateInviteRequest, UpdateRoomRequest, WEBHOOK_TOPIC, WebhookPost, validate_client_id,
     validate_invite_code, validate_room_name, validate_room_password, validate_room_title,
+    validate_webhook_id,
 };
 
 use crate::api::{AdminAction, Event, SessionError};
@@ -163,6 +165,10 @@ impl Session {
             {
                 self.schedule_rooms_refresh();
             }
+            WEBHOOK_TOPIC => match parse_webhook_post(payload) {
+                Some(post) => self.emit(Event::WebhookPosted(post)),
+                None => tracing::debug!("dropping invalid webhook payload"),
+            },
             _ => {}
         }
     }
@@ -171,8 +177,21 @@ impl Session {
 pub(super) fn is_server_admin_topic(topic: &str) -> bool {
     matches!(
         topic,
-        ADMIN_STOP_SHARE_TOPIC | ADMIN_MOVE_TOPIC | ADMIN_CHAT_DELETE_TOPIC | ROOMS_CHANGED_TOPIC
+        ADMIN_STOP_SHARE_TOPIC
+            | ADMIN_MOVE_TOPIC
+            | ADMIN_CHAT_DELETE_TOPIC
+            | ROOMS_CHANGED_TOPIC
+            | WEBHOOK_TOPIC
     )
+}
+
+fn parse_webhook_post(payload: &[u8]) -> Option<WebhookPost> {
+    if payload.len() > MAX_WEBHOOK_BODY_BYTES * 2 {
+        return None;
+    }
+    let post = serde_json::from_slice::<WebhookPost>(payload).ok()?;
+    post.validate().ok()?;
+    Some(post)
 }
 
 async fn execute_admin_action(
@@ -248,6 +267,19 @@ async fn execute_admin_action(
                 .await?;
             Ok(Some(Event::AdminInviteRotated))
         }
+        AdminAction::ListWebhooks => {
+            let webhooks = tokens.admin_list_webhooks(jwt).await?;
+            Ok(Some(Event::AdminWebhooks(webhooks)))
+        }
+        AdminAction::CreateWebhook { room, name } => {
+            let request = CreateWebhookRequest { room, name };
+            let created = tokens.admin_create_webhook(jwt, &request).await?;
+            Ok(Some(Event::AdminWebhookCreated(created)))
+        }
+        AdminAction::DeleteWebhook { id } => {
+            tokens.admin_delete_webhook(jwt, &id).await?;
+            Ok(Some(Event::AdminWebhookDeleted { id }))
+        }
     }
 }
 
@@ -318,6 +350,14 @@ fn validate_admin_action(action: &AdminAction) -> Result<(), SessionError> {
         AdminAction::RotateInvite { new_code } => {
             validate_invite_code(new_code).map_err(|e| invalid(&e))
         }
+        AdminAction::ListWebhooks => Ok(()),
+        AdminAction::CreateWebhook { room, name } => CreateWebhookRequest {
+            room: room.clone(),
+            name: name.clone(),
+        }
+        .validate()
+        .map_err(|e| invalid(&e)),
+        AdminAction::DeleteWebhook { id } => validate_webhook_id(id).map_err(|e| invalid(&e)),
     }
 }
 
@@ -325,7 +365,8 @@ fn validate_admin_action(action: &AdminAction) -> Result<(), SessionError> {
 mod tests {
     use zenha_protocol::{
         ADMIN_CHAT_DELETE_TOPIC, ADMIN_MOVE_TOPIC, ADMIN_STOP_SHARE_TOPIC, AdminChatDelete,
-        AdminMove, ROOMS_CHANGED_TOPIC, RoomSummary,
+        AdminMove, AdminWebhook, MAX_WEBHOOK_BODY_BYTES, ROOMS_CHANGED_TOPIC, RoomSummary,
+        WEBHOOK_TOPIC, WebhookPost,
     };
 
     use crate::api::{AdminAction, Command, Event, SessionError};
@@ -627,5 +668,108 @@ mod tests {
             h.next().await,
             Event::ChatHistory { before: None, .. }
         ));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn webhook_admin_actions_call_the_server_and_emit_events() {
+        let mut h = harness();
+        h.send(Command::AdminLogin {
+            password: "admin".to_owned(),
+        });
+        assert_eq!(h.next().await, Event::AdminChanged { active: true });
+
+        let listed = AdminWebhook {
+            id: "abc123".to_owned(),
+            room: "geral".to_owned(),
+            name: "Lobby".to_owned(),
+            created_at_unix_ms: 7,
+        };
+        h.tokens
+            .push_admin_webhook_list_result(Ok(vec![listed.clone()]));
+        h.send(Command::Admin(AdminAction::ListWebhooks));
+        assert_eq!(h.next().await, Event::AdminWebhooks(vec![listed]));
+
+        h.send(Command::Admin(AdminAction::CreateWebhook {
+            room: "geral".to_owned(),
+            name: "Lobby".to_owned(),
+        }));
+        let Event::AdminWebhookCreated(created) = h.next().await else {
+            panic!("expected AdminWebhookCreated");
+        };
+        assert_eq!(created.webhook.room, "geral");
+        assert_eq!(created.webhook.name, "Lobby");
+
+        h.send(Command::Admin(AdminAction::DeleteWebhook {
+            id: "abc123".to_owned(),
+        }));
+        assert_eq!(
+            h.next().await,
+            Event::AdminWebhookDeleted {
+                id: "abc123".to_owned()
+            }
+        );
+
+        assert!(matches!(
+            h.tokens.admin_calls()[1..],
+            [
+                AdminTokenCall::ListWebhooks { .. },
+                AdminTokenCall::CreateWebhook { .. },
+                AdminTokenCall::DeleteWebhook { .. },
+            ]
+        ));
+
+        let calls_before = h.tokens.admin_calls().len();
+        h.send(Command::Admin(AdminAction::CreateWebhook {
+            room: "geral".to_owned(),
+            name: " ".to_owned(),
+        }));
+        assert!(matches!(
+            h.next().await,
+            Event::CommandFailed(SessionError::InvalidInput(_))
+        ));
+        h.send(Command::Admin(AdminAction::DeleteWebhook {
+            id: "../x".to_owned(),
+        }));
+        assert!(matches!(
+            h.next().await,
+            Event::CommandFailed(SessionError::InvalidInput(_))
+        ));
+        assert_eq!(h.tokens.admin_calls().len(), calls_before);
+    }
+
+    fn webhook_post(id: &str) -> WebhookPost {
+        WebhookPost {
+            id: id.to_owned(),
+            name: "Lobby".to_owned(),
+            sent_at_unix_ms: 1,
+            content: Some("hello".to_owned()),
+            embeds: Vec::new(),
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn webhook_topic_is_accepted_only_from_the_server_and_validated() {
+        let mut h = harness();
+        h.join("geral").await;
+        let spoof = serde_json::to_vec(&webhook_post("spoof1")).unwrap();
+        let invalid = serde_json::to_vec(&WebhookPost {
+            content: None,
+            ..webhook_post("empty1")
+        })
+        .unwrap();
+        let valid = serde_json::to_vec(&webhook_post("abc123")).unwrap();
+
+        assert!(h.backend.emit(data(WEBHOOK_TOPIC, spoof)));
+        assert!(
+            h.backend
+                .emit_server_data(WEBHOOK_TOPIC, b"not json".to_vec())
+        );
+        assert!(h.backend.emit_server_data(WEBHOOK_TOPIC, invalid));
+        assert!(
+            h.backend
+                .emit_server_data(WEBHOOK_TOPIC, vec![b' '; MAX_WEBHOOK_BODY_BYTES * 2 + 1])
+        );
+        assert!(h.backend.emit_server_data(WEBHOOK_TOPIC, valid));
+        assert_eq!(h.next().await, Event::WebhookPosted(webhook_post("abc123")));
     }
 }
