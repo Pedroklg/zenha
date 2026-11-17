@@ -3,7 +3,7 @@
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
 
-use crate::chat_store::RoomRecord;
+use crate::store::RoomRecord;
 
 const KEY_LABEL: &[u8] = b"zenha.room_key.v1";
 

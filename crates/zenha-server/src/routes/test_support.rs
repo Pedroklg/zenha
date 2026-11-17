@@ -14,7 +14,7 @@ use zenha_protocol::{
 };
 use tower::ServiceExt;
 
-use crate::chat_store::{ChatStore, RoomUpdate};
+use crate::store::{ChatStore, RoomUpdate};
 use crate::config::Config;
 use crate::directory::FakeDirectory;
 

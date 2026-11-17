@@ -23,7 +23,7 @@ use livekit_api::access_token::{Claims, TokenVerifier};
 use zenha_protocol::{ErrorResponse, MAX_AVATAR_UPLOAD_BYTES, validate_room_name};
 use subtle::ConstantTimeEq;
 
-use crate::chat_store::{ChatStore, RoomRecord};
+use crate::store::{ChatStore, RoomRecord};
 use crate::config::Config;
 use crate::directory::{RoomDirectory, RoomModerator};
 

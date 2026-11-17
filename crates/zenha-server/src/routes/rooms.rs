@@ -136,7 +136,7 @@ mod tests {
     use zenha_protocol::{ROOM_KEYS_HEADER, RoomSummary, RoomsResponse, encode_room_keys};
     use tower::ServiceExt;
 
-    use crate::chat_store::RoomUpdate;
+    use crate::store::RoomUpdate;
     use crate::directory::FakeDirectory;
 
     use super::super::test_support::{locked_app, locked_store, unlock, unlock_request};
