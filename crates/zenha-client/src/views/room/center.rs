@@ -5,12 +5,13 @@ use std::collections::BTreeMap;
 use eframe::egui::{self, Align, CornerRadius, Layout, Margin, RichText, Stroke, Vec2};
 use zenha_protocol::RoomSummary;
 
-use crate::views::room_watch::local_share_preview;
-use crate::views::share::VideoRenderer;
 use crate::state::{LocalShare, RoomState, UserAction, room_display_title};
 use crate::theme;
+use crate::views::room_watch::local_share_preview;
+use crate::views::share::VideoRenderer;
 
 use super::HEADER_HEIGHT;
+use super::banners::{collapsed_chat_notice_banner, share_error_banner};
 use super::participants::participants_grid;
 
 const FOOTER_HEIGHT: f32 = 72.0;
@@ -183,4 +184,3 @@ pub(super) fn people_count_label(count: usize) -> String {
         format!("{count} pessoas na sala")
     }
 }
-

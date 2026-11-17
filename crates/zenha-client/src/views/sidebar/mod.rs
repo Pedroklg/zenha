@@ -121,4 +121,3 @@ pub(super) fn sidebar(ui: &mut egui::Ui, args: SidebarArgs<'_>, actions: &mut Ve
                 });
         });
 }
-

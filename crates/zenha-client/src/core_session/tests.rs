@@ -149,8 +149,7 @@ fn change_for_unknown_participant_is_dropped() {
 fn participant_list_is_reported_as_a_join_of_the_current_room() {
     let mut translator = Translator::default();
     joined(&mut translator);
-    let events =
-        translator.translate(Event::ParticipantList(vec![participant("pedro", "Pedro")]));
+    let events = translator.translate(Event::ParticipantList(vec![participant("pedro", "Pedro")]));
     assert!(matches!(
         &events[..],
         [UiEvent::Joined { room, local_identity, participants }]

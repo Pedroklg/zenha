@@ -2,7 +2,10 @@
 
 use std::cell::Cell;
 
-use zenha_core::{AudioDevice, CaptureKind, CaptureTarget, Event, Participant, SessionError, TransferState, is_image_mime};
+use zenha_core::{
+    AudioDevice, CaptureKind, CaptureTarget, Event, Participant, SessionError, TransferState,
+    is_image_mime,
+};
 
 use crate::ui_model::{
     AudioDeviceView, CaptureTargetView, ChatMessageView, FileTransferView, ParticipantView,
@@ -46,7 +49,7 @@ fn view(participant: Participant) -> ParticipantView {
 pub(super) struct Translator {
     pub(super) room: Option<String>,
     local_identity: String,
-    participants: Vec<ParticipantView>,
+    pub(super) participants: Vec<ParticipantView>,
     pub(super) switch_pending: Cell<bool>,
 }
 
@@ -321,4 +324,3 @@ impl Translator {
         }
     }
 }
-

@@ -58,4 +58,3 @@ fn to_core_preset(preset: SharePresetView) -> SharePreset {
         SharePresetView::P1080F60 => SharePreset::P1080F60,
     }
 }
-

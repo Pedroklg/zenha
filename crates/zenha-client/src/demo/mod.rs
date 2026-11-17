@@ -192,7 +192,6 @@ impl DemoSession {
         });
     }
 
-
     pub(super) fn participant(identity: &str, name: &str) -> ParticipantView {
         ParticipantView {
             identity: identity.to_owned(),
@@ -202,7 +201,6 @@ impl DemoSession {
             avatar_version: None,
         }
     }
-
 }
 
 impl Default for DemoSession {
@@ -249,4 +247,3 @@ impl SessionPort for DemoSession {
         None
     }
 }
-

@@ -7,7 +7,9 @@ use eframe::egui;
 use serde::Deserialize;
 
 use super::version::{next_demo_version, parse_semver};
-use super::{AvailableUpdate, DEFAULT_RELEASES_REPO, InstallerAsset, MAX_INSTALLER_BYTES, USER_AGENT};
+use super::{
+    AvailableUpdate, DEFAULT_RELEASES_REPO, InstallerAsset, MAX_INSTALLER_BYTES, USER_AGENT,
+};
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 

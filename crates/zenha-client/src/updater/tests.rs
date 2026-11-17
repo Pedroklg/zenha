@@ -11,6 +11,10 @@ use std::time::Duration;
 use sha2::{Digest, Sha256};
 
 use super::download::{download_to_paths_blocking, is_allowed_download_redirect};
+use super::download::*;
+use super::install::*;
+use super::release::*;
+use super::version::*;
 use super::*;
 
 static NEXT_TEST_ID: AtomicU64 = AtomicU64::new(1);

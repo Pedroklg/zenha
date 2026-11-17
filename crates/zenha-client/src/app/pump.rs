@@ -145,7 +145,6 @@ impl App {
         }
     }
 
-
     pub(super) fn pump_saves(&mut self) {
         while let Ok(result) = self.save_results.try_recv() {
             let text = match result {
@@ -156,7 +155,6 @@ impl App {
         }
     }
 
-
     pub(super) fn pump_image_opens(&mut self) {
         while let Ok(result) = self.open_results.try_recv() {
             if result.is_err() {
@@ -165,7 +163,6 @@ impl App {
             }
         }
     }
-
 
     pub(super) fn pump_pasted_images(&mut self, ctx: &egui::Context) {
         let mut staged = Vec::new();
@@ -184,5 +181,4 @@ impl App {
             self.prune_images();
         }
     }
-
 }

@@ -49,6 +49,10 @@ impl App {
     }
 }
 
-pub(super) fn window_is_hidden(hidden_to_tray: bool, minimized: Option<bool>, visible: Option<bool>) -> bool {
+pub(super) fn window_is_hidden(
+    hidden_to_tray: bool,
+    minimized: Option<bool>,
+    visible: Option<bool>,
+) -> bool {
     hidden_to_tray || minimized == Some(true) || visible == Some(false)
 }

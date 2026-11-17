@@ -67,4 +67,3 @@ impl Drop for TestFeed {
         self.source.stop();
     }
 }
-

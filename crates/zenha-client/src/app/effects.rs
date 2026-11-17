@@ -194,7 +194,6 @@ impl App {
         }
     }
 
-
     pub(super) fn open_in_background(&self, ctx: &egui::Context, path: PathBuf) {
         let sender = self.open_sender.clone();
         let ctx = ctx.clone();
@@ -217,7 +216,6 @@ impl App {
             let _ = self.open_sender.send(Err(()));
         }
     }
-
 
     pub(super) fn prune_images(&mut self) {
         self.viewer_image.retain_id(self.state.open_image_id());
@@ -247,7 +245,11 @@ impl App {
         }
     }
 
-    pub(super) fn paste_image_in_background(&self, ctx: &egui::Context, image: Arc<egui::ColorImage>) {
+    pub(super) fn paste_image_in_background(
+        &self,
+        ctx: &egui::Context,
+        image: Arc<egui::ColorImage>,
+    ) {
         let sender = self.paste_sender.clone();
         let ctx = ctx.clone();
         let spawned = std::thread::Builder::new()
@@ -263,7 +265,6 @@ impl App {
             let _ = self.paste_sender.send(Err(PasteImageError::PrepareFailed));
         }
     }
-
 
     pub(super) fn dispatch(&mut self, ctx: &egui::Context, actions: Vec<UserAction>) {
         if actions.contains(&UserAction::SubmitOnboarding) && self.state.can_submit_onboarding() {

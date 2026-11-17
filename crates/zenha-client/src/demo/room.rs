@@ -7,7 +7,10 @@ use zenha_protocol::RoomSummary;
 
 use crate::ui_model::{ParticipantView, UiEvent};
 
-use super::{DEMO_AVATAR_IDENTITY, DemoMicMeter, DemoRoom, DemoSession, FAILING_ROOM, SELF_IDENTITY, SELF_NAME};
+use super::{
+    DEMO_AVATAR_IDENTITY, DEMO_AVATAR_VERSION, DemoMicMeter, DemoRoom, DemoSession, FAILING_ROOM,
+    SELF_IDENTITY, SELF_NAME,
+};
 
 impl DemoSession {
     /// Salas cuja senha vale para `room`: ela mesma e a sala-mãe.
@@ -166,7 +169,6 @@ impl DemoSession {
             self.schedule(Duration::ZERO, update);
         }
     }
-
 
     pub(super) fn rooms(&self) -> Vec<RoomSummary> {
         self.rooms_list

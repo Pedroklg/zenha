@@ -117,4 +117,3 @@ pub enum UserAction {
         identity: String,
     },
 }
-

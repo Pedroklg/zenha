@@ -1,6 +1,8 @@
 //! Rodapé da barra lateral: aviso de atualização e usuário local.
 
-use eframe::egui::{self, Align, Color32, CornerRadius, Layout, Margin, RichText, Sense, Stroke, Vec2};
+use eframe::egui::{
+    self, Align, Color32, CornerRadius, Layout, Margin, RichText, Sense, Stroke, Vec2,
+};
 
 use super::SidebarUser;
 use crate::format::format_size;
@@ -12,7 +14,11 @@ const FOOTER_AVATAR_SIZE: f32 = 32.0;
 const FOOTER_BUTTON_SIZE: f32 = 32.0;
 const FOOTER_BUTTON_GAP: f32 = 4.0;
 
-pub(super) fn update_footer(ui: &mut egui::Ui, banner: &UpdateBanner, actions: &mut Vec<UserAction>) {
+pub(super) fn update_footer(
+    ui: &mut egui::Ui,
+    banner: &UpdateBanner,
+    actions: &mut Vec<UserAction>,
+) {
     let failed = matches!(banner.phase, UpdatePhase::Failed(_));
     let (fill, border) = if failed {
         (theme::ERROR_BG, theme::ERROR_BORDER)
@@ -137,7 +143,10 @@ struct FooterStatus {
     tooltip: String,
 }
 
-pub(super) fn footer_status(connection: Option<ConnectionStatus>, ptt_hint: Option<&str>) -> FooterStatus {
+fn footer_status(
+    connection: Option<ConnectionStatus>,
+    ptt_hint: Option<&str>,
+) -> FooterStatus {
     match connection {
         None => FooterStatus {
             color: theme::INACTIVE_DOT,
@@ -263,7 +272,6 @@ pub(super) fn user_footer(ui: &mut egui::Ui, user: SidebarUser<'_>, actions: &mu
         },
     );
 }
-
 
 #[cfg(test)]
 mod tests {

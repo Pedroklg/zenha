@@ -67,7 +67,9 @@ fn main() -> anyhow::Result<()> {
     if let Err(err) = std::thread::Builder::new()
         .name("cleanup-temp-files".into())
         .spawn(|| {
-            platform::clipboard_image::cleanup_old_pastes(&platform::clipboard_image::paste_temp_dir());
+            platform::clipboard_image::cleanup_old_pastes(
+                &platform::clipboard_image::paste_temp_dir(),
+            );
             updater::cleanup_update_dir(&updater::update_temp_dir());
         })
     {

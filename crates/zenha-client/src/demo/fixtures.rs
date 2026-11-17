@@ -13,7 +13,6 @@ pub fn demo_avatar_image() -> eframe::egui::ColorImage {
     eframe::egui::ColorImage::new([SIDE, SIDE], pixels)
 }
 
-
 pub(super) fn demo_targets() -> Vec<CaptureTargetView> {
     let target = |id: &str, name: &str, kind| CaptureTargetView {
         id: id.to_owned(),

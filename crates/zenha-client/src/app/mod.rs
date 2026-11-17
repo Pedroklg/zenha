@@ -10,9 +10,9 @@ use eframe::egui;
 use crate::avatars::Avatars;
 use crate::chat_images::{ChatImages, ViewerImage};
 use crate::cli::StartupLink;
-use crate::platform::clipboard_image::{PasteImageError, SavedPastedImage};
 use crate::core_session::CoreSession;
 use crate::demo::DemoSession;
+use crate::platform::clipboard_image::{PasteImageError, SavedPastedImage};
 #[cfg(windows)]
 use crate::platform::global_keys::GlobalKeys;
 use crate::platform::settings::Settings;

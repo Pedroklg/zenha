@@ -7,17 +7,12 @@ mod release;
 mod tests;
 mod version;
 
-pub use download::{DownloadError, DownloadHandle, PartVerifier, UpdateDownloadEvent, spawn_download};
+pub use download::{DownloadHandle, UpdateDownloadEvent, spawn_download};
 pub use install::{
-    cleanup_update_dir, installer_paths, is_installed_exe, is_installed_exe_path, launch_installer,
-    normalize_windows_path, update_temp_dir,
+    cleanup_update_dir, installer_paths, is_installed_exe, launch_installer, update_temp_dir,
 };
-pub use release::{
-    ReleaseAsset, demo_available_update, evaluate_release, installer_asset_name,
-    is_safe_repo_download_url, latest_release_url, parse_sha256_digest, resolve_releases_repo,
-    select_installer_asset, spawn_check,
-};
-pub use version::{SemVer, next_demo_version, parse_semver, should_show_update};
+pub use release::{demo_available_update, spawn_check};
+pub use version::should_show_update;
 
 pub const DEFAULT_RELEASES_REPO: &str = "Pedroklg/zenha";
 pub const MAX_INSTALLER_BYTES: u64 = 200 * 1024 * 1024;

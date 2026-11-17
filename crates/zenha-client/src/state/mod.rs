@@ -21,7 +21,6 @@ use std::time::Instant;
 
 use zenha_protocol::RoomSummary;
 
-
 pub use admin::{AdminDialog, AdminState, parent_options};
 pub use audio::{
     AudioState, DEFAULT_DEVICE_LABEL, DEFAULT_PARTICIPANT_VOLUME, FULL_VOLUME, HotkeyState,

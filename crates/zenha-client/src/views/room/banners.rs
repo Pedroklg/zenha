@@ -68,4 +68,3 @@ pub(super) fn dismissible_banner(
         });
     ui.add_space(12.0);
 }
-

@@ -99,4 +99,3 @@ pub(super) fn is_share_error(error: &SessionError) -> bool {
             | SessionError::Video(_)
     )
 }
-

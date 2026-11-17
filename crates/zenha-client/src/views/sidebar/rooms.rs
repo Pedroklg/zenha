@@ -23,7 +23,11 @@ pub(super) struct RoomsListView<'a> {
     pub(super) is_admin: bool,
 }
 
-pub(super) fn rooms_list(ui: &mut egui::Ui, view: RoomsListView<'_>, actions: &mut Vec<UserAction>) {
+pub(super) fn rooms_list(
+    ui: &mut egui::Ui,
+    view: RoomsListView<'_>,
+    actions: &mut Vec<UserAction>,
+) {
     ui.horizontal(|ui| {
         ui.label(
             RichText::new("SALAS")
@@ -357,7 +361,6 @@ fn is_occupant_speaking(
             .any(|p| p.name == name && p.speaking)
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -440,5 +443,4 @@ mod tests {
         let single_remote = vec![participant("id-ana-1", "Ana")];
         assert!(occupant_volume_target(true, "Ana", &summary, &single_remote, "id-self").is_none());
     }
-
 }

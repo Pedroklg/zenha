@@ -3,9 +3,9 @@
 mod commands;
 mod errors;
 mod feed;
-mod translate;
 #[cfg(test)]
 mod tests;
+mod translate;
 
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -110,4 +110,3 @@ impl SessionPort for CoreSession {
         }
     }
 }
-

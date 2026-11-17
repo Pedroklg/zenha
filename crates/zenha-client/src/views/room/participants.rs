@@ -5,13 +5,13 @@ use std::collections::BTreeMap;
 use eframe::egui::{self, Align, CornerRadius, Layout, Margin, RichText, Sense, Stroke, Vec2};
 use zenha_protocol::RoomSummary;
 
-use crate::views::participant_menu::{
-    ParticipantMenuCtx, VolumeMenuScope, participant_volume_badge, participant_volume_menu,
-};
 use crate::icons;
 use crate::state::{LocalShare, RoomState, UserAction, participant_volume_for};
 use crate::theme;
 use crate::ui_model::ParticipantView;
+use crate::views::participant_menu::{
+    ParticipantMenuCtx, VolumeMenuScope, participant_volume_badge, participant_volume_menu,
+};
 
 const TWO_COL_BREAKPOINT: f32 = 520.0;
 
