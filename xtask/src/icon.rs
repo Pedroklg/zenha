@@ -49,7 +49,7 @@ pub fn encode_ico(sizes: &[u32]) -> Result<Vec<u8>, image::ImageError> {
     Ok(out)
 }
 
-// Keep in sync with `crates/zenha-client/src/tray.rs`.
+// Keep in sync with `crates/zenha-client/src/platform/tray.rs`.
 fn icon_rgba(size: u32) -> Vec<u8> {
     let center = size as f32 / 2.0;
     let radius = (center - 1.0).max(0.0);

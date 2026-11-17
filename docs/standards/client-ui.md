@@ -27,7 +27,7 @@ Complementa [general.md](general.md). Escopo: `crates/zenha-client/`.
 
 ## UI-05: Textos de interface em português do Brasil
 
-- Rótulos, botões, tooltips, banners, mensagens de erro (`describe(&SessionError)` em `core_session.rs`) e menu da bandeja (`tray.rs`) ficam em português do Brasil claro, com acentuação correta.
+- Rótulos, botões, tooltips, banners, mensagens de erro (`describe(&SessionError)` em `core_session/`) e menu da bandeja (`platform/tray.rs`) ficam em português do Brasil claro, com acentuação correta.
 - Mensagens técnicas cruas de bibliotecas (`reqwest`, `livekit`, `io::Error`) são traduzidas antes de aparecer em `UiEvent::Failed` ou nos banners.
 
 ## UI-06: Vídeo e imagens do chat com atualização sob demanda
@@ -48,4 +48,4 @@ Complementa [general.md](general.md). Escopo: `crates/zenha-client/`.
 
 ## UI-09: Paridade do modo `--demo` (`DemoSession`)
 
-- Mudanças em `UiCommand`, `UiEvent` ou nos fluxos visuais de sala, chat, compartilhamento e arquivos devem manter `DemoSession` (`demo.rs`) coerente com `CoreSession`, pois `cargo client -- --demo` é o meio padrão de validação visual offline.
+- Mudanças em `UiCommand`, `UiEvent` ou nos fluxos visuais de sala, chat, compartilhamento e arquivos devem manter `DemoSession` (`demo/`) coerente com `CoreSession`, pois `cargo client -- --demo` é o meio padrão de validação visual offline.

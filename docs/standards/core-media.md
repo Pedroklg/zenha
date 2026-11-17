@@ -35,7 +35,7 @@ Complementa [general.md](general.md). Escopo: `crates/zenha-core/`.
 
 ## CORE-06: Sem bloqueio nem `std::sync::MutexGuard` através de `.await`
 
-- Nas tarefas Tokio (`session/`, `livekit_backend/`, `livekit_files.rs`, `token.rs`), nunca mantenha `std::sync::MutexGuard` ou `RwLock*Guard` vivo através de `.await`: copie o dado num bloco `{ ... }` síncrono curto ou use `tokio::sync::Mutex`.
+- Nas tarefas Tokio (`session/`, `livekit/`, `livekit/files.rs`, `net/token/`), nunca mantenha `std::sync::MutexGuard` ou `RwLock*Guard` vivo através de `.await`: copie o dado num bloco `{ ... }` síncrono curto ou use `tokio::sync::Mutex`.
 - Nunca chame `std::thread::sleep`, `JoinHandle::join` demorado, I/O pesado síncrono ou inicialização COM direto na thread do runtime da sessão (`handle.rs`).
 
 ## CORE-07: Cancelamento limpo em `tokio::select!` e parada de threads em `Drop`
@@ -55,7 +55,7 @@ Complementa [general.md](general.md). Escopo: `crates/zenha-core/`.
 
 ## CORE-10: Recebimento de arquivos com sanitização e limites estritos
 
-- Todo arquivo recebido via byte stream (`livekit_files.rs`, `files.rs`) deve:
+- Todo arquivo recebido via byte stream (`livekit/files.rs`, `files/`) deve:
   1. validar `total_length` em `1..=MAX_FILE_BYTES` antes de abrir arquivo em disco e abortar se o stream exceder o tamanho anunciado;
   2. sanitizar o nome com `sanitize_file_name` (sem `/`, `\`, `..`, caracteres de controle ou nomes reservados do Windows `CON`, `PRN`, `AUX`, `NUL`, `COM1..9`, `LPT1..9`);
   3. limitar downloads simultâneos (`FileReceiver::try_acquire`);
@@ -70,10 +70,10 @@ Complementa [general.md](general.md). Escopo: `crates/zenha-core/`.
 
 - Ao adicionar ou alterar uma variante em `Command`, `Event` ou método em `MediaBackend`, atualize no mesmo diff os **8 pontos de ligação**:
   1. `crates/zenha-core/src/api.rs`
-  2. `crates/zenha-core/src/backend.rs`
+  2. `crates/zenha-core/src/backend/`
   3. `crates/zenha-core/src/session/`
-  4. `crates/zenha-core/src/testing.rs`
-  5. `crates/zenha-core/src/no_media.rs`
-  6. `crates/zenha-core/src/livekit_backend/`
-  7. `crates/zenha-client/src/` (`ui_model.rs`, `core_session.rs`, `demo.rs`, `state/`)
-  8. `crates/zenha-e2e/src/protocol.rs`
+  4. `crates/zenha-core/src/testing/`
+  5. `crates/zenha-core/src/backend/no_media.rs`
+  6. `crates/zenha-core/src/livekit/`
+  7. `crates/zenha-client/src/` (`ui_model.rs`, `core_session/`, `demo/`, `state/`)
+  8. `crates/zenha-e2e/src/protocol/`

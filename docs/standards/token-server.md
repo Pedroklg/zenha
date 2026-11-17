@@ -20,11 +20,11 @@ Complementa [general.md](general.md) e [protocol.md](protocol.md). Escopo: `crat
 ## SRV-04: Rotas de chat autenticadas pelo Bearer JWT; autor vem do token, nunca do body
 
 - Rotas em `/rooms/{room}/chat` autenticam via `authenticate_room` (`routes/mod.rs`): exigem `Authorization: Bearer <token>`, validam assinatura/expiração, conferem `claims.video.room_join` e `claims.video.room == room` (`403 Forbidden` se divergir) e extraem `sender_id` (`claims.sub`) e `sender_name` (`claims.name`) do token — nunca do body.
-- Na exclusão (`DELETE`), `chat_store.rs` exige `sender_id` coincidente com o dono da mensagem antes de apagar (`403`).
+- Na exclusão (`DELETE`), `store/` exige `sender_id` coincidente com o dono da mensagem antes de apagar (`403`).
 
 ## SRV-05: Acesso ao SQLite via `spawn_blocking`, queries parametrizadas e `Immediate`
 
-- Todo acesso ao `rusqlite::Connection` em `ChatStore` (`chat_store.rs`) roda dentro de `tokio::task::spawn_blocking` via `self.with_conn(...)`, nunca bloqueando a thread worker do Tokio.
+- Todo acesso ao `rusqlite::Connection` em `ChatStore` (`store/`) roda dentro de `tokio::task::spawn_blocking` via `self.with_conn(...)`, nunca bloqueando a thread worker do Tokio.
 - A conexão usa `busy_timeout`, `journal_mode = WAL` e `synchronous = NORMAL`.
 - Toda query SQL usa placeholders posicionais (`?1`, `?2`, `params![...]`), nunca interpolação `format!`.
 - Escritas que leem e modificam em sequência usam `TransactionBehavior::Immediate`, e `sent_at_unix_ms` é limitado por `clamp_sent_at`.

@@ -19,10 +19,10 @@ const PROTOCOL_FORBIDDEN: &[&str] = &["async fn", "tokio", "std::fs", "std::net"
 const CORE_PUBLIC_FILES: &[&str] = &[
     "crates/zenha-core/src/lib.rs",
     "crates/zenha-core/src/api.rs",
-    "crates/zenha-core/src/backend.rs",
+    "crates/zenha-core/src/backend/mod.rs",
     "crates/zenha-core/src/handle.rs",
-    "crates/zenha-core/src/video.rs",
-    "crates/zenha-core/src/capture.rs",
+    "crates/zenha-core/src/video/mod.rs",
+    "crates/zenha-core/src/video/capture.rs",
 ];
 const SECRET_FIELDS: &[&str] = &[
     "api_secret",
@@ -46,13 +46,12 @@ const SQL_MARKERS: &[&str] = &[
 ];
 const TRACING_MACROS: &[&str] = &["trace!(", "debug!(", "info!(", "warn!(", "error!("];
 const CORE_12_BINDINGS: &[&str] = &[
-    "crates/zenha-core/src/backend.rs",
-    "crates/zenha-core/src/session.rs",
-    "crates/zenha-core/src/testing.rs",
-    "crates/zenha-core/src/no_media.rs",
-    "crates/zenha-core/src/livekit_backend.rs",
+    "crates/zenha-core/src/backend/",
+    "crates/zenha-core/src/session/",
+    "crates/zenha-core/src/testing/",
+    "crates/zenha-core/src/livekit/",
     "crates/zenha-client/src/",
-    "crates/zenha-e2e/src/protocol.rs",
+    "crates/zenha-e2e/src/protocol/",
 ];
 
 struct Finding {
@@ -748,7 +747,7 @@ mod tests {
     fn sql_and_deploy_and_ignore_rules() {
         let sql = "let q = format!(\"SELECT * FROM {t}\");\nlet id = format!(\"msg-{i}\");\n";
         assert_eq!(
-            rules(sql_format, "crates/zenha-server/src/chat_store.rs", sql),
+            rules(sql_format, "crates/zenha-server/src/store/rooms.rs", sql),
             [1]
         );
         let compose = "image: caddy:2.11.9-alpine\nimage: livekit/livekit-server:latest\n";
@@ -776,16 +775,16 @@ mod tests {
     #[test]
     fn core_12_lists_untouched_bindings_when_enums_change() {
         let api = "pub struct A;\npub enum Command {\n    Join,\n    Leave,\n}\npub enum Event {\n    Joined,\n}\n";
-        let others = "diff --git a/crates/zenha-core/src/session.rs b/crates/zenha-core/src/session.rs\n@@ -9 +9 @@\ndiff --git a/crates/zenha-client/src/state.rs b/crates/zenha-client/src/state.rs\n@@ -1,0 +2 @@\n";
+        let others = "diff --git a/crates/zenha-core/src/session/mod.rs b/crates/zenha-core/src/session/mod.rs\n@@ -9 +9 @@\ndiff --git a/crates/zenha-client/src/state.rs b/crates/zenha-client/src/state.rs\n@@ -1,0 +2 @@\n";
         let api_head = "diff --git a/crates/zenha-core/src/api.rs b/crates/zenha-core/src/api.rs\n";
         let in_command =
             format!("{api_head}@@ -3,0 +4 @@ pub enum Command {{\n+    Mute,\n{others}");
         let outside = format!("{api_head}@@ -1 +1 @@\n-pub struct A;\n+pub struct B;\n{others}");
         let (line, missing) = core_12_missing(&in_command, api).unwrap_or_default();
         assert_eq!(line, 2);
-        assert!(!missing.contains(&"crates/zenha-core/src/session.rs"));
+        assert!(!missing.contains(&"crates/zenha-core/src/session/"));
         assert!(!missing.contains(&"crates/zenha-client/src/"));
-        assert!(missing.contains(&"crates/zenha-e2e/src/protocol.rs"));
+        assert!(missing.contains(&"crates/zenha-e2e/src/protocol/"));
         assert_eq!(core_12_missing(&outside, api), None);
         assert_eq!(core_12_missing(others, api), None);
     }

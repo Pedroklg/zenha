@@ -18,7 +18,7 @@ Valem para todas as crates do workspace (`crates/*` e `xtask`).
 
 - O workspace define `unsafe_code = "deny"` em `[workspace.lints.rust]`.
 - Nenhuma crate fora de `crates/zenha-core` pode conter blocos, funções, traits ou impls `unsafe`.
-- Dentro de `zenha-core`, toda ocorrência exige `#[expect(unsafe_code, reason = "...")]` (nunca `#[allow(unsafe_code)]`) junto de um comentário `// SAFETY:` logo acima do bloco, explicando a invariante garantida (veja `CORE-03` e `crates/zenha-core/src/share_audio.rs`).
+- Dentro de `zenha-core`, toda ocorrência exige `#[expect(unsafe_code, reason = "...")]` (nunca `#[allow(unsafe_code)]`) junto de um comentário `// SAFETY:` logo acima do bloco, explicando a invariante garantida (veja `CORE-03` e `crates/zenha-core/src/audio/share_audio.rs`).
 
 ## GER-04: Idioma de código, logs, docs e interface
 
@@ -67,4 +67,4 @@ Valem para todas as crates do workspace (`crates/*` e `xtask`).
 ## GER-12: Tamanho e clareza de funções e módulos
 
 - Funções novas devem manter baixa complexidade e fluxo linear com `early return` (`let Some(...) = ... else { return ... };`) em vez de `if`/`match` muito aninhados.
-- Ao acrescentar lógica nova independente a módulos extensos (`state/`, `session/`, `livekit_backend/`, `routes/`), extraia submódulos ou helpers coesos em vez de inflar o bloco monolítico.
+- Ao acrescentar lógica nova independente a módulos extensos (`state/`, `session/`, `livekit/`, `routes/`), extraia submódulos ou helpers coesos em vez de inflar o bloco monolítico.
