@@ -1,7 +1,8 @@
 //! Publicação de áudio: microfone de plataforma/aprimorado, tom de teste e áudio da tela.
 
-use std::sync::atomic::{AtomicI8, Ordering};
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex as StdMutex, PoisonError};
+use std::time::{Duration, Instant};
 
 use futures_util::StreamExt;
 use livekit::options::{self, TrackPublishOptions};
@@ -14,12 +15,17 @@ use livekit::webrtc::audio_source::native::NativeAudioSource;
 use livekit::webrtc::audio_source::{AudioSourceOptions, RtcAudioSource};
 use livekit::webrtc::audio_stream::native::NativeAudioStream;
 use livekit::webrtc::native::apm::AudioProcessingModule;
+use livekit::webrtc::stats::RtcStats;
 use tokio::sync::mpsc::{self, UnboundedSender};
+use tokio::time::MissedTickBehavior;
 
 use crate::api::{AudioDevice, AudioDevices, NoiseSuppression, SessionError};
 use crate::backend::BackendEvent;
 use crate::backend_options::{TONE_FRAME_SAMPLES, TONE_SAMPLE_RATE, ToneGenerator};
-use crate::backend_support::{LevelMeter, audio_device, gate_threshold, unique_devices};
+use crate::backend_support::{
+    LevelMeter, LocalSpeech, SPEAKING_AUDIO_LEVEL, audio_device, enhanced_voice, gate_threshold,
+    unique_devices,
+};
 use crate::deep_filter::DeepFilterDenoiser;
 use crate::mic_capture::{CAPTURE_SAMPLE_RATE, MicCapture};
 use crate::noise::{Denoiser, NoiseGate, RnnoiseDenoiser};
@@ -29,7 +35,7 @@ use crate::share_audio::{
 };
 
 use super::room::{apply_microphone_mute, apply_participant_volume, blocking};
-use super::{LiveKitBackend, TaskGuard};
+use super::{Flags, LiveKitBackend, TaskGuard};
 
 const MICROPHONE_TRACK_NAME: &str = "microphone";
 const TONE_QUEUE_MS: u32 = 100;
@@ -38,6 +44,7 @@ const SHARE_AUDIO_TRACK_NAME: &str = "screen-audio";
 const SHARE_AUDIO_QUEUE_MS: u32 = 100;
 const SHARE_AUDIO_BACKLOG_FRAMES: usize = 20;
 const ENHANCED_BACKLOG_FRAMES: usize = 20;
+const SPEECH_POLL: Duration = Duration::from_millis(100);
 
 /// Sound published along with the local screen share.
 pub(super) struct ShareAudio {
@@ -57,9 +64,16 @@ pub(super) struct Selection {
 /// Keeps alive whatever feeds the published microphone track.
 pub(super) enum Microphone {
     None,
-    Platform,
-    Enhanced { _mic: EnhancedMic },
-    Tone { _task: TaskGuard },
+    Platform {
+        _speech: TaskGuard,
+    },
+    Enhanced {
+        _mic: EnhancedMic,
+    },
+    Tone {
+        _task: TaskGuard,
+        _speech: TaskGuard,
+    },
 }
 
 pub(super) struct EnhancedMic {
@@ -139,7 +153,7 @@ impl LiveKitBackend {
             &audio,
             &selection,
             &connection.events_tx,
-            &self.flags.noise_gate,
+            &self.flags,
         )
         .await;
         if self.flags.microphone_muted.load(Ordering::SeqCst) {
@@ -400,7 +414,7 @@ pub(super) async fn publish_selected_microphone(
     audio: &PlatformAudio,
     selection: &Selection,
     events: &UnboundedSender<BackendEvent>,
-    noise_gate: &Arc<AtomicI8>,
+    flags: &Arc<Flags>,
 ) -> Microphone {
     tracing::info!(mode = ?selection.noise, "publishing the microphone");
     if selection.noise.uses_own_capture() {
@@ -408,8 +422,7 @@ pub(super) async fn publish_selected_microphone(
             room,
             selection.noise,
             selection.input.clone(),
-            events.clone(),
-            noise_gate.clone(),
+            LocalSpeaker::new(room, events, flags),
         )
         .await
         {
@@ -417,11 +430,81 @@ pub(super) async fn publish_selected_microphone(
         }
         tracing::warn!("enhanced microphone unavailable, falling back to the platform one");
     }
-    if publish_microphone(room, audio).await {
-        Microphone::Platform
-    } else {
-        Microphone::None
+    match publish_microphone(room, audio).await {
+        Some(track) => Microphone::Platform {
+            _speech: watch_speech(track, LocalSpeaker::new(room, events, flags)),
+        },
+        None => Microphone::None,
     }
+}
+
+/// Reports the local participant's speaking state from local audio, ahead of the server.
+pub(super) struct LocalSpeaker {
+    speech: LocalSpeech,
+    identity: String,
+    events: UnboundedSender<BackendEvent>,
+    flags: Arc<Flags>,
+}
+
+impl LocalSpeaker {
+    pub(super) fn new(
+        room: &Room,
+        events: &UnboundedSender<BackendEvent>,
+        flags: &Arc<Flags>,
+    ) -> Self {
+        Self {
+            speech: LocalSpeech::default(),
+            identity: String::from(room.local_participant().identity()),
+            events: events.clone(),
+            flags: flags.clone(),
+        }
+    }
+
+    fn silenced(&self) -> bool {
+        self.flags.microphone_muted.load(Ordering::Relaxed)
+            || self.flags.output_muted.load(Ordering::Relaxed)
+    }
+
+    fn report(&mut self, voice: bool) {
+        let silenced = self.silenced();
+        let change = self.speech.update(voice, silenced, Instant::now());
+        self.send(change);
+    }
+
+    fn send(&self, change: Option<bool>) {
+        if let Some(speaking) = change {
+            let _ = self.events.send(BackendEvent::SpeakingChanged {
+                identity: self.identity.clone(),
+                speaking,
+            });
+        }
+    }
+}
+
+impl Drop for LocalSpeaker {
+    fn drop(&mut self) {
+        let change = self.speech.update(false, true, Instant::now());
+        self.send(change);
+    }
+}
+
+/// The platform microphone hands no samples to the app, so its level comes from the sender stats.
+pub(super) fn watch_speech(track: LocalAudioTrack, mut speaker: LocalSpeaker) -> TaskGuard {
+    TaskGuard(tokio::spawn(async move {
+        let mut ticks = tokio::time::interval(SPEECH_POLL);
+        ticks.set_missed_tick_behavior(MissedTickBehavior::Delay);
+        loop {
+            ticks.tick().await;
+            let voice = !speaker.silenced()
+                && track.get_stats().await.is_ok_and(|stats| {
+                    stats.iter().any(|stat| {
+                        matches!(stat, RtcStats::MediaSource(source)
+                            if source.audio.audio_level >= SPEAKING_AUDIO_LEVEL)
+                    })
+                });
+            speaker.report(voice);
+        }
+    }))
 }
 
 /// `ROOMS_ENHANCED_TEST_TONE=hz,amplitude` (diagnostic) replaces the cleaned audio with a tone.
@@ -456,9 +539,10 @@ async fn publish_enhanced(
     room: &Room,
     mode: NoiseSuppression,
     input: Option<String>,
-    events: UnboundedSender<BackendEvent>,
-    noise_gate: Arc<AtomicI8>,
+    mut speaker: LocalSpeaker,
 ) -> Option<EnhancedMic> {
+    let events = speaker.events.clone();
+    let noise_gate = speaker.flags.noise_gate.clone();
     let source = NativeAudioSource::new(
         AudioSourceOptions::default(),
         CAPTURE_SAMPLE_RATE,
@@ -500,6 +584,7 @@ async fn publish_enhanced(
             let speech = denoiser.process(frame);
             let threshold = gate_threshold(noise_gate.load(Ordering::Relaxed));
             let reading = gate.process(frame, threshold, speech);
+            speaker.report(enhanced_voice(reading, threshold));
             if let Some((level_db, gate_open)) = meter.push(reading) {
                 let _ = events.send(BackendEvent::MicLevel {
                     level_db,
@@ -602,10 +687,10 @@ pub(super) async fn stop_share_audio(audio: ShareAudio) {
     }
 }
 
-async fn publish_microphone(room: &Room, audio: &PlatformAudio) -> bool {
+async fn publish_microphone(room: &Room, audio: &PlatformAudio) -> Option<LocalAudioTrack> {
     if audio.recording_devices().next().is_none() {
         tracing::warn!("no microphone found, staying in listen-only mode");
-        return false;
+        return None;
     }
     let track = LocalAudioTrack::create_audio_track(MICROPHONE_TRACK_NAME, audio.rtc_source());
     let publish_options = TrackPublishOptions {
@@ -615,18 +700,23 @@ async fn publish_microphone(room: &Room, audio: &PlatformAudio) -> bool {
     };
     match room
         .local_participant()
-        .publish_track(LocalTrack::Audio(track), publish_options)
+        .publish_track(LocalTrack::Audio(track.clone()), publish_options)
         .await
     {
-        Ok(_) => true,
+        Ok(_) => Some(track),
         Err(err) => {
             tracing::warn!(%err, "could not publish the microphone, staying in listen-only mode");
-            false
+            None
         }
     }
 }
 
-pub(super) async fn publish_tone(room: &Room, hz: f64, amplitude: f64) -> Option<TaskGuard> {
+pub(super) async fn publish_tone(
+    room: &Room,
+    hz: f64,
+    amplitude: f64,
+    speaker: LocalSpeaker,
+) -> Option<Microphone> {
     let source = NativeAudioSource::new(
         AudioSourceOptions::default(),
         TONE_SAMPLE_RATE,
@@ -647,7 +737,7 @@ pub(super) async fn publish_tone(room: &Room, hz: f64, amplitude: f64) -> Option
     };
     if let Err(err) = room
         .local_participant()
-        .publish_track(LocalTrack::Audio(track), publish_options)
+        .publish_track(LocalTrack::Audio(track.clone()), publish_options)
         .await
     {
         tracing::warn!(%err, "could not publish the test tone");
@@ -658,7 +748,10 @@ pub(super) async fn publish_tone(room: &Room, hz: f64, amplitude: f64) -> Option
         amplitude,
         "publishing a synthetic test tone as the microphone"
     );
-    Some(TaskGuard(tokio::spawn(tone_loop(source, hz, amplitude))))
+    Some(Microphone::Tone {
+        _task: TaskGuard(tokio::spawn(tone_loop(source, hz, amplitude))),
+        _speech: watch_speech(track, speaker),
+    })
 }
 
 /// `capture_frame` waits for room in the 100 ms queue, which paces the loop in real time.
