@@ -9,7 +9,6 @@ use std::time::{Duration, Instant};
 use livekit::webrtc::desktop_capturer::{
     CaptureError, DesktopCaptureSourceType, DesktopCapturer, DesktopCapturerOptions, DesktopFrame,
 };
-use tokio::time::timeout;
 
 use crate::api::SessionError;
 use crate::backend::support::{CaptureHealth, parse_target_id, target_id, target_name};

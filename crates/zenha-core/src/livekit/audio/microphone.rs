@@ -244,8 +244,6 @@ async fn publish_enhanced(
     })
 }
 
-/// Publishes the sound of `scope` as the audio of the screen share.
-
 async fn publish_microphone(room: &Room, audio: &PlatformAudio) -> Option<LocalAudioTrack> {
     if audio.recording_devices().next().is_none() {
         tracing::warn!("no microphone found, staying in listen-only mode");

@@ -1,6 +1,6 @@
 //! Áudio publicado junto com a transmissão de tela.
 
-use std::sync::{Arc, Mutex as StdMutex, PoisonError};
+use std::sync::{Arc, Mutex as StdMutex};
 
 use livekit::options::{self, TrackPublishOptions};
 use livekit::prelude::{LocalAudioTrack, LocalTrack, Room, TrackSid, TrackSource};
@@ -26,6 +26,7 @@ pub(in crate::livekit) struct ShareAudio {
     _capture: ShareAudioCapture,
 }
 
+/// Publishes the sound of `scope` as the audio of the screen share.
 pub(in crate::livekit) async fn publish_share_audio(
     room: Arc<Room>,
     scope: AudioScope,

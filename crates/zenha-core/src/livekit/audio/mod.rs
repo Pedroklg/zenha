@@ -8,10 +8,7 @@ use std::sync::PoisonError;
 use std::sync::atomic::Ordering;
 
 use futures_util::StreamExt;
-use livekit::options;
 use livekit::prelude::{AudioError, PlatformAudio, TrackSource};
-use livekit::webrtc::audio_source::AudioSourceOptions;
-use livekit::webrtc::audio_source::native::NativeAudioSource;
 use livekit::webrtc::audio_stream::native::NativeAudioStream;
 
 use crate::api::{AudioDevices, NoiseSuppression, SessionError};

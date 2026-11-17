@@ -1,7 +1,6 @@
 //! Publicação e encerramento da transmissão de tela como faixa de vídeo local.
 
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, OnceLock, PoisonError};
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use livekit::options::{TrackPublishOptions, VideoCodec, VideoEncoding};
@@ -17,7 +16,7 @@ use tokio::time::timeout;
 use super::convert::BgraToI420Converter;
 use crate::api::SessionError;
 use crate::backend::BackendEvent;
-use crate::backend::support::{ShareMeter, parse_target_id, target_name};
+use crate::backend::support::{ShareMeter, parse_target_id};
 use crate::video::capture::{BgraFrame, CaptureEnd, FrameSink, FrameSource, bgra_to_rgba_scaled};
 use crate::video::{
     CaptureTarget, FrameSlot, PreviewGate, SHARE_PREVIEW_INTERVAL, SHARE_PREVIEW_MAX_SIDE,
