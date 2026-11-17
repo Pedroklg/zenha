@@ -6,7 +6,7 @@
 | --- | --- |
 | `main` | Startup and the `hash-password` subcommand |
 | `config` | `Config` from environment variables (secrets omitted from `Debug`) |
-| `routes/` | Router and auth (`mod`), `token`, `rooms`, `chat`, `admin`, `rate_limit` |
+| `routes/` | Router and auth (`mod`), `token`, `rooms`, `chat`, `admin/`, `rate_limit`; large handler tests live in `tests.rs` beside the handlers |
 | `token` | LiveKit JWT signing |
 | `directory` | LiveKit server API: participants, moderation, data packets |
 | `store/` | SQLite store for saved messages, rooms (title, order, password hash, parent) and the rotated invite hash |

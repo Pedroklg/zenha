@@ -1,10 +1,9 @@
 mod avatar;
-
 mod config;
 mod directory;
 mod room_access;
-mod store;
 mod routes;
+mod store;
 mod token;
 
 use std::net::SocketAddr;
