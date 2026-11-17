@@ -40,7 +40,7 @@ sha2 = { version = "0.10.9", default-features = false }
 subtle = "2.6"
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
 rfd = { version = "0.18", default-features = false }
-rusqlite = { version = "0.42.0", features = ["bundled"] }
+rusqlite = { version = "0.43.0", features = ["bundled"] }
 thiserror = "2.0"
 tokio = { version = "1.54", features = ["macros", "rt-multi-thread", "net", "signal", "sync", "time"] }
 tower = { version = "0.5", features = ["util"] }
