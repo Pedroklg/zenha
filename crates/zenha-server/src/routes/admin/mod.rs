@@ -1,4 +1,4 @@
-//! Rotas administrativas: login, CRUD de salas, moderação, exclusão de chat e rotação de convite.
+//! Admin routes: login, room CRUD, moderation, chat deletion and invite rotation.
 
 use std::net::{IpAddr, SocketAddr};
 use std::time::Duration;

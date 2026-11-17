@@ -1,4 +1,4 @@
-//! Mensagens de chat salvas: inserção idempotente, paginação e remoção.
+//! Saved chat messages: idempotent insertion, pagination and removal.
 
 use std::time::{SystemTime, UNIX_EPOCH};
 

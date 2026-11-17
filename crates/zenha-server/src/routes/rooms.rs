@@ -1,4 +1,4 @@
-//! Listagem de salas e ocupantes via `GET /rooms` e desbloqueio de sala com senha.
+//! Room listing and occupants via `GET /rooms` and unlocking a password-protected room.
 
 use std::collections::HashMap;
 

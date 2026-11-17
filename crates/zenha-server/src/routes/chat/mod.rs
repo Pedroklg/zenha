@@ -1,4 +1,4 @@
-//! Rotas de mensagens salvas de chat por sala (`/rooms/{room}/chat`).
+//! Routes for saved chat messages per room (`/rooms/{room}/chat`).
 
 use axum::Json;
 use axum::body::Bytes;

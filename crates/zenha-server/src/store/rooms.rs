@@ -1,4 +1,4 @@
-//! Salas: criação, edição, ordem, hierarquia, remoção e geração de identificadores.
+//! Rooms: creation, editing, ordering, hierarchy, removal and identifier generation.
 
 use rusqlite::{Connection, TransactionBehavior, params};
 use zenha_protocol::{AdminRoom, MAX_ROOM_NAME_LEN, MAX_ROOMS_COUNT};
@@ -19,7 +19,7 @@ pub enum UpdateRoomOutcome {
     InvalidParent,
 }
 
-/// Mudanças numa sala; `None` mantém o campo e `Some(None)` limpa a senha ou a sala-mãe.
+/// Changes to a room; `None` keeps the field and `Some(None)` clears the password or parent room.
 #[derive(Default)]
 pub struct RoomUpdate {
     pub title: Option<String>,
@@ -152,7 +152,7 @@ fn load_room_records(conn: &Connection) -> Result<Vec<RoomRecord>, ChatStoreErro
     Ok(out)
 }
 
-/// Uma sala só pode ter como mãe outra sala de primeiro nível, e uma sala com filhas não vira filha.
+/// A room can only have another top-level room as parent, and a room with children does not become a child.
 fn parent_is_valid(rooms: &[RoomRecord], id: &str, parent: &str) -> bool {
     parent != id
         && rooms.iter().any(|r| r.id == parent && r.parent.is_none())
