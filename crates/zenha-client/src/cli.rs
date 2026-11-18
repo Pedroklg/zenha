@@ -3,6 +3,10 @@ use crate::invite::{self, Invite};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LaunchArgs {
     pub demo: bool,
+    /// `--debug`: more detailed logs, also on stdout when it is redirected.
+    pub debug: bool,
+    /// `--diagnostico`: writes a troubleshooting report and exits without opening the window.
+    pub diagnostics: bool,
     pub startup_link: StartupLink,
 }
 
@@ -19,12 +23,19 @@ where
     S: AsRef<str>,
 {
     let mut demo = false;
+    let mut debug = false;
+    let mut diagnostics = false;
     let mut first_arg: Option<String> = None;
 
     for raw in args {
         let arg = raw.as_ref();
-        if arg == "--demo" {
-            demo = true;
+        match arg {
+            "--demo" => demo = true,
+            "--debug" => debug = true,
+            "--diagnostico" | "--diagnostics" => diagnostics = true,
+            _ => {}
+        }
+        if arg.starts_with("--") {
             continue;
         }
         if first_arg.is_none() && !arg.trim().is_empty() {
@@ -35,6 +46,8 @@ where
     if demo {
         return LaunchArgs {
             demo: true,
+            debug,
+            diagnostics,
             startup_link: StartupLink::None,
         };
     }
@@ -49,6 +62,8 @@ where
 
     LaunchArgs {
         demo: false,
+        debug,
+        diagnostics,
         startup_link,
     }
 }
@@ -79,6 +94,8 @@ mod tests {
             parsed,
             LaunchArgs {
                 demo: false,
+                debug: false,
+                diagnostics: false,
                 startup_link: StartupLink::None,
             }
         );
@@ -91,6 +108,8 @@ mod tests {
             parsed,
             LaunchArgs {
                 demo: true,
+                debug: false,
+                diagnostics: false,
                 startup_link: StartupLink::None,
             }
         );
@@ -103,6 +122,8 @@ mod tests {
             parsed,
             LaunchArgs {
                 demo: true,
+                debug: false,
+                diagnostics: false,
                 startup_link: StartupLink::None,
             }
         );
@@ -115,6 +136,8 @@ mod tests {
             parsed,
             LaunchArgs {
                 demo: false,
+                debug: false,
+                diagnostics: false,
                 startup_link: StartupLink::None,
             }
         );
@@ -128,6 +151,8 @@ mod tests {
             parsed,
             LaunchArgs {
                 demo: false,
+                debug: false,
+                diagnostics: false,
                 startup_link: StartupLink::Invite(Invite {
                     server: "https://voz.exemplo.com".to_owned(),
                     password: "segredo".to_owned(),
@@ -143,6 +168,8 @@ mod tests {
             parsed,
             LaunchArgs {
                 demo: false,
+                debug: false,
+                diagnostics: false,
                 startup_link: StartupLink::Invalid("zenha://invalido".to_owned()),
             }
         );
@@ -155,6 +182,8 @@ mod tests {
             parsed,
             LaunchArgs {
                 demo: false,
+                debug: false,
+                diagnostics: false,
                 startup_link: StartupLink::Invalid("https://voz.exemplo.com".to_owned()),
             }
         );
@@ -181,5 +210,24 @@ mod tests {
             resolve_initial_server("https://meu.servidor", Some("https://padrao.servidor")),
             "https://meu.servidor"
         );
+    }
+
+    #[test]
+    fn debug_and_diagnostics_flags_are_not_links() {
+        let parsed = parse_args(["--debug", "--diagnostico"]);
+        assert_eq!(
+            parsed,
+            LaunchArgs {
+                demo: false,
+                debug: true,
+                diagnostics: true,
+                startup_link: StartupLink::None,
+            }
+        );
+        let link = invite::format("https://voz.exemplo.com", "segredo");
+        let parsed = parse_args(["--debug", link.as_str()]);
+        assert!(parsed.debug && !parsed.diagnostics);
+        assert!(matches!(parsed.startup_link, StartupLink::Invite(_)));
+        assert!(parse_args(["--diagnostics"]).diagnostics);
     }
 }

@@ -22,11 +22,54 @@ use eframe::egui;
 pub(crate) const APP_NAME: &str = "Zenha";
 
 fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-        .init();
-
     let launch = cli::parse_args(std::env::args().skip(1));
+    let log_path = platform::logging::init(launch.debug);
+    tracing::info!(
+        version = env!("CARGO_PKG_VERSION"),
+        debug = launch.debug,
+        demo = launch.demo,
+        log = ?log_path,
+        "zenha starting"
+    );
+    if launch.diagnostics {
+        write_diagnostics(log_path.as_deref());
+        return Ok(());
+    }
+    let result = run(launch);
+    if let Err(err) = &result {
+        tracing::error!("{err:#}");
+        dialogs::show_error(&format!(
+            "O Zenha não conseguiu abrir.\n\n{err:#}\n\nLog: {}",
+            log_path
+                .as_deref()
+                .map_or_else(|| "indisponível".to_owned(), |p| p.display().to_string())
+        ));
+    }
+    result
+}
+
+fn write_diagnostics(log_path: Option<&std::path::Path>) {
+    let settings = platform::settings::default_path()
+        .as_deref()
+        .map(platform::settings::load)
+        .unwrap_or_default();
+    match platform::diagnostics::write_report(&settings, log_path) {
+        Ok(path) => {
+            tracing::info!(path = %path.display(), "diagnostics report written");
+            dialogs::reveal_file(&path);
+            dialogs::show_info(&format!(
+                "Relatório salvo em:\n{}\n\nMande esse arquivo para quem cuida do servidor.",
+                path.display()
+            ));
+        }
+        Err(err) => {
+            tracing::error!(%err, "could not write diagnostics report");
+            dialogs::show_error(&format!("Não deu para salvar o relatório: {err}"));
+        }
+    }
+}
+
+fn run(launch: cli::LaunchArgs) -> anyhow::Result<()> {
     let demo_flag = launch.demo;
     let startup_link = launch.startup_link;
     #[cfg(windows)]
@@ -36,7 +79,10 @@ fn main() -> anyhow::Result<()> {
         let raw_link = std::env::args().skip(1).find(|arg| !arg.trim().is_empty());
         match platform::single_instance::start(raw_link.as_deref()) {
             platform::single_instance::Startup::Run(listener) => listener,
-            platform::single_instance::Startup::Exit => return Ok(()),
+            platform::single_instance::Startup::Exit => {
+                tracing::info!("another instance is running; handed off and exiting");
+                return Ok(());
+            }
         }
     };
     let raw_settings_path = platform::settings::default_path();

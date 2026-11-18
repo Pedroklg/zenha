@@ -25,6 +25,45 @@ pub fn pick_save_path(name: &str) -> Option<PathBuf> {
         .save_file()
 }
 
+#[cfg(windows)]
+pub fn show_error(text: &str) {
+    rfd::MessageDialog::new()
+        .set_level(rfd::MessageLevel::Error)
+        .set_title(crate::APP_NAME)
+        .set_description(text)
+        .show();
+}
+
+#[cfg(windows)]
+pub fn show_info(text: &str) {
+    rfd::MessageDialog::new()
+        .set_level(rfd::MessageLevel::Info)
+        .set_title(crate::APP_NAME)
+        .set_description(text)
+        .show();
+}
+
+/// Opens Explorer with the file selected.
+#[cfg(windows)]
+pub fn reveal_file(path: &std::path::Path) {
+    use std::os::windows::process::CommandExt;
+    if let Err(err) = std::process::Command::new("explorer")
+        .raw_arg(format!("/select,\"{}\"", path.display()))
+        .spawn()
+    {
+        tracing::debug!(%err, "could not open explorer");
+    }
+}
+
+#[cfg(not(windows))]
+pub fn show_error(_text: &str) {}
+
+#[cfg(not(windows))]
+pub fn show_info(_text: &str) {}
+
+#[cfg(not(windows))]
+pub fn reveal_file(_path: &std::path::Path) {}
+
 #[cfg(not(windows))]
 pub fn pick_file() -> Option<PathBuf> {
     None
