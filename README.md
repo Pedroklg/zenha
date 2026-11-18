@@ -33,6 +33,12 @@ The binaries are not code-signed yet, so SmartScreen shows "Windows protected yo
 
 Settings live in `%APPDATA%\zenha` and survive uninstall. Server passwords live in Windows Credential Manager.
 
+### When it does not open
+
+- Logs of the last runs are in `%LOCALAPPDATA%\zenha\logs`, one file per run.
+- **Zenha (diagnostico)** in the Start Menu (or `zenha.exe --diagnostico`) saves `zenha-diagnostico.txt` on the Desktop: app version, Windows, GPU and audio devices, running `zenha.exe` processes, recent crash entries from the Event Viewer and the tail of the last logs. No passwords.
+- `zenha.exe --debug` logs in more detail. To watch it live in PowerShell: `& "$env:LOCALAPPDATA\Programs\Zenha\zenha.exe" --debug | Out-Host`.
+
 ## Self-hosting
 
 The server is `livekit-server` plus `zenha-server` behind Caddy, run with Docker Compose. See the [deployment guide](docs/deploy.md).
