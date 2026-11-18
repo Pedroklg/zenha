@@ -236,6 +236,7 @@ impl Translator {
                 messages,
                 has_more,
                 before,
+                webhook_posts,
             } => {
                 let messages = messages
                     .into_iter()
@@ -252,6 +253,7 @@ impl Translator {
                     messages,
                     has_more,
                     before,
+                    webhook_posts,
                 }]
             }
             Event::ChatDeleted { id, sender } => vec![UiEvent::ChatDeleted { id, sender }],

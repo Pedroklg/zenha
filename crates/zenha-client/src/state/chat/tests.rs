@@ -377,6 +377,7 @@ fn chat_history_initial_and_older_pages_order_and_pending_state() {
         ],
         has_more: true,
         before: None,
+        webhook_posts: Vec::new(),
     });
 
     let chat = &room(&state).chat;
@@ -409,6 +410,7 @@ fn chat_history_initial_and_older_pages_order_and_pending_state() {
         ],
         has_more: false,
         before: Some("h2".to_owned()),
+        webhook_posts: Vec::new(),
     });
 
     let chat = &room(&state).chat;
@@ -448,6 +450,7 @@ fn chat_deduplicates_overlapping_live_and_history_ids() {
         ],
         has_more: false,
         before: None,
+        webhook_posts: Vec::new(),
     });
     state.apply_event(UiEvent::ChatReceived(saved_message(
         "s1", "ana", "Ana", "antiga",
@@ -678,8 +681,36 @@ fn webhook_post_joins_the_timeline_and_counts_as_unread_while_collapsed() {
     state.handle_action(UserAction::ToggleChat);
     state.apply_event(UiEvent::WebhookPosted(webhook_post("a2")));
     state.apply_event(UiEvent::WebhookPosted(webhook_post("a2")));
-    assert_eq!(room(&state).chat.unread, 2);
-    assert_eq!(room(&state).chat.messages.len(), 4);
+    assert_eq!(room(&state).chat.unread, 1);
+    assert_eq!(room(&state).chat.messages.len(), 3);
+}
+
+#[test]
+fn history_webhook_posts_interleave_by_time_without_duplicates() {
+    let mut state = state_with_code();
+    in_room(&mut state);
+    state.apply_event(UiEvent::WebhookPosted(webhook_post("live")));
+    let mut early = saved_message("h1", "ana", "Ana", "antes");
+    early.sent_at_unix_ms = 5;
+    let mut late = saved_message("h2", "ana", "Ana", "depois");
+    late.sent_at_unix_ms = 9;
+    state.apply_event(UiEvent::ChatHistory {
+        messages: vec![early, late],
+        has_more: false,
+        before: None,
+        webhook_posts: vec![webhook_post("old"), webhook_post("live")],
+    });
+    let order: Vec<String> = room(&state)
+        .chat
+        .messages
+        .iter()
+        .map(|entry| match entry {
+            ChatEntry::Text(m) => m.id.clone(),
+            ChatEntry::Webhook(p) => p.id.clone(),
+            ChatEntry::File(f) => f.id.clone(),
+        })
+        .collect();
+    assert_eq!(order, vec!["h1", "old", "h2", "live"]);
 }
 
 #[test]
@@ -705,6 +736,7 @@ fn webhook_post_is_not_touched_by_history_or_delete() {
         messages: vec![saved_message("h1", "ana", "ANA", "antiga")],
         has_more: false,
         before: None,
+        webhook_posts: Vec::new(),
     });
     state.apply_event(UiEvent::ChatDeleted {
         id: "a1".to_owned(),

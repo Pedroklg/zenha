@@ -97,29 +97,41 @@ impl ChatState {
     }
 
     pub(super) fn push_webhook(&mut self, post: WebhookPost) {
+        let known = self
+            .messages
+            .iter()
+            .any(|entry| matches!(entry, ChatEntry::Webhook(existing) if existing.id == post.id));
+        if known {
+            return;
+        }
         self.push(ChatEntry::Webhook(post), true);
     }
 
-    pub(super) fn apply_history(&mut self, messages: Vec<ChatMessageView>, has_more: bool) {
+    pub(super) fn apply_history(
+        &mut self,
+        messages: Vec<ChatMessageView>,
+        webhook_posts: Vec<WebhookPost>,
+        has_more: bool,
+    ) {
         self.history_loading = false;
         self.has_more = has_more;
-        let existing: HashSet<String> = self
-            .messages
-            .iter()
-            .filter_map(|entry| match entry {
-                ChatEntry::Text(message) => Some(message.id.clone()),
-                ChatEntry::File(_) | ChatEntry::Webhook(_) => None,
-            })
+        let mut seen: HashSet<String> = self.messages.iter().filter_map(entry_key).collect();
+        let mut fresh: Vec<ChatEntry> = messages
+            .into_iter()
+            .map(ChatEntry::Text)
+            .filter(|entry| entry_key(entry).is_some_and(|key| seen.insert(key)))
             .collect();
-        let mut seen = HashSet::new();
-        let mut fresh = Vec::with_capacity(messages.len());
-        for message in messages {
-            if !existing.contains(&message.id) && seen.insert(message.id.clone()) {
-                fresh.push(message);
-            }
+        if !webhook_posts.is_empty() {
+            fresh.extend(
+                webhook_posts
+                    .into_iter()
+                    .map(ChatEntry::Webhook)
+                    .filter(|entry| entry_key(entry).is_some_and(|key| seen.insert(key))),
+            );
+            fresh.sort_by_key(entry_time);
         }
-        for message in fresh.into_iter().rev() {
-            self.messages.push_front(ChatEntry::Text(message));
+        for entry in fresh.into_iter().rev() {
+            self.messages.push_front(entry);
         }
     }
 
@@ -350,6 +362,22 @@ impl AppState {
             }
             Screen::Onboarding | Screen::Lobby | Screen::Connecting { .. } => false,
         }
+    }
+}
+
+fn entry_key(entry: &ChatEntry) -> Option<String> {
+    match entry {
+        ChatEntry::Text(message) => Some(format!("text:{}", message.id)),
+        ChatEntry::Webhook(post) => Some(format!("webhook:{}", post.id)),
+        ChatEntry::File(_) => None,
+    }
+}
+
+fn entry_time(entry: &ChatEntry) -> u64 {
+    match entry {
+        ChatEntry::Text(message) => message.sent_at_unix_ms,
+        ChatEntry::Webhook(post) => post.sent_at_unix_ms,
+        ChatEntry::File(_) => 0,
     }
 }
 

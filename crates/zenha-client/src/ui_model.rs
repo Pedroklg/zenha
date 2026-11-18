@@ -315,6 +315,7 @@ pub enum UiEvent {
         messages: Vec<ChatMessageView>,
         has_more: bool,
         before: Option<String>,
+        webhook_posts: Vec<WebhookPost>,
     },
     ChatDeleted {
         id: String,

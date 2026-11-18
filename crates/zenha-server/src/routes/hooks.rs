@@ -78,10 +78,17 @@ pub(super) async fn post_hook(
             now_unix_ms(),
         )
         .ok_or(ApiError::Invalid("webhook body has nothing to show"))?;
-    let payload = serde_json::to_vec(&post).map_err(|err| {
+    let post_json = serde_json::to_string(&post).map_err(|err| {
         tracing::error!(%err, "serializing webhook post failed");
         ApiError::ChatStoreFailure
     })?;
+    let payload = post_json.clone().into_bytes();
+    if let Err(err) = chat
+        .save_webhook_post(record.room.clone(), id.clone(), post, post_json)
+        .await
+    {
+        tracing::error!(webhook = %id, %err, "storing webhook post failed");
+    }
 
     match state
         .moderator

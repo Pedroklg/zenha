@@ -52,11 +52,13 @@ impl DemoSession {
                 messages: Self::older_history(),
                 has_more: false,
                 before: Some(cursor),
+                webhook_posts: Vec::new(),
             },
             None => UiEvent::ChatHistory {
                 messages: Self::initial_history(),
                 has_more: true,
                 before: None,
+                webhook_posts: Vec::new(),
             },
         };
         self.schedule(delay, event);

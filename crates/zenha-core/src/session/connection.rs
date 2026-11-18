@@ -207,10 +207,11 @@ impl Session {
                 participants,
             });
             match self.fetch_history_page(None).await {
-                Ok((messages, has_more)) => self.emit(Event::ChatHistory {
-                    messages,
-                    has_more,
+                Ok(page) => self.emit(Event::ChatHistory {
+                    messages: page.messages,
+                    has_more: page.has_more,
                     before: None,
+                    webhook_posts: page.webhook_posts,
                 }),
                 Err(err) => {
                     tracing::warn!(%err, "could not load initial chat history");
@@ -279,6 +280,7 @@ mod tests {
                 messages: Vec::new(),
                 has_more: false,
                 before: None,
+                webhook_posts: Vec::new(),
             }
         );
         assert_eq!(h.tokens.requests()[0].client_id, "client-pedro");

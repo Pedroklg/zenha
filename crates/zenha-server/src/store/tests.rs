@@ -3,8 +3,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use rusqlite::Connection;
 use zenha_protocol::{
-    AdminRoom, CHAT_HISTORY_PAGE, ChatMessage, MAX_ROOM_NAME_LEN, MAX_ROOMS_COUNT,
-    MAX_WEBHOOKS_COUNT,
+    AdminRoom, CHAT_HISTORY_PAGE, ChatMessage, MAX_HISTORY_WEBHOOK_POSTS, MAX_ROOM_NAME_LEN,
+    MAX_ROOMS_COUNT, MAX_WEBHOOKS_COUNT, WEBHOOK_POST_TTL_MS, WebhookPost,
 };
 
 use super::messages::clamp_sent_at;
@@ -777,6 +777,7 @@ async fn deleting_a_room_removes_its_webhooks() {
             )
             .await
             .unwrap();
+        save_post(&store, room, id, &format!("post-{id}"), 1_000).await;
     }
     assert_eq!(
         store.commit_delete_room("geral".to_owned()).await.unwrap(),
@@ -785,4 +786,87 @@ async fn deleting_a_room_removes_its_webhooks() {
     let left = store.list_webhooks().await.unwrap();
     assert_eq!(left.len(), 1);
     assert_eq!(left[0].id, "b");
+    assert!(post_ids(&store, "geral", 1_000).await.is_empty());
+    assert_eq!(post_ids(&store, "jogos", 1_000).await, vec!["post-b"]);
+}
+
+fn stored_post(id: &str, sent_at_unix_ms: u64) -> (WebhookPost, String) {
+    let post = WebhookPost {
+        id: id.to_owned(),
+        name: "GC".to_owned(),
+        sent_at_unix_ms,
+        content: Some(format!("post {id}")),
+        embeds: Vec::new(),
+    };
+    let json = serde_json::to_string(&post).unwrap();
+    (post, json)
+}
+
+async fn save_post(store: &ChatStore, room: &str, webhook: &str, id: &str, at: u64) {
+    let (post, json) = stored_post(id, at);
+    store
+        .save_webhook_post(room.to_owned(), webhook.to_owned(), post, json)
+        .await
+        .unwrap();
+}
+
+async fn post_ids(store: &ChatStore, room: &str, now: u64) -> Vec<String> {
+    store
+        .list_webhook_posts(room.to_owned(), now)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|post| post.id)
+        .collect()
+}
+
+#[tokio::test]
+async fn webhook_posts_are_kept_for_a_day_oldest_first() {
+    let store = ChatStore::open_in_memory().unwrap();
+    let day = WEBHOOK_POST_TTL_MS;
+    save_post(&store, "geral", "w1", "a", 1_000).await;
+    save_post(&store, "geral", "w1", "b", 2_000).await;
+    save_post(&store, "jogos", "w1", "c", 2_000).await;
+    assert_eq!(post_ids(&store, "geral", 2_000).await, vec!["a", "b"]);
+    assert_eq!(post_ids(&store, "geral", 1_500 + day).await, vec!["b"]);
+    assert!(post_ids(&store, "geral", 3_000 + day).await.is_empty());
+
+    save_post(&store, "geral", "w1", "d", 5_000 + day).await;
+    let remaining: i64 = store
+        .with_conn(|conn| {
+            Ok(conn.query_row("SELECT COUNT(*) FROM webhook_posts", [], |r| r.get(0))?)
+        })
+        .await
+        .unwrap();
+    assert_eq!(remaining, 1);
+}
+
+#[tokio::test]
+async fn webhook_posts_are_capped_to_the_most_recent() {
+    let store = ChatStore::open_in_memory().unwrap();
+    for i in 0..(MAX_HISTORY_WEBHOOK_POSTS + 5) {
+        let at = 1_000 + u64::try_from(i).unwrap();
+        save_post(&store, "geral", "w1", &format!("p{i:03}"), at).await;
+    }
+    let ids = post_ids(&store, "geral", 2_000).await;
+    assert_eq!(ids.len(), MAX_HISTORY_WEBHOOK_POSTS);
+    assert_eq!(ids.first().map(String::as_str), Some("p005"));
+}
+
+#[tokio::test]
+async fn webhook_posts_go_away_with_their_webhook() {
+    let store = ChatStore::open_in_memory().unwrap();
+    store
+        .create_webhook(
+            "w1".to_owned(),
+            "geral".to_owned(),
+            "GC".to_owned(),
+            "h".to_owned(),
+        )
+        .await
+        .unwrap();
+    save_post(&store, "geral", "w1", "a", 1_000).await;
+    save_post(&store, "geral", "w2", "b", 1_000).await;
+    assert!(store.delete_webhook("w1".to_owned()).await.unwrap());
+    assert_eq!(post_ids(&store, "geral", 1_000).await, vec!["b"]);
 }

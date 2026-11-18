@@ -7,8 +7,8 @@ use axum::http::{Request, StatusCode, header};
 use axum::response::Response;
 use tower::ServiceExt;
 use zenha_protocol::{
-    AdminWebhook, CreateWebhookRequest, CreatedWebhook, MAX_WEBHOOK_BODY_BYTES, MAX_WEBHOOKS_COUNT,
-    WEBHOOK_TOPIC, WebhookPost, WebhooksResponse,
+    AdminWebhook, ChatHistoryResponse, CreateWebhookRequest, CreatedWebhook,
+    MAX_WEBHOOK_BODY_BYTES, MAX_WEBHOOKS_COUNT, WEBHOOK_TOPIC, WebhookPost, WebhooksResponse,
 };
 
 use crate::directory::{FakeDirectory, ModerationCall};
@@ -16,7 +16,8 @@ use crate::store::{ChatStore, token_hash};
 
 use super::super::router;
 use super::super::test_support::{
-    body_bytes, error_message, mint_room_jwt, seeded_store, state_with, test_admin_config,
+    body_bytes, error_message, get_chat_req, mint_room_jwt, seeded_store, state_with,
+    test_admin_config,
 };
 
 const LOBBY: &str = r#"{"embeds":[{"title":"Clique aqui para abrir a lobby","color":"2391737","url":"https://gamersclub.com.br/j/123/abc","fields":[{"name":"Tipo da sala:","value":"FECHADA"},{"name":"Membros:","value":"ana | 15 | KDR: 1.2 \n"}]}]}"#;
@@ -114,6 +115,49 @@ async fn valid_token_delivers_to_the_whole_room() {
         assert_eq!(post.validate(), Ok(()));
         assert_eq!(post.id.len(), 32);
     }
+}
+
+async fn room_history(app: &Router, uri: &str) -> ChatHistoryResponse {
+    let auth = format!(
+        "Bearer {}",
+        mint_room_jwt("client-pedro", "Pedro", "geral", true)
+    );
+    let response = app
+        .clone()
+        .oneshot(get_chat_req(uri, Some(&auth)))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    serde_json::from_slice(&body_bytes(response).await).unwrap()
+}
+
+#[tokio::test]
+async fn delivered_posts_show_up_in_the_first_history_page() {
+    let f = fixture_with(FakeDirectory::default()).await;
+    for body in [LOBBY, MATCH] {
+        let response = f
+            .app
+            .clone()
+            .oneshot(hook_request(WEBHOOK_ID, WEBHOOK_TOKEN, body))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    }
+    let history = room_history(&f.app, "/rooms/geral/chat").await;
+    assert_eq!(history.webhook_posts.len(), 2);
+    assert_eq!(
+        history.webhook_posts[0].embeds[0].title.as_deref(),
+        Some("Clique aqui para abrir a lobby")
+    );
+    assert!(
+        history
+            .webhook_posts
+            .iter()
+            .all(|p| p.name == "Gamers Club")
+    );
+
+    let older = room_history(&f.app, "/rooms/geral/chat?before=abc").await;
+    assert!(older.webhook_posts.is_empty());
 }
 
 #[tokio::test]

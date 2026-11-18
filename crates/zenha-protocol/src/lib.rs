@@ -149,6 +149,9 @@ pub struct SavedChatMessage {
 pub struct ChatHistoryResponse {
     pub messages: Vec<SavedChatMessage>,
     pub has_more: bool,
+    /// Integration posts of the last 24 hours, oldest first; only on the first page.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub webhook_posts: Vec<WebhookPost>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -531,8 +534,10 @@ mod tests {
                 sender_id: "0123".to_owned(),
             }],
             has_more: true,
+            webhook_posts: Vec::new(),
         };
         let json = serde_json::to_string(&history).unwrap();
+        assert!(!json.contains("webhook_posts"));
         assert_eq!(
             serde_json::from_str::<ChatHistoryResponse>(&json).unwrap(),
             history

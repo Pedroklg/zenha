@@ -8,7 +8,7 @@ use zenha_protocol::{
     ChatHistoryResponse, ChatMessage, MAX_CHAT_ID_LEN, SaveChatRequest, validate_chat_text,
 };
 
-use crate::store::{DeleteOutcome, InsertOutcome};
+use crate::store::{DeleteOutcome, InsertOutcome, now_unix_ms};
 
 use super::{ApiError, AppState, authenticate_room};
 
@@ -94,10 +94,20 @@ pub(super) async fn list_chat(
     let before = parse_before_query(raw_query.as_deref())?;
     let chat = state.chat.as_ref().ok_or(ApiError::ChatUnavailable)?;
 
-    let history = chat.list_page(room, before).await.map_err(|err| {
+    let first_page = before.is_none();
+    let mut history = chat.list_page(room.clone(), before).await.map_err(|err| {
         tracing::error!(%err, "chat history lookup failed");
         ApiError::ChatStoreFailure
     })?;
+    if first_page {
+        history.webhook_posts =
+            chat.list_webhook_posts(room, now_unix_ms())
+                .await
+                .map_err(|err| {
+                    tracing::error!(%err, "webhook post history lookup failed");
+                    ApiError::ChatStoreFailure
+                })?;
+    }
     Ok(Json(history))
 }
 
