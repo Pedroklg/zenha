@@ -235,6 +235,7 @@ fn list_page_sync(
                 return Ok(ChatHistoryResponse {
                     messages: Vec::new(),
                     has_more: false,
+                    webhook_posts: Vec::new(),
                 });
             };
             let mut stmt = tx.prepare(
@@ -260,7 +261,11 @@ fn list_page_sync(
         messages.truncate(limit);
     }
     messages.reverse();
-    Ok(ChatHistoryResponse { messages, has_more })
+    Ok(ChatHistoryResponse {
+        messages,
+        has_more,
+        webhook_posts: Vec::new(),
+    })
 }
 
 fn delete_sync(

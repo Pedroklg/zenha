@@ -1,8 +1,10 @@
-//! Incoming webhooks: creation under a quota, lookup by id and removal.
+//! Incoming webhooks: creation under a quota, lookup by id, removal and the posts kept for 24 hours.
 
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use sha2::{Digest, Sha256};
-use zenha_protocol::{AdminWebhook, MAX_WEBHOOKS_COUNT};
+use zenha_protocol::{
+    AdminWebhook, MAX_HISTORY_WEBHOOK_POSTS, MAX_WEBHOOKS_COUNT, WEBHOOK_POST_TTL_MS, WebhookPost,
+};
 
 use super::messages::now_unix_ms;
 use super::{ChatStore, ChatStoreError};
@@ -72,11 +74,84 @@ impl ChatStore {
 
     pub async fn delete_webhook(&self, id: String) -> Result<bool, ChatStoreError> {
         self.with_conn(move |conn| {
-            let removed = conn.execute("DELETE FROM webhooks WHERE id = ?1", params![id])?;
+            let tx = conn.transaction()?;
+            let removed = tx.execute("DELETE FROM webhooks WHERE id = ?1", params![id])?;
+            tx.execute(
+                "DELETE FROM webhook_posts WHERE webhook_id = ?1",
+                params![id],
+            )?;
+            tx.commit()?;
             Ok(removed > 0)
         })
         .await
     }
+
+    /// Keeps a delivered post for the room history; `sent_at_unix_ms` is its storage time.
+    pub async fn save_webhook_post(
+        &self,
+        room: String,
+        webhook_id: String,
+        post: WebhookPost,
+        post_json: String,
+    ) -> Result<(), ChatStoreError> {
+        self.with_conn(move |conn| {
+            let cutoff = post.sent_at_unix_ms.saturating_sub(WEBHOOK_POST_TTL_MS);
+            conn.execute(
+                "DELETE FROM webhook_posts WHERE created_at_unix_ms < ?1",
+                params![to_sql_ms(cutoff)],
+            )?;
+            conn.execute(
+                "INSERT OR IGNORE INTO webhook_posts (id, room, webhook_id, post_json, created_at_unix_ms)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![
+                    post.id,
+                    room,
+                    webhook_id,
+                    post_json,
+                    to_sql_ms(post.sent_at_unix_ms)
+                ],
+            )?;
+            Ok(())
+        })
+        .await
+    }
+
+    /// Posts of the room younger than 24 hours at `now_unix_ms`, oldest first.
+    pub async fn list_webhook_posts(
+        &self,
+        room: String,
+        now_unix_ms: u64,
+    ) -> Result<Vec<WebhookPost>, ChatStoreError> {
+        self.with_conn(move |conn| {
+            let cutoff = now_unix_ms.saturating_sub(WEBHOOK_POST_TTL_MS);
+            let mut stmt = conn.prepare(
+                "SELECT post_json FROM webhook_posts
+                 WHERE room = ?1 AND created_at_unix_ms >= ?2
+                 ORDER BY created_at_unix_ms DESC, rowid DESC LIMIT ?3",
+            )?;
+            let rows = stmt.query_map(
+                params![
+                    room,
+                    to_sql_ms(cutoff),
+                    i64::try_from(MAX_HISTORY_WEBHOOK_POSTS).unwrap_or(i64::MAX)
+                ],
+                |row| row.get::<_, String>(0),
+            )?;
+            let mut posts = Vec::new();
+            for json in rows {
+                if let Ok(post) = serde_json::from_str::<WebhookPost>(&json?) {
+                    posts.push(post);
+                }
+            }
+            posts.reverse();
+            Ok(posts)
+        })
+        .await
+    }
+}
+
+fn to_sql_ms(ms: u64) -> i64 {
+    i64::try_from(ms).unwrap_or(i64::MAX)
 }
 
 fn create_webhook_sync(
@@ -114,5 +189,6 @@ fn create_webhook_sync(
 
 pub(super) fn delete_room_webhooks(conn: &Connection, room: &str) -> Result<(), ChatStoreError> {
     conn.execute("DELETE FROM webhooks WHERE room = ?1", params![room])?;
+    conn.execute("DELETE FROM webhook_posts WHERE room = ?1", params![room])?;
     Ok(())
 }

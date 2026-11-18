@@ -43,7 +43,16 @@ pub(super) fn init_schema(conn: &Connection) -> Result<(), ChatStoreError> {
                 name TEXT NOT NULL,
                 token_hash TEXT NOT NULL,
                 created_at_unix_ms INTEGER NOT NULL
-            );",
+            );
+            CREATE TABLE IF NOT EXISTS webhook_posts (
+                id TEXT PRIMARY KEY,
+                room TEXT NOT NULL,
+                webhook_id TEXT NOT NULL,
+                post_json TEXT NOT NULL,
+                created_at_unix_ms INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_webhook_posts_room_order
+                ON webhook_posts (room, created_at_unix_ms DESC);",
     )?;
     migrate_rooms(conn)?;
     Ok(())

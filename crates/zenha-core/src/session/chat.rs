@@ -3,7 +3,7 @@
 use std::future::Future;
 use std::sync::Arc;
 
-use zenha_protocol::{SaveChatRequest, SavedChatMessage, validate_chat_text};
+use zenha_protocol::{ChatHistoryResponse, SaveChatRequest, validate_chat_text};
 
 use crate::api::{Event, SessionError};
 use crate::chat::{self as chat_codec, CHAT_DELETE_TOPIC, CHAT_TOPIC};
@@ -60,7 +60,7 @@ impl Session {
     pub(super) async fn fetch_history_page(
         &mut self,
         before: Option<String>,
-    ) -> Result<(Vec<SavedChatMessage>, bool), SessionError> {
+    ) -> Result<ChatHistoryResponse, SessionError> {
         if let Some(cursor) = &before {
             chat_codec::validate_chat_id(cursor)?;
         }
@@ -74,7 +74,9 @@ impl Session {
                 }
             })
             .await?;
-        Ok((page.messages, page.has_more))
+        let mut page = page;
+        page.webhook_posts.retain(|post| post.validate().is_ok());
+        Ok(page)
     }
 
     pub(super) async fn send_chat(&mut self, text: &str, save: bool) {
@@ -138,10 +140,11 @@ impl Session {
 
     pub(super) async fn load_chat_history(&mut self, before: Option<String>) {
         match self.fetch_history_page(before.clone()).await {
-            Ok((messages, has_more)) => self.emit(Event::ChatHistory {
-                messages,
-                has_more,
+            Ok(page) => self.emit(Event::ChatHistory {
+                messages: page.messages,
+                has_more: page.has_more,
                 before,
+                webhook_posts: page.webhook_posts,
             }),
             Err(err) => self.emit(Event::CommandFailed(err)),
         }
@@ -182,7 +185,9 @@ impl Session {
 
 #[cfg(test)]
 mod tests {
-    use zenha_protocol::{ChatDeleted, ChatHistoryResponse, ChatMessage, SavedChatMessage};
+    use zenha_protocol::{
+        ChatDeleted, ChatHistoryResponse, ChatMessage, SavedChatMessage, WebhookPost,
+    };
 
     use crate::api::{Command, Event, SessionError};
     use crate::backend::BackendEvent;
@@ -200,6 +205,16 @@ mod tests {
             saved: false,
         })
         .unwrap()
+    }
+
+    fn webhook_post(id: &str) -> WebhookPost {
+        WebhookPost {
+            id: id.to_owned(),
+            name: "GC".to_owned(),
+            sent_at_unix_ms: 5,
+            content: Some("lobby".to_owned()),
+            embeds: Vec::new(),
+        }
     }
 
     fn saved_item(id: &str, text: &str) -> SavedChatMessage {
@@ -401,10 +416,12 @@ mod tests {
         let page1 = ChatHistoryResponse {
             messages: vec![saved_item("m2", "dois"), saved_item("m1", "um")],
             has_more: true,
+            webhook_posts: vec![webhook_post("w1"), webhook_post("bad id!")],
         };
         let page2 = ChatHistoryResponse {
             messages: vec![saved_item("m0", "zero")],
             has_more: false,
+            webhook_posts: Vec::new(),
         };
         h.tokens.set_chat_history_page(None, page1.clone());
         h.tokens
@@ -421,6 +438,7 @@ mod tests {
                 messages: page1.messages,
                 has_more: true,
                 before: None,
+                webhook_posts: vec![webhook_post("w1")],
             }
         );
 
@@ -433,6 +451,7 @@ mod tests {
                 messages: page2.messages,
                 has_more: false,
                 before: Some("m1".to_owned()),
+                webhook_posts: Vec::new(),
             }
         );
         assert_eq!(h.tokens.history_calls().len(), 2);

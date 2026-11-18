@@ -120,6 +120,7 @@ impl TokenClient for FakeTokenClient {
             .unwrap_or(ChatHistoryResponse {
                 messages: Vec::new(),
                 has_more: false,
+                webhook_posts: Vec::new(),
             }))
     }
 

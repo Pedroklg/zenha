@@ -284,6 +284,7 @@ fn demo_supports_saved_messages_history_pages_and_deletion() {
             messages,
             has_more: true,
             before: None,
+            ..
         } if !messages.is_empty() && messages.iter().all(|m| m.saved)
     )));
 
@@ -305,6 +306,7 @@ fn demo_supports_saved_messages_history_pages_and_deletion() {
             messages,
             has_more: false,
             before: Some(cursor),
+            ..
         }] if !messages.is_empty() && cursor == "demo-hist-3"
     ));
 

@@ -110,6 +110,7 @@ impl DemoSession {
                 messages: Self::initial_history(),
                 has_more: true,
                 before: None,
+                webhook_posts: Vec::new(),
             },
         );
         let [lobby, started] = Self::webhook_posts();

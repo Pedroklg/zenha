@@ -431,8 +431,9 @@ pub(super) fn apply_room_event(state: &mut RoomState, event: UiEvent) -> Option<
             messages,
             has_more,
             before: _,
+            webhook_posts,
         } => {
-            state.chat.apply_history(messages, has_more);
+            state.chat.apply_history(messages, webhook_posts, has_more);
             None
         }
         UiEvent::ChatDeleted { id, sender } => {

@@ -513,6 +513,7 @@ async fn token_to_post_to_get_uses_token_identity_and_ignores_forged_author() {
                 sender_id: "client-ana-01".to_owned(),
             }],
             has_more: false,
+            webhook_posts: Vec::new(),
         }
     );
 }

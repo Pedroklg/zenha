@@ -544,6 +544,7 @@ fn chat_history_and_delete_events_keep_sender_identity_and_name() {
         }],
         has_more: true,
         before: Some("m2".to_owned()),
+        webhook_posts: Vec::new(),
     });
     assert_eq!(
         events,
@@ -558,6 +559,7 @@ fn chat_history_and_delete_events_keep_sender_identity_and_name() {
             }],
             has_more: true,
             before: Some("m2".to_owned()),
+            webhook_posts: Vec::new(),
         }]
     );
 
