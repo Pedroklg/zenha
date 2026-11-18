@@ -2,9 +2,11 @@
 
 pub mod clipboard_image;
 pub mod credentials;
+pub mod diagnostics;
 #[cfg(windows)]
 pub mod global_keys;
 pub mod hotkeys;
+pub mod logging;
 pub mod settings;
 #[cfg(windows)]
 pub mod single_instance;

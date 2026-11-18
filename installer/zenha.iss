@@ -35,6 +35,7 @@ Source: "..\target\release\{#AppExeName}"; DestDir: "{app}"; Flags: ignoreversio
 
 [Icons]
 Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExeName}"
+Name: "{autoprograms}\{#AppName} (diagnostico)"; Filename: "{app}\{#AppExeName}"; Parameters: "--diagnostico"
 Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Tasks: desktopicon
 
 [Registry]
