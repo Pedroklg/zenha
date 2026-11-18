@@ -106,14 +106,15 @@ pub(super) fn rooms_list(
                         }
                     });
                 }
-                if !summary.participants.is_empty() {
+                let occupants = visible_occupants(summary, is_current, view.participants);
+                if !occupants.is_empty() {
                     ui.add_space(2.0);
-                    for (idx, name) in summary.participants.iter().enumerate() {
+                    for (idx, name) in occupants.iter().enumerate() {
                         let speaking = is_occupant_speaking(is_current, name, view.participants);
                         let volume_target = occupant_volume_target(
                             is_current,
                             name,
-                            &summary.participants,
+                            &occupants,
                             view.participants,
                             view.local_identity,
                         )
@@ -361,6 +362,19 @@ fn is_occupant_speaking(
             .any(|p| p.name == name && p.speaking)
 }
 
+/// A locked room the server hides is still listed for whoever is inside it, from the live participants.
+fn visible_occupants(
+    summary: &RoomSummary,
+    is_current: bool,
+    participants: &[ParticipantView],
+) -> Vec<String> {
+    if is_current && summary.locked && summary.participants.is_empty() {
+        participants.iter().map(|p| p.name.clone()).collect()
+    } else {
+        summary.participants.clone()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -387,6 +401,30 @@ mod tests {
         assert!(is_occupant_speaking(true, "Ana", &list));
         assert!(!is_occupant_speaking(false, "Ana", &list));
         assert!(!is_occupant_speaking(true, "Bruno", &list));
+    }
+
+    #[test]
+    fn locked_room_lists_live_participants_only_for_whoever_is_inside() {
+        let hidden = RoomSummary {
+            name: "vip".to_owned(),
+            participant_count: 2,
+            locked: true,
+            ..RoomSummary::default()
+        };
+        let live = vec![
+            participant("id-self", "Lucas"),
+            participant("id-ana", "Ana"),
+        ];
+        assert_eq!(
+            visible_occupants(&hidden, true, &live),
+            vec!["Lucas", "Ana"]
+        );
+        assert!(visible_occupants(&hidden, false, &live).is_empty());
+        let open = RoomSummary {
+            participants: vec!["Bia".to_owned()],
+            ..hidden.clone()
+        };
+        assert_eq!(visible_occupants(&open, true, &live), vec!["Bia"]);
     }
 
     #[test]

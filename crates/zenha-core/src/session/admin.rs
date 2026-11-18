@@ -11,7 +11,7 @@ use zenha_protocol::{
     validate_webhook_id,
 };
 
-use crate::api::{AdminAction, Event, SessionError};
+use crate::api::{AdminAction, Event, RoomKey, SessionError};
 use crate::chat as chat_codec;
 use crate::clock::unix_ms;
 use crate::net::token::TokenClient;
@@ -141,7 +141,13 @@ impl Session {
                     && validate_room_name(&mv.to_room).is_ok()
                 {
                     if let Some(unlock) = mv.unlock {
-                        self.config.room_keys.insert(unlock.room, unlock.room_key);
+                        self.config
+                            .room_keys
+                            .insert(unlock.room.clone(), unlock.room_key.clone());
+                        self.emit(Event::RoomUnlocked {
+                            room: unlock.room,
+                            key: RoomKey(unlock.room_key),
+                        });
                     }
                     self.emit(Event::MovedByAdmin {
                         to_room: mv.to_room.clone(),
@@ -369,7 +375,7 @@ mod tests {
         WEBHOOK_TOPIC, WebhookPost,
     };
 
-    use crate::api::{AdminAction, Command, Event, SessionError};
+    use crate::api::{AdminAction, Command, Event, RoomKey, SessionError};
     use crate::testing::AdminTokenCall;
     use crate::video::{CaptureKind, CaptureTarget, SharePreset};
 
@@ -652,6 +658,13 @@ mod tests {
         })
         .unwrap();
         assert!(h.backend.emit_server_data(ADMIN_MOVE_TOPIC, move_payload));
+        assert_eq!(
+            h.next().await,
+            Event::RoomUnlocked {
+                room: "jogos".to_owned(),
+                key: RoomKey("chave-jogos".to_owned()),
+            }
+        );
         assert_eq!(
             h.next().await,
             Event::MovedByAdmin {
