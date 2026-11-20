@@ -517,7 +517,15 @@ fn join_posts_a_lobby_card_and_a_match_card() {
         Some("https://gamersclub.com.br/j/123/abc")
     );
     assert!(
-        posts[1].embeds[0].fields[0]
+        posts[0].embeds[0]
+            .fields
+            .iter()
+            .any(|f| f.name == "Admin da sala:" && f.value == "ana | 15")
+    );
+    assert_eq!(posts[1].embeds[0].fields[0].name, "Time ana - 15");
+    assert_eq!(posts[1].embeds[0].fields[1].name, "Time bia - 17");
+    assert!(
+        posts[1].embeds[0].fields[2]
             .value
             .starts_with("connect 1.2.3.4:27015;password xyz")
     );
