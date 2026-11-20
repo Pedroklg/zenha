@@ -122,10 +122,17 @@ fn run(launch: cli::LaunchArgs) -> anyhow::Result<()> {
         tracing::debug!(%err, "could not start startup cleanup thread");
     }
 
-    let options = eframe::NativeOptions {
+    #[cfg_attr(not(windows), expect(unused_mut))]
+    let mut options = eframe::NativeOptions {
         viewport: window_viewport(),
         ..Default::default()
     };
+    // Vulkan/GL adapter enumeration can spin forever on old hybrid-GPU drivers; DX12 always has WARP.
+    #[cfg(windows)]
+    if let eframe::egui_wgpu::WgpuSetup::CreateNew(setup) = &mut options.wgpu_options.wgpu_setup {
+        setup.instance_descriptor.backends =
+            eframe::wgpu::Backends::from_env().unwrap_or(eframe::wgpu::Backends::DX12);
+    }
 
     eframe::run_native(
         APP_NAME,
