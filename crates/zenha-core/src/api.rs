@@ -442,7 +442,7 @@ pub enum Event {
         messages: Vec<SavedChatMessage>,
         has_more: bool,
         before: Option<String>,
-        /// Integration posts of the last 24 hours; only with the first page.
+        /// Integration posts of the last 12 hours; only with the first page.
         webhook_posts: Vec<WebhookPost>,
     },
     /// A saved message was removed.

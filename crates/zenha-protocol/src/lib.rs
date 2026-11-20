@@ -149,7 +149,7 @@ pub struct SavedChatMessage {
 pub struct ChatHistoryResponse {
     pub messages: Vec<SavedChatMessage>,
     pub has_more: bool,
-    /// Integration posts of the last 24 hours, oldest first; only on the first page.
+    /// Integration posts of the last 12 hours, oldest first; only on the first page.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub webhook_posts: Vec<WebhookPost>,
 }
