@@ -424,8 +424,8 @@ pub(super) fn apply_room_event(state: &mut RoomState, event: UiEvent) -> Option<
             None
         }
         UiEvent::WebhookPosted(post) => {
-            state.chat.push_webhook(post);
-            None
+            let added = state.chat.push_webhook(post);
+            (added && state.status == ConnectionStatus::Connected).then_some(Cue::IntegrationPost)
         }
         UiEvent::ChatHistory {
             messages,
