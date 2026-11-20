@@ -746,3 +746,52 @@ fn webhook_post_is_not_touched_by_history_or_delete() {
     assert_eq!(chat.messages.len(), 2);
     assert!(matches!(chat.messages.back(), Some(ChatEntry::Webhook(_))));
 }
+
+#[test]
+fn integration_post_cue_plays_for_new_live_posts_only_when_room_sounds_enabled() {
+    use zenha_core::Cue;
+
+    let mut state = state_with_code();
+    in_room(&mut state);
+    state.take_pending_commands();
+
+    state.apply_event(UiEvent::WebhookPosted(webhook_post("w-1")));
+    assert_eq!(
+        state.take_pending_commands(),
+        vec![UiCommand::PlayCue(Cue::IntegrationPost)]
+    );
+
+    // Repeated post with the same id does not play again.
+    state.apply_event(UiEvent::WebhookPosted(webhook_post("w-1")));
+    assert!(state.take_pending_commands().is_empty());
+
+    // History never plays the integration cue, and live delivery of a post already in history does not either.
+    state.apply_event(UiEvent::ChatHistory {
+        messages: Vec::new(),
+        has_more: false,
+        before: None,
+        webhook_posts: vec![webhook_post("w-hist")],
+    });
+    assert!(state.take_pending_commands().is_empty());
+    state.apply_event(UiEvent::WebhookPosted(webhook_post("w-hist")));
+    assert!(state.take_pending_commands().is_empty());
+
+    // Disabled room sounds suppresses the cue while still adding the post.
+    state.handle_action(UserAction::SetRoomSounds(false));
+    state.take_pending_commands();
+    state.apply_event(UiEvent::WebhookPosted(webhook_post("w-2")));
+    assert!(state.take_pending_commands().is_empty());
+    assert!(
+        room(&state)
+            .chat
+            .messages
+            .iter()
+            .any(|entry| matches!(entry, ChatEntry::Webhook(post) if post.id == "w-2"))
+    );
+
+    // Reconnecting status suppresses the cue as well.
+    state.handle_action(UserAction::SetRoomSounds(true));
+    state.apply_event(UiEvent::Reconnecting);
+    state.apply_event(UiEvent::WebhookPosted(webhook_post("w-3")));
+    assert!(state.take_pending_commands().is_empty());
+}

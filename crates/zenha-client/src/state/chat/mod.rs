@@ -96,15 +96,16 @@ impl ChatState {
         self.push(ChatEntry::Text(message), true);
     }
 
-    pub(super) fn push_webhook(&mut self, post: WebhookPost) {
+    pub(super) fn push_webhook(&mut self, post: WebhookPost) -> bool {
         let known = self
             .messages
             .iter()
             .any(|entry| matches!(entry, ChatEntry::Webhook(existing) if existing.id == post.id));
         if known {
-            return;
+            return false;
         }
         self.push(ChatEntry::Webhook(post), true);
+        true
     }
 
     pub(super) fn apply_history(

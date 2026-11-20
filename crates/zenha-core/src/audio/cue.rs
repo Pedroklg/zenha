@@ -23,6 +23,7 @@ pub enum Cue {
     SelfLeft,
     PeerJoined,
     PeerLeft,
+    IntegrationPost,
 }
 
 struct CueSpec {
@@ -71,6 +72,11 @@ impl Cue {
             },
             Self::PeerLeft => CueSpec {
                 notes_hz: &[392.0, 329.63],
+                note_seconds: PEER_NOTE_SECONDS,
+                amplitude: SELF_AMPLITUDE * PEER_SCALE,
+            },
+            Self::IntegrationPost => CueSpec {
+                notes_hz: &[987.77, 1318.51],
                 note_seconds: PEER_NOTE_SECONDS,
                 amplitude: SELF_AMPLITUDE * PEER_SCALE,
             },
@@ -154,7 +160,7 @@ mod tests {
     use super::*;
 
     const SAMPLE_RATE: u32 = 48_000;
-    const ALL_CUES: [Cue; 8] = [
+    const ALL_CUES: [Cue; 9] = [
         Cue::Muted,
         Cue::Unmuted,
         Cue::Deafened,
@@ -163,6 +169,7 @@ mod tests {
         Cue::SelfLeft,
         Cue::PeerJoined,
         Cue::PeerLeft,
+        Cue::IntegrationPost,
     ];
 
     fn peak(samples: &[f32]) -> f32 {
@@ -203,7 +210,7 @@ mod tests {
             let samples = cue_samples(cue, SAMPLE_RATE);
             let p = peak(&samples);
             match cue {
-                Cue::PeerJoined | Cue::PeerLeft => {
+                Cue::PeerJoined | Cue::PeerLeft | Cue::IntegrationPost => {
                     assert!((0.06..=0.095).contains(&p), "{cue:?} peak {p}");
                     peer_max = peer_max.max(p);
                 }

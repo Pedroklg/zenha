@@ -150,6 +150,7 @@ fn parse_cue(name: &str) -> Option<Cue> {
         "self_left" => Some(Cue::SelfLeft),
         "peer_joined" => Some(Cue::PeerJoined),
         "peer_left" => Some(Cue::PeerLeft),
+        "integration_post" => Some(Cue::IntegrationPost),
         _ => None,
     }
 }

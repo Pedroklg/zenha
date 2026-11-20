@@ -21,7 +21,7 @@ pub const MAX_WEBHOOK_TITLE_LEN: usize = 256;
 pub const MAX_WEBHOOK_TEXT_LEN: usize = 1024;
 pub const MAX_WEBHOOK_URL_LEN: usize = 512;
 /// How long the server keeps integration posts for the room history.
-pub const WEBHOOK_POST_TTL_MS: u64 = 24 * 60 * 60 * 1000;
+pub const WEBHOOK_POST_TTL_MS: u64 = 12 * 60 * 60 * 1000;
 /// Most recent integration posts returned with a room history.
 pub const MAX_HISTORY_WEBHOOK_POSTS: usize = 50;
 

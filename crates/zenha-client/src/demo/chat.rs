@@ -131,6 +131,7 @@ impl DemoSession {
                     Some("https://gamersclub.com.br/j/123/abc"),
                     vec![
                         field("Tipo da sala:", "FECHADA"),
+                        field("Admin da sala:", "ana | 15"),
                         field("Membros:", "ana | 15 | KDR: 1.2"),
                     ],
                 ),
@@ -141,6 +142,14 @@ impl DemoSession {
                     None,
                     None,
                     vec![
+                        field(
+                            "Time ana - 15",
+                            "15 - ana \n16 - carla \n14 - pedro \n17 - lucas \n15 - bruno",
+                        ),
+                        field(
+                            "Time bia - 17",
+                            "17 - bia \n18 - duda \n16 - rafa \n15 - gio \n17 - teo",
+                        ),
                         field(
                             "IP da partida:",
                             "connect 1.2.3.4:27015;password xyz \n[Conectar ao servidor](steam://connect/1.2.3.4:27015/xyz)",

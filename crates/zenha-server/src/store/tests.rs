@@ -821,17 +821,17 @@ async fn post_ids(store: &ChatStore, room: &str, now: u64) -> Vec<String> {
 }
 
 #[tokio::test]
-async fn webhook_posts_are_kept_for_a_day_oldest_first() {
+async fn webhook_posts_are_kept_for_the_ttl_oldest_first() {
     let store = ChatStore::open_in_memory().unwrap();
-    let day = WEBHOOK_POST_TTL_MS;
+    let ttl = WEBHOOK_POST_TTL_MS;
     save_post(&store, "geral", "w1", "a", 1_000).await;
     save_post(&store, "geral", "w1", "b", 2_000).await;
     save_post(&store, "jogos", "w1", "c", 2_000).await;
     assert_eq!(post_ids(&store, "geral", 2_000).await, vec!["a", "b"]);
-    assert_eq!(post_ids(&store, "geral", 1_500 + day).await, vec!["b"]);
-    assert!(post_ids(&store, "geral", 3_000 + day).await.is_empty());
+    assert_eq!(post_ids(&store, "geral", 1_500 + ttl).await, vec!["b"]);
+    assert!(post_ids(&store, "geral", 3_000 + ttl).await.is_empty());
 
-    save_post(&store, "geral", "w1", "d", 5_000 + day).await;
+    save_post(&store, "geral", "w1", "d", 5_000 + ttl).await;
     let remaining: i64 = store
         .with_conn(|conn| {
             Ok(conn.query_row("SELECT COUNT(*) FROM webhook_posts", [], |r| r.get(0))?)

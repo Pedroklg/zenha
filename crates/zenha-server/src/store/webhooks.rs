@@ -1,4 +1,4 @@
-//! Incoming webhooks: creation under a quota, lookup by id, removal and the posts kept for 24 hours.
+//! Incoming webhooks: creation under a quota, lookup by id, removal and the posts kept for 12 hours.
 
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use sha2::{Digest, Sha256};
@@ -116,7 +116,7 @@ impl ChatStore {
         .await
     }
 
-    /// Posts of the room younger than 24 hours at `now_unix_ms`, oldest first.
+    /// Posts of the room younger than 12 hours at `now_unix_ms`, oldest first.
     pub async fn list_webhook_posts(
         &self,
         room: String,

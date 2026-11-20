@@ -105,6 +105,7 @@ fn session_commands_map_and_local_ones_do_not() {
         ("self_left", Cue::SelfLeft),
         ("peer_joined", Cue::PeerJoined),
         ("peer_left", Cue::PeerLeft),
+        ("integration_post", Cue::IntegrationPost),
     ] {
         assert_eq!(
             BotCommand::PlayCue { cue: name.into() }.to_core(),
