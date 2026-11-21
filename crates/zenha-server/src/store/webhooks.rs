@@ -18,7 +18,10 @@ pub struct WebhookRecord {
 
 /// Hex SHA-256 of a webhook token, the only form in which it is stored.
 pub fn token_hash(token: &str) -> String {
-    format!("{:x}", Sha256::digest(token.as_bytes()))
+    Sha256::digest(token.as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 impl ChatStore {
