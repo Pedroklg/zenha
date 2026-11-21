@@ -10,7 +10,9 @@ use livekit::prelude::{
 };
 use livekit::webrtc::audio_stream::native::NativeAudioStream;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
-use zenha_protocol::{AVATAR_ATTR, parse_avatar_attribute};
+use zenha_protocol::{
+    AVATAR_ATTR, DEAFENED_ATTR, parse_avatar_attribute, parse_deafened_attribute,
+};
 
 use crate::api::RemovalReason;
 use crate::backend::BackendEvent;
@@ -90,14 +92,21 @@ fn translate(
             participant,
             changed_attributes,
         } => {
+            let identity = String::from(participant.identity());
+            let mut events = Vec::new();
             if let Some(raw) = changed_attributes.get(AVATAR_ATTR) {
-                vec![BackendEvent::AvatarChanged {
-                    identity: String::from(participant.identity()),
+                events.push(BackendEvent::AvatarChanged {
+                    identity: identity.clone(),
                     version: parse_avatar_attribute(raw),
-                }]
-            } else {
-                Vec::new()
+                });
             }
+            if let Some(raw) = changed_attributes.get(DEAFENED_ATTR) {
+                events.push(BackendEvent::DeafenChanged {
+                    identity,
+                    deafened: parse_deafened_attribute(raw),
+                });
+            }
+            events
         }
         RoomEvent::TrackMuted {
             participant,

@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 
 use eframe::egui::{self, Align, Color32, CornerRadius, Layout, RichText, Sense, Vec2};
-use zenha_protocol::RoomSummary;
+use zenha_protocol::{RoomSummary, VoiceState};
 
 use crate::icons;
 use crate::state::{ShareState, UserAction, participant_volume_for, sidebar_order};
@@ -109,12 +109,14 @@ pub(super) fn rooms_list(
                 let occupants = visible_occupants(summary, is_current, view.participants);
                 if !occupants.is_empty() {
                     ui.add_space(2.0);
-                    for (idx, name) in occupants.iter().enumerate() {
+                    let names: Vec<&str> =
+                        occupants.iter().map(|(name, _)| name.as_str()).collect();
+                    for (idx, (name, voice)) in occupants.iter().enumerate() {
                         let speaking = is_occupant_speaking(is_current, name, view.participants);
                         let volume_target = occupant_volume_target(
                             is_current,
                             name,
-                            &occupants,
+                            &names,
                             view.participants,
                             view.local_identity,
                         )
@@ -141,6 +143,7 @@ pub(super) fn rooms_list(
                             occupant_row(
                                 ui,
                                 name,
+                                *voice,
                                 speaking,
                                 volume_target,
                                 OccupantAdminCtx {
@@ -240,9 +243,12 @@ struct OccupantAdminCtx<'a> {
     rooms: &'a [RoomSummary],
 }
 
+const VOICE_ICON_SIZE: f32 = 13.0;
+
 fn occupant_row(
     ui: &mut egui::Ui,
     name: &str,
+    voice: VoiceState,
     speaking: bool,
     volume_target: Option<(&ParticipantView, u16)>,
     admin: OccupantAdminCtx<'_>,
@@ -282,11 +288,10 @@ fn occupant_row(
                 };
                 let volume_badge =
                     volume_target.and_then(|(_, volume)| participant_volume_badge(volume, false));
-                let max_name_width = if volume_badge.is_some() {
-                    (ui.available_width() - 44.0).max(24.0)
-                } else {
-                    ui.available_width().max(24.0)
-                };
+                let icon_count = u8::from(voice.muted) + u8::from(voice.deafened);
+                let icons_width = f32::from(icon_count) * (VOICE_ICON_SIZE + 4.0);
+                let badge_width = if volume_badge.is_some() { 44.0 } else { 0.0 };
+                let max_name_width = (ui.available_width() - badge_width - icons_width).max(24.0);
                 ui.scope(|ui| {
                     ui.set_max_width(max_name_width);
                     let mut label =
@@ -299,6 +304,18 @@ fn occupant_row(
                 });
                 if let Some(badge) = volume_badge {
                     ui.label(RichText::new(badge).size(11.0).color(theme::TEXT_WEAK));
+                }
+                if voice.muted {
+                    let (rect, response) =
+                        ui.allocate_exact_size(Vec2::splat(VOICE_ICON_SIZE), Sense::hover());
+                    icons::mic(ui.painter(), rect, theme::TEXT_WEAK, true);
+                    response.on_hover_text("Microfone desligado");
+                }
+                if voice.deafened {
+                    let (rect, response) =
+                        ui.allocate_exact_size(Vec2::splat(VOICE_ICON_SIZE), Sense::hover());
+                    icons::headphones(ui.painter(), rect, theme::TEXT_WEAK, true);
+                    response.on_hover_text("Fone desligado");
                 }
             },
         )
@@ -327,7 +344,7 @@ fn occupant_row(
 fn occupant_volume_target<'a>(
     is_current_room: bool,
     name: &str,
-    summary_participants: &[String],
+    summary_participants: &[&str],
     current_participants: &'a [ParticipantView],
     local_identity: &str,
 ) -> Option<&'a ParticipantView> {
@@ -336,7 +353,7 @@ fn occupant_volume_target<'a>(
     }
     if summary_participants
         .iter()
-        .filter(|candidate| candidate.as_str() == name)
+        .filter(|candidate| **candidate == name)
         .count()
         != 1
     {
@@ -363,16 +380,34 @@ fn is_occupant_speaking(
 }
 
 /// A locked room the server hides is still listed for whoever is inside it, from the live participants.
+/// In the current room the live microphone and headphones state wins over the last `/rooms` poll.
 fn visible_occupants(
     summary: &RoomSummary,
     is_current: bool,
     participants: &[ParticipantView],
-) -> Vec<String> {
+) -> Vec<(String, VoiceState)> {
+    let live_voice = |p: &ParticipantView| VoiceState {
+        muted: p.muted,
+        deafened: p.deafened,
+    };
     if is_current && summary.locked && summary.participants.is_empty() {
-        participants.iter().map(|p| p.name.clone()).collect()
-    } else {
-        summary.participants.clone()
+        return participants
+            .iter()
+            .map(|p| (p.name.clone(), live_voice(p)))
+            .collect();
     }
+    summary
+        .participants
+        .iter()
+        .enumerate()
+        .map(|(idx, name)| {
+            let live = participants
+                .iter()
+                .find(|p| is_current && p.name == *name)
+                .map(live_voice);
+            (name.clone(), live.unwrap_or_else(|| summary.voice_of(idx)))
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -384,6 +419,7 @@ mod tests {
             identity: identity.to_owned(),
             name: name.to_owned(),
             muted: false,
+            deafened: false,
             speaking: false,
             avatar_version: None,
         }
@@ -395,6 +431,7 @@ mod tests {
             identity: "id-ana".to_owned(),
             name: "Ana".to_owned(),
             muted: false,
+            deafened: false,
             speaking: true,
             avatar_version: None,
         }];
@@ -415,8 +452,11 @@ mod tests {
             participant("id-self", "Lucas"),
             participant("id-ana", "Ana"),
         ];
+        let names = |occupants: Vec<(String, VoiceState)>| -> Vec<String> {
+            occupants.into_iter().map(|(name, _)| name).collect()
+        };
         assert_eq!(
-            visible_occupants(&hidden, true, &live),
+            names(visible_occupants(&hidden, true, &live)),
             vec!["Lucas", "Ana"]
         );
         assert!(visible_occupants(&hidden, false, &live).is_empty());
@@ -424,12 +464,60 @@ mod tests {
             participants: vec!["Bia".to_owned()],
             ..hidden.clone()
         };
-        assert_eq!(visible_occupants(&open, true, &live), vec!["Bia"]);
+        assert_eq!(names(visible_occupants(&open, true, &live)), vec!["Bia"]);
+    }
+
+    #[test]
+    fn occupant_voice_comes_from_the_live_list_in_the_current_room_and_the_poll_elsewhere() {
+        let off = VoiceState {
+            muted: true,
+            deafened: true,
+        };
+        let summary = RoomSummary {
+            name: "geral".to_owned(),
+            participants: vec!["Ana".to_owned(), "Bia".to_owned()],
+            voice: vec![VoiceState::default(), off],
+            ..RoomSummary::default()
+        };
+        let mut ana = participant("id-ana", "Ana");
+        ana.deafened = true;
+        let live = vec![ana, participant("id-bia", "Bia")];
+        let voices = |is_current| -> Vec<VoiceState> {
+            visible_occupants(&summary, is_current, &live)
+                .into_iter()
+                .map(|(_, voice)| voice)
+                .collect()
+        };
+        assert_eq!(
+            voices(false),
+            vec![VoiceState::default(), off],
+            "another room uses the polled state"
+        );
+        assert_eq!(
+            voices(true),
+            vec![
+                VoiceState {
+                    muted: false,
+                    deafened: true
+                },
+                VoiceState::default()
+            ],
+            "the current room uses the live state"
+        );
+        let old_server = RoomSummary {
+            voice: Vec::new(),
+            ..summary.clone()
+        };
+        assert!(
+            visible_occupants(&old_server, false, &live)
+                .iter()
+                .all(|(_, voice)| *voice == VoiceState::default())
+        );
     }
 
     #[test]
     fn occupant_volume_target_matches_unique_remote_in_current_room() {
-        let summary = vec!["Lucas".to_owned(), "Ana".to_owned()];
+        let summary = vec!["Lucas", "Ana"];
         let participants = vec![
             participant("id-self", "Lucas"),
             participant("id-ana", "Ana"),
@@ -448,7 +536,7 @@ mod tests {
 
     #[test]
     fn occupant_volume_target_skips_duplicate_names_in_participants_or_summary() {
-        let summary = vec!["Ana".to_owned(), "Ana".to_owned(), "Bruno".to_owned()];
+        let summary = vec!["Ana", "Ana", "Bruno"];
         let two_remotes = vec![
             participant("id-self", "Lucas"),
             participant("id-ana-1", "Ana"),
@@ -462,7 +550,7 @@ mod tests {
             Some("id-bruno")
         );
 
-        let summary_single_ana = vec!["Ana".to_owned()];
+        let summary_single_ana = vec!["Ana"];
         let self_and_remote_same_name = vec![
             participant("id-self", "Ana"),
             participant("id-remote-ana", "Ana"),

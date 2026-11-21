@@ -10,6 +10,7 @@ fn participant(identity: &str, name: &str) -> ParticipantView {
         identity: identity.to_owned(),
         name: name.to_owned(),
         muted: false,
+        deafened: false,
         speaking: false,
         avatar_version: None,
     }

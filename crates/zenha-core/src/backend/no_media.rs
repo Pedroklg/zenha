@@ -45,6 +45,7 @@ impl MediaBackend for NoMediaBackend {
                 identity: self.identity.clone(),
                 name: self.identity.clone(),
                 muted: false,
+                deafened: false,
                 speaking: false,
                 avatar_version: None,
             }],

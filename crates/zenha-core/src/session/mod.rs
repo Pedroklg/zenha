@@ -190,6 +190,9 @@ impl Session {
                 }
                 self.emit(Event::ParticipantMuteChanged { identity, muted });
             }
+            Some(BackendEvent::DeafenChanged { identity, deafened }) => {
+                self.emit(Event::ParticipantDeafenChanged { identity, deafened });
+            }
             Some(BackendEvent::SpeakingChanged { identity, speaking }) => {
                 self.emit(Event::ParticipantSpeakingChanged { identity, speaking });
             }

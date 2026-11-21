@@ -2,8 +2,8 @@
 
 use std::path::PathBuf;
 
-use livekit::prelude::DataPacket;
-use zenha_protocol::AVATAR_ATTR;
+use livekit::prelude::{DataPacket, Room};
+use zenha_protocol::{AVATAR_ATTR, DEAFENED_ATTR, deafened_attribute};
 
 use crate::api::{FileTransfer, SessionError};
 use crate::livekit_backend::files;
@@ -58,6 +58,22 @@ impl LiveKitBackend {
             tracing::warn!(%err, "updating participant avatar attribute failed");
             SessionError::Connection("could not update the avatar attribute".to_owned())
         })
+    }
+
+    /// Tells the others the headphones are off; a failure only costs the indicator.
+    pub(super) async fn publish_deafened_attribute(&self, room: &Room, deafened: bool) {
+        let local = room.local_participant();
+        let mut attributes = local.attributes();
+        if super::room::deafened(&attributes) == deafened {
+            return;
+        }
+        attributes.insert(
+            DEAFENED_ATTR.to_owned(),
+            deafened_attribute(deafened).to_owned(),
+        );
+        if let Err(err) = local.set_attributes(attributes).await {
+            tracing::warn!(%err, "updating participant deafened attribute failed");
+        }
     }
 
     pub(super) async fn start_file_send(

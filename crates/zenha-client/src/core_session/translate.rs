@@ -38,6 +38,7 @@ fn view(participant: Participant) -> ParticipantView {
         identity: participant.identity,
         name: participant.name,
         muted: participant.muted,
+        deafened: participant.deafened,
         speaking: participant.speaking,
         avatar_version: participant.avatar_version,
     }
@@ -140,6 +141,9 @@ impl Translator {
             }
             Event::ParticipantMuteChanged { identity, muted } => {
                 self.update(&identity, |p| p.muted = muted)
+            }
+            Event::ParticipantDeafenChanged { identity, deafened } => {
+                self.update(&identity, |p| p.deafened = deafened)
             }
             Event::ParticipantSpeakingChanged { identity, speaking } => {
                 self.update(&identity, |p| p.speaking = speaking)

@@ -21,6 +21,7 @@ fn participant(identity: &str, name: &str) -> Participant {
         identity: identity.to_owned(),
         name: name.to_owned(),
         muted: false,
+        deafened: false,
         speaking: false,
         avatar_version: None,
     }
@@ -48,6 +49,7 @@ fn mute_and_speaking_changes_become_full_participant_updates() {
             identity: "ana".to_owned(),
             name: "Ana".to_owned(),
             muted: true,
+            deafened: false,
             speaking: false,
             avatar_version: None,
         })]

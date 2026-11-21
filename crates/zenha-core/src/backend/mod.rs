@@ -28,6 +28,10 @@ pub enum BackendEvent {
         identity: String,
         muted: bool,
     },
+    DeafenChanged {
+        identity: String,
+        deafened: bool,
+    },
     SpeakingChanged {
         identity: String,
         speaking: bool,

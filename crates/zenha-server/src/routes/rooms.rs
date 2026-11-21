@@ -8,8 +8,10 @@ use axum::extract::{Path, State};
 use axum::http::HeaderMap;
 use zenha_protocol::{
     ROOM_KEYS_HEADER, RoomSummary, RoomsResponse, UnlockRoomRequest, UnlockRoomResponse,
-    parse_room_keys, validate_room_name,
+    VoiceState, parse_room_keys, validate_room_name,
 };
+
+use crate::directory::Occupant;
 
 use crate::room_access::{key_matches, lock_owners, room_key};
 
@@ -42,7 +44,7 @@ pub(super) async fn list_rooms(
     let records = room_records(&state).await?;
     let mut rooms = Vec::with_capacity(records.len());
     for record in &records {
-        let mut participants = state
+        let occupants = state
             .directory
             .participants(&record.id)
             .await
@@ -57,10 +59,12 @@ pub(super) async fn list_rooms(
                 keys.get(*owner)
                     .is_some_and(|key| key_matches(secret, owner, hash, key))
             });
-        let participant_count = participants.len();
-        if locked && !unlocked {
-            participants.clear();
-        }
+        let participant_count = occupants.len();
+        let (participants, voice) = if locked && !unlocked {
+            (Vec::new(), Vec::new())
+        } else {
+            occupant_lists(occupants)
+        };
         rooms.push(RoomSummary {
             name: record.id.clone(),
             title: record.title.clone(),
@@ -69,9 +73,23 @@ pub(super) async fn list_rooms(
             locked,
             unlocked,
             parent: record.parent.clone(),
+            voice,
         });
     }
     Ok(Json(RoomsResponse { rooms }))
+}
+
+/// Names and their voice state; the state list stays empty when nobody has anything off.
+fn occupant_lists(occupants: Vec<Occupant>) -> (Vec<String>, Vec<VoiceState>) {
+    let (names, voice): (Vec<String>, Vec<VoiceState>) = occupants
+        .into_iter()
+        .map(|occupant| (occupant.name, occupant.voice))
+        .unzip();
+    if voice.iter().all(|state| *state == VoiceState::default()) {
+        (names, Vec::new())
+    } else {
+        (names, voice)
+    }
 }
 
 pub(super) async fn unlock_room(
@@ -134,7 +152,9 @@ mod tests {
     use axum::Router;
     use axum::http::StatusCode;
     use tower::ServiceExt;
-    use zenha_protocol::{ROOM_KEYS_HEADER, RoomSummary, RoomsResponse, encode_room_keys};
+    use zenha_protocol::{
+        ROOM_KEYS_HEADER, RoomSummary, RoomsResponse, VoiceState, encode_room_keys,
+    };
 
     use crate::directory::FakeDirectory;
     use crate::store::RoomUpdate;
@@ -186,6 +206,32 @@ mod tests {
                 summary("afk", &["caio"]),
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn rooms_report_who_has_the_microphone_or_headphones_off() {
+        let deafened = VoiceState {
+            muted: true,
+            deafened: true,
+        };
+        let app = app_with(
+            FakeDirectory::default()
+                .with_participants("geral", &["ana", "bia"])
+                .with_participants("jogos", &["caio"])
+                .with_voice("geral", "bia", deafened),
+        );
+        let response = app.oneshot(rooms_request(Some(INVITE))).await.unwrap();
+        let parsed: RoomsResponse = serde_json::from_slice(&body_bytes(response).await).unwrap();
+        let voice = |name: &str| {
+            parsed
+                .rooms
+                .iter()
+                .find(|room| room.name == name)
+                .map(|room| room.voice.clone())
+                .unwrap()
+        };
+        assert_eq!(voice("geral"), vec![VoiceState::default(), deafened]);
+        assert!(voice("jogos").is_empty());
     }
 
     #[tokio::test]

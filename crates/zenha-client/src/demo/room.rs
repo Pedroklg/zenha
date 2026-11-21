@@ -3,9 +3,12 @@
 use std::time::{Duration, Instant};
 
 use zenha_core::RoomKey;
-use zenha_protocol::RoomSummary;
+use zenha_protocol::{RoomSummary, VoiceState};
 
 use crate::ui_model::{ParticipantView, UiEvent};
+
+/// Idle occupant shown with the microphone and headphones off.
+const DEMO_DEAFENED_OCCUPANT: &str = "Carla";
 
 use super::{
     DEMO_AVATAR_IDENTITY, DEMO_AVATAR_VERSION, DemoMicMeter, DemoRoom, DemoSession, FAILING_ROOM,
@@ -181,11 +184,31 @@ impl DemoSession {
         self.rooms_list
             .iter()
             .map(|room| {
-                let participants = if self.room.as_deref() == Some(room.id.as_str()) {
-                    self.participants.iter().map(|p| p.name.clone()).collect()
-                } else {
-                    room.idle_occupants.clone()
-                };
+                let (participants, voice): (Vec<String>, Vec<VoiceState>) =
+                    if self.room.as_deref() == Some(room.id.as_str()) {
+                        self.participants
+                            .iter()
+                            .map(|p| {
+                                let voice = VoiceState {
+                                    muted: p.muted,
+                                    deafened: p.deafened,
+                                };
+                                (p.name.clone(), voice)
+                            })
+                            .unzip()
+                    } else {
+                        room.idle_occupants
+                            .iter()
+                            .map(|name| {
+                                let off = name == DEMO_DEAFENED_OCCUPANT;
+                                let voice = VoiceState {
+                                    muted: off,
+                                    deafened: off,
+                                };
+                                (name.clone(), voice)
+                            })
+                            .unzip()
+                    };
                 let locked = !self.lock_owners(&room.id).is_empty();
                 let hidden = self.needs_password(&room.id);
                 RoomSummary {
@@ -193,6 +216,7 @@ impl DemoSession {
                     title: room.title.clone(),
                     participant_count: participants.len(),
                     participants: if hidden { Vec::new() } else { participants },
+                    voice: if hidden { Vec::new() } else { voice },
                     locked,
                     unlocked: locked && !hidden,
                     parent: room.parent.clone(),

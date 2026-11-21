@@ -248,7 +248,9 @@ impl BotEvent {
     pub fn from_core(event: &Event) -> Option<Self> {
         let people = |list: &[Participant]| list.iter().map(ParticipantInfo::from).collect();
         Some(match event {
-            Event::MicLevel { .. } | Event::CaptureThumbnail { .. } => return None,
+            Event::MicLevel { .. }
+            | Event::CaptureThumbnail { .. }
+            | Event::ParticipantDeafenChanged { .. } => return None,
             Event::Connecting => Self::Connecting,
             Event::Joined {
                 room,
