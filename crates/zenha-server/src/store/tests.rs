@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use rusqlite::Connection;
 use zenha_protocol::{
     AdminRoom, CHAT_HISTORY_PAGE, ChatMessage, MAX_HISTORY_WEBHOOK_POSTS, MAX_ROOM_NAME_LEN,
-    MAX_ROOMS_COUNT, MAX_WEBHOOKS_COUNT, WEBHOOK_POST_TTL_MS, WebhookPost,
+    MAX_ROOMS_COUNT, MAX_WEBHOOKS_COUNT, WEBHOOK_POST_TTL_MS, WebhookEmbed, WebhookPost,
 };
 
 use super::messages::clamp_sent_at;
@@ -839,6 +839,45 @@ async fn webhook_posts_are_kept_for_the_ttl_oldest_first() {
         .await
         .unwrap();
     assert_eq!(remaining, 1);
+}
+
+async fn save_link(store: &ChatStore, webhook: &str, id: &str, at: u64, url: Option<&str>) -> bool {
+    let (mut post, _) = stored_post(id, at);
+    post.embeds = vec![WebhookEmbed {
+        url: url.map(str::to_owned),
+        ..WebhookEmbed::default()
+    }];
+    let json = serde_json::to_string(&post).unwrap();
+    store
+        .save_webhook_post("jogos".to_owned(), webhook.to_owned(), post, json)
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn webhook_post_repeating_the_last_link_is_skipped() {
+    let store = ChatStore::open_in_memory().unwrap();
+    let lobby = Some("https://gamersclub.com.br/j/1/a");
+    assert!(save_link(&store, "w1", "a", 1_000, lobby).await);
+    assert!(!save_link(&store, "w1", "b", 2_000, lobby).await);
+    assert!(save_link(&store, "w2", "c", 2_500, lobby).await);
+    assert!(save_link(&store, "w1", "d", 3_000, None).await);
+    assert!(save_link(&store, "w1", "e", 4_000, None).await);
+    assert!(save_link(&store, "w1", "f", 5_000, lobby).await);
+    assert!(
+        save_link(
+            &store,
+            "w1",
+            "g",
+            6_000,
+            Some("https://gamersclub.com.br/j/2/b")
+        )
+        .await
+    );
+    assert_eq!(
+        post_ids(&store, "jogos", 6_000).await,
+        vec!["a", "c", "d", "e", "f", "g"]
+    );
 }
 
 #[tokio::test]

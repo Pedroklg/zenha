@@ -117,6 +117,21 @@ async fn valid_token_delivers_to_the_whole_room() {
     }
 }
 
+#[tokio::test]
+async fn repeated_lobby_link_is_delivered_once() {
+    let f = fixture().await;
+    for _ in 0..2 {
+        let response = f
+            .app
+            .clone()
+            .oneshot(hook_request(WEBHOOK_ID, WEBHOOK_TOKEN, LOBBY))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    }
+    assert_eq!(f.dir.calls().len(), 1);
+}
+
 async fn room_history(app: &Router, uri: &str) -> ChatHistoryResponse {
     let auth = format!(
         "Bearer {}",

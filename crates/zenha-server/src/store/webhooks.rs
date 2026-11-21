@@ -87,19 +87,33 @@ impl ChatStore {
     }
 
     /// Keeps a delivered post for the room history; `sent_at_unix_ms` is its storage time.
+    /// Returns `false`, storing nothing, when its first link repeats the last post of the same webhook.
     pub async fn save_webhook_post(
         &self,
         room: String,
         webhook_id: String,
         post: WebhookPost,
         post_json: String,
-    ) -> Result<(), ChatStoreError> {
+    ) -> Result<bool, ChatStoreError> {
         self.with_conn(move |conn| {
             let cutoff = post.sent_at_unix_ms.saturating_sub(WEBHOOK_POST_TTL_MS);
             conn.execute(
                 "DELETE FROM webhook_posts WHERE created_at_unix_ms < ?1",
                 params![to_sql_ms(cutoff)],
             )?;
+            if let Some(url) = post.embeds.first().and_then(|embed| embed.url.as_deref()) {
+                let last_url: Option<Option<String>> = conn
+                    .query_row(
+                        "SELECT json_extract(post_json, '$.embeds[0].url') FROM webhook_posts
+                         WHERE webhook_id = ?1 ORDER BY created_at_unix_ms DESC, rowid DESC LIMIT 1",
+                        params![webhook_id],
+                        |row| row.get(0),
+                    )
+                    .optional()?;
+                if last_url.flatten().as_deref() == Some(url) {
+                    return Ok(false);
+                }
+            }
             conn.execute(
                 "INSERT OR IGNORE INTO webhook_posts (id, room, webhook_id, post_json, created_at_unix_ms)
                  VALUES (?1, ?2, ?3, ?4, ?5)",
@@ -111,7 +125,7 @@ impl ChatStore {
                     to_sql_ms(post.sent_at_unix_ms)
                 ],
             )?;
-            Ok(())
+            Ok(true)
         })
         .await
     }
