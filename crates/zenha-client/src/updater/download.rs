@@ -328,6 +328,7 @@ async fn download_and_verify(
         }
     });
 
+    zenha_core::install_crypto_provider();
     let client = reqwest::Client::builder()
         .https_only(https_only)
         .connect_timeout(DOWNLOAD_CONNECT_TIMEOUT)
