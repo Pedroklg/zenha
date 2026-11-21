@@ -1,15 +1,20 @@
+use std::collections::HashMap;
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
+
 use async_trait::async_trait;
-use livekit_api::services::ServerError;
-use livekit_api::services::ServerErrorCode;
-use livekit_api::services::ServiceError;
-use livekit_api::services::room::{RoomClient, SendDataOptions};
+use serde::de::{self, Deserializer, Visitor};
+use serde::{Deserialize, Serialize};
 use zenha_protocol::{DEAFENED_ATTR, VoiceState, parse_deafened_attribute};
 
 use crate::config::Config;
+use crate::token::{base64_standard_encode, mint_server_token};
 
-const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(3);
+pub const DEFAULT_OCCUPANTS_RECONCILE_TTL: Duration = Duration::from_secs(60);
 
-// Values from `livekit_protocol::TrackSource` (`livekit-protocol 0.8.2`).
+// Values from `livekit_protocol::TrackSource`.
+pub const TRACK_SOURCE_CAMERA: i32 = 1;
 pub const TRACK_SOURCE_MICROPHONE: i32 = 2;
 pub const TRACK_SOURCE_SCREEN_SHARE: i32 = 3;
 pub const TRACK_SOURCE_SCREEN_SHARE_AUDIO: i32 = 4;
@@ -56,19 +61,332 @@ pub trait RoomModerator: Send + Sync {
     ) -> Result<(), ModerationError>;
 }
 
+struct OccupantsCacheInner {
+    rooms: HashMap<String, Vec<Occupant>>,
+    last_full_sync: Option<Instant>,
+}
+
+pub struct OccupantsCache {
+    reconcile_ttl: Duration,
+    inner: Mutex<OccupantsCacheInner>,
+}
+
+impl Default for OccupantsCache {
+    fn default() -> Self {
+        Self::new(DEFAULT_OCCUPANTS_RECONCILE_TTL)
+    }
+}
+
+impl OccupantsCache {
+    pub fn new(reconcile_ttl: Duration) -> Self {
+        Self {
+            reconcile_ttl,
+            inner: Mutex::new(OccupantsCacheInner {
+                rooms: HashMap::new(),
+                last_full_sync: None,
+            }),
+        }
+    }
+
+    fn lock_inner(&self) -> std::sync::MutexGuard<'_, OccupantsCacheInner> {
+        match self.inner.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        }
+    }
+
+    pub fn get_if_fresh(&self, room_ids: &[String], now: Instant) -> Option<Vec<Vec<Occupant>>> {
+        let guard = self.lock_inner();
+        let synced_at = guard.last_full_sync?;
+        if now.saturating_duration_since(synced_at) >= self.reconcile_ttl {
+            return None;
+        }
+        Some(
+            room_ids
+                .iter()
+                .map(|id| guard.rooms.get(id).cloned().unwrap_or_default())
+                .collect(),
+        )
+    }
+
+    pub fn replace_all(&self, entries: HashMap<String, Vec<Occupant>>, now: Instant) {
+        let mut guard = self.lock_inner();
+        guard.rooms = entries;
+        guard.last_full_sync = Some(now);
+    }
+
+    pub fn update_room(&self, room: String, occupants: Vec<Occupant>) {
+        let mut guard = self.lock_inner();
+        guard.rooms.insert(room, occupants);
+    }
+
+    pub fn clear_room(&self, room: &str) {
+        let mut guard = self.lock_inner();
+        guard.rooms.remove(room);
+    }
+}
+
 pub struct LiveKitDirectory {
-    client: RoomClient,
+    client: reqwest::Client,
+    base_url: String,
+    api_key: String,
+    api_secret: String,
+}
+
+#[derive(Debug, thiserror::Error)]
+enum TwirpError {
+    #[error("not found")]
+    NotFound,
+    #[error("{0}")]
+    Other(String),
+}
+
+#[derive(Deserialize)]
+struct TwirpErrorBody {
+    #[serde(default)]
+    code: String,
+    #[serde(default)]
+    msg: String,
+}
+
+#[derive(Serialize)]
+struct RoomRequest<'a> {
+    room: &'a str,
+}
+
+#[derive(Serialize)]
+struct RoomParticipantRequest<'a> {
+    room: &'a str,
+    identity: &'a str,
+}
+
+#[derive(Serialize)]
+struct ListRoomsRequest {
+    names: Vec<String>,
+}
+
+#[derive(Serialize)]
+struct MuteTrackRequest<'a> {
+    room: &'a str,
+    identity: &'a str,
+    track_sid: &'a str,
+    muted: bool,
+}
+
+#[derive(Serialize)]
+struct SendDataRequest<'a> {
+    room: &'a str,
+    data: String,
+    kind: &'static str,
+    topic: &'a str,
+    destination_identities: Vec<String>,
+}
+
+#[derive(Default, Deserialize)]
+struct ListParticipantsResponse {
+    #[serde(default)]
+    participants: Vec<TwirpParticipant>,
+}
+
+#[derive(Default, Deserialize)]
+struct ListRoomsResponse {
+    #[serde(default)]
+    rooms: Vec<TwirpRoom>,
+}
+
+#[derive(Default, Deserialize)]
+struct TwirpRoom {
+    #[serde(default)]
+    name: String,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct TwirpParticipant {
+    #[serde(default)]
+    identity: String,
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    tracks: Vec<TwirpTrack>,
+    #[serde(default)]
+    attributes: HashMap<String, String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct TwirpTrack {
+    #[serde(default)]
+    sid: String,
+    #[serde(default)]
+    muted: bool,
+    #[serde(default, deserialize_with = "deserialize_track_source")]
+    source: i32,
+}
+
+fn deserialize_track_source<'de, D>(deserializer: D) -> Result<i32, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct TrackSourceVisitor;
+
+    impl Visitor<'_> for TrackSourceVisitor {
+        type Value = i32;
+
+        fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str("a LiveKit TrackSource enum string or integer")
+        }
+
+        fn visit_i64<E: de::Error>(self, value: i64) -> Result<i32, E> {
+            i32::try_from(value).map_err(|_| E::custom("track source out of range"))
+        }
+
+        fn visit_u64<E: de::Error>(self, value: u64) -> Result<i32, E> {
+            i32::try_from(value).map_err(|_| E::custom("track source out of range"))
+        }
+
+        fn visit_str<E: de::Error>(self, value: &str) -> Result<i32, E> {
+            Ok(match value {
+                "CAMERA" => TRACK_SOURCE_CAMERA,
+                "MICROPHONE" => TRACK_SOURCE_MICROPHONE,
+                "SCREEN_SHARE" => TRACK_SOURCE_SCREEN_SHARE,
+                "SCREEN_SHARE_AUDIO" => TRACK_SOURCE_SCREEN_SHARE_AUDIO,
+                _ => value.parse::<i32>().unwrap_or(0),
+            })
+        }
+    }
+
+    deserializer.deserialize_any(TrackSourceVisitor)
+}
+
+fn livekit_http_base(url: &str) -> String {
+    let trimmed = url.trim().trim_end_matches('/');
+    if trimmed
+        .as_bytes()
+        .get(..6)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case(b"wss://"))
+    {
+        format!("https://{}", &trimmed[6..])
+    } else if trimmed
+        .as_bytes()
+        .get(..5)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case(b"ws://"))
+    {
+        format!("http://{}", &trimmed[5..])
+    } else {
+        trimmed.to_owned()
+    }
+}
+
+fn parse_twirp_error(status: reqwest::StatusCode, body: &[u8]) -> TwirpError {
+    if let Ok(parsed) = serde_json::from_slice::<TwirpErrorBody>(body) {
+        if status == reqwest::StatusCode::NOT_FOUND || parsed.code == "not_found" {
+            return TwirpError::NotFound;
+        }
+        if !parsed.code.is_empty() || !parsed.msg.is_empty() {
+            return TwirpError::Other(format!(
+                "twirp {} ({}): {}",
+                parsed.code, status, parsed.msg
+            ));
+        }
+    }
+    if status == reqwest::StatusCode::NOT_FOUND {
+        return TwirpError::NotFound;
+    }
+    TwirpError::Other(format!("twirp http status {status}"))
+}
+
+fn participant_to_occupant(p: TwirpParticipant) -> Occupant {
+    Occupant {
+        voice: VoiceState {
+            muted: p
+                .tracks
+                .iter()
+                .any(|track| track.source == TRACK_SOURCE_MICROPHONE && track.muted),
+            deafened: p
+                .attributes
+                .get(DEAFENED_ATTR)
+                .is_some_and(|raw| parse_deafened_attribute(raw)),
+        },
+        name: if p.name.is_empty() {
+            p.identity
+        } else {
+            p.name
+        },
+    }
 }
 
 impl LiveKitDirectory {
-    pub fn new(config: &Config) -> Self {
-        let client = RoomClient::with_api_key(
-            &config.livekit_url,
-            &config.livekit_api_key,
-            &config.livekit_api_secret,
+    pub fn new(config: &Config) -> Result<Self, reqwest::Error> {
+        let client = reqwest::Client::builder()
+            .timeout(REQUEST_TIMEOUT)
+            .build()?;
+        Ok(Self {
+            client,
+            base_url: livekit_http_base(&config.livekit_url),
+            api_key: config.livekit_api_key.clone(),
+            api_secret: config.livekit_api_secret.clone(),
+        })
+    }
+
+    async fn twirp_call<Req: Serialize, Res: for<'de> Deserialize<'de>>(
+        &self,
+        method: &str,
+        room: Option<&str>,
+        request: &Req,
+    ) -> Result<Res, TwirpError> {
+        let bytes = self.twirp_post(method, room, request).await?;
+        serde_json::from_slice(&bytes)
+            .map_err(|err| TwirpError::Other(format!("invalid twirp json for {method}: {err}")))
+    }
+
+    async fn twirp_call_empty<Req: Serialize>(
+        &self,
+        method: &str,
+        room: Option<&str>,
+        request: &Req,
+    ) -> Result<(), TwirpError> {
+        let _ = self.twirp_post(method, room, request).await?;
+        Ok(())
+    }
+
+    async fn twirp_post<Req: Serialize>(
+        &self,
+        method: &str,
+        room: Option<&str>,
+        request: &Req,
+    ) -> Result<Vec<u8>, TwirpError> {
+        let jwt = mint_server_token(&self.api_key, &self.api_secret, room)
+            .map_err(|err| TwirpError::Other(format!("minting server jwt failed: {err}")))?;
+        let url = format!("{}/twirp/livekit.RoomService/{method}", self.base_url);
+        let response = self
+            .client
+            .post(url)
+            .bearer_auth(jwt)
+            .json(request)
+            .send()
+            .await
+            .map_err(|err| TwirpError::Other(err.to_string()))?;
+        let status = response.status();
+        let body = response
+            .bytes()
+            .await
+            .map_err(|err| TwirpError::Other(err.to_string()))?;
+        if !status.is_success() {
+            return Err(parse_twirp_error(status, &body));
+        }
+        Ok(body.to_vec())
+    }
+
+    async fn get_participant(
+        &self,
+        room: &str,
+        identity: &str,
+    ) -> Result<TwirpParticipant, TwirpError> {
+        self.twirp_call(
+            "GetParticipant",
+            Some(room),
+            &RoomParticipantRequest { room, identity },
         )
-        .with_request_timeout(REQUEST_TIMEOUT);
-        Self { client }
+        .await
     }
 
     async fn mute_sources(
@@ -79,7 +397,6 @@ impl LiveKitDirectory {
         ignore_missing_track: bool,
     ) -> Result<(), ModerationError> {
         let participant = self
-            .client
             .get_participant(room, identity)
             .await
             .map_err(map_moderation_error)?;
@@ -89,12 +406,20 @@ impl LiveKitDirectory {
             .filter(|t| sources.contains(&t.source))
         {
             match self
-                .client
-                .mute_published_track(room, identity, &track.sid, true)
+                .twirp_call_empty(
+                    "MutePublishedTrack",
+                    Some(room),
+                    &MuteTrackRequest {
+                        room,
+                        identity,
+                        track_sid: &track.sid,
+                        muted: true,
+                    },
+                )
                 .await
             {
-                Ok(_) => {}
-                Err(err) if ignore_missing_track && is_not_found(&err) => {}
+                Ok(()) => {}
+                Err(TwirpError::NotFound) if ignore_missing_track => {}
                 Err(err) => return Err(map_moderation_error(err)),
             }
         }
@@ -102,47 +427,31 @@ impl LiveKitDirectory {
     }
 }
 
-fn is_not_found(err: &ServiceError) -> bool {
-    matches!(
-        err,
-        ServiceError::Twirp(ServerError::Twirp(code)) if code.code == ServerErrorCode::NOT_FOUND
-    )
-}
-
-fn map_moderation_error(err: ServiceError) -> ModerationError {
-    if is_not_found(&err) {
-        ModerationError::NotFound
-    } else {
-        ModerationError::Backend(err.to_string())
+fn map_moderation_error(err: TwirpError) -> ModerationError {
+    match err {
+        TwirpError::NotFound => ModerationError::NotFound,
+        TwirpError::Other(msg) => ModerationError::Backend(msg),
     }
 }
 
 #[async_trait]
 impl RoomDirectory for LiveKitDirectory {
     async fn participants(&self, room: &str) -> Result<Vec<Occupant>, DirectoryError> {
-        match self.client.list_participants(room).await {
-            Ok(participants) => Ok(participants
+        match self
+            .twirp_call::<_, ListParticipantsResponse>(
+                "ListParticipants",
+                Some(room),
+                &RoomRequest { room },
+            )
+            .await
+        {
+            Ok(resp) => Ok(resp
+                .participants
                 .into_iter()
-                .map(|p| Occupant {
-                    voice: VoiceState {
-                        muted: p
-                            .tracks
-                            .iter()
-                            .any(|track| track.source == TRACK_SOURCE_MICROPHONE && track.muted),
-                        deafened: p
-                            .attributes
-                            .get(DEAFENED_ATTR)
-                            .is_some_and(|raw| parse_deafened_attribute(raw)),
-                    },
-                    name: if p.name.is_empty() {
-                        p.identity
-                    } else {
-                        p.name
-                    },
-                })
+                .map(participant_to_occupant)
                 .collect()),
-            Err(err) if is_not_found(&err) => Ok(Vec::new()),
-            Err(err) => Err(DirectoryError::Backend(err.to_string())),
+            Err(TwirpError::NotFound) => Ok(Vec::new()),
+            Err(TwirpError::Other(msg)) => Err(DirectoryError::Backend(msg)),
         }
     }
 }
@@ -150,19 +459,20 @@ impl RoomDirectory for LiveKitDirectory {
 #[async_trait]
 impl RoomModerator for LiveKitDirectory {
     async fn list_active_rooms(&self) -> Result<Vec<String>, ModerationError> {
-        let rooms = self
-            .client
-            .list_rooms(Vec::new())
+        let resp: ListRoomsResponse = self
+            .twirp_call("ListRooms", None, &ListRoomsRequest { names: Vec::new() })
             .await
             .map_err(|err| ModerationError::Backend(err.to_string()))?;
-        Ok(rooms.into_iter().map(|r| r.name).collect())
+        Ok(resp.rooms.into_iter().map(|r| r.name).collect())
     }
 
     async fn delete_room(&self, room: &str) -> Result<(), ModerationError> {
-        match self.client.delete_room(room).await {
-            Ok(()) => Ok(()),
-            Err(err) if is_not_found(&err) => Ok(()),
-            Err(err) => Err(ModerationError::Backend(err.to_string())),
+        match self
+            .twirp_call_empty("DeleteRoom", None, &RoomRequest { room })
+            .await
+        {
+            Ok(()) | Err(TwirpError::NotFound) => Ok(()),
+            Err(TwirpError::Other(msg)) => Err(ModerationError::Backend(msg)),
         }
     }
 
@@ -182,18 +492,20 @@ impl RoomModerator for LiveKitDirectory {
     }
 
     async fn ensure_participant(&self, room: &str, identity: &str) -> Result<(), ModerationError> {
-        self.client
-            .get_participant(room, identity)
+        self.get_participant(room, identity)
             .await
             .map(|_| ())
             .map_err(map_moderation_error)
     }
 
     async fn remove_participant(&self, room: &str, identity: &str) -> Result<(), ModerationError> {
-        self.client
-            .remove_participant(room, identity)
-            .await
-            .map_err(map_moderation_error)
+        self.twirp_call_empty(
+            "RemoveParticipant",
+            Some(room),
+            &RoomParticipantRequest { room, identity },
+        )
+        .await
+        .map_err(map_moderation_error)
     }
 
     async fn send_data(
@@ -203,16 +515,19 @@ impl RoomModerator for LiveKitDirectory {
         payload: Vec<u8>,
         destination_identities: Vec<String>,
     ) -> Result<(), ModerationError> {
-        // `SendDataOptions::default()` uses `proto::data_packet::Kind::Reliable`.
-        let options = SendDataOptions {
-            topic: Some(topic.to_owned()),
-            destination_identities,
-            ..Default::default()
-        };
-        self.client
-            .send_data(room, payload, options)
-            .await
-            .map_err(map_moderation_error)
+        self.twirp_call_empty(
+            "SendData",
+            Some(room),
+            &SendDataRequest {
+                room,
+                data: base64_standard_encode(&payload),
+                kind: "RELIABLE",
+                topic,
+                destination_identities,
+            },
+        )
+        .await
+        .map_err(map_moderation_error)
     }
 }
 
@@ -267,15 +582,20 @@ mod fake {
         fail_moderation: bool,
         fail_send_data: bool,
         calls: Mutex<Vec<ModerationCall>>,
+        participants_calls: Mutex<Vec<String>>,
     }
 
     impl FakeDirectory {
         pub fn with_participants(self, room: &str, names: &[&str]) -> Self {
+            self.set_participants(room, names);
+            self
+        }
+
+        pub fn set_participants(&self, room: &str, names: &[&str]) {
             self.rooms.lock().unwrap().insert(
                 room.to_owned(),
                 names.iter().map(|n| (*n).to_owned()).collect(),
             );
-            self
         }
 
         pub fn with_voice(self, room: &str, name: &str, voice: VoiceState) -> Self {
@@ -316,6 +636,14 @@ mod fake {
 
         pub fn calls(&self) -> Vec<ModerationCall> {
             self.calls.lock().unwrap().clone()
+        }
+
+        pub fn participants_calls(&self) -> Vec<String> {
+            self.participants_calls.lock().unwrap().clone()
+        }
+
+        pub fn clear_participants_calls(&self) {
+            self.participants_calls.lock().unwrap().clear();
         }
 
         fn has_participant(&self, room: &str, identity: &str) -> bool {
@@ -363,6 +691,10 @@ mod fake {
     #[async_trait]
     impl RoomDirectory for FakeDirectory {
         async fn participants(&self, room: &str) -> Result<Vec<Occupant>, DirectoryError> {
+            self.participants_calls
+                .lock()
+                .unwrap()
+                .push(room.to_owned());
             if self.failing.contains(room) {
                 return Err(DirectoryError::Backend("fake failure".to_owned()));
             }
@@ -502,5 +834,177 @@ mod fake {
             });
             Ok(())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+    use std::time::{Duration, Instant};
+
+    use zenha_protocol::VoiceState;
+
+    use super::*;
+
+    #[test]
+    fn livekit_http_base_converts_ws_and_wss_and_trims_slash() {
+        assert_eq!(
+            livekit_http_base("ws://livekit.test:7880/"),
+            "http://livekit.test:7880"
+        );
+        assert_eq!(
+            livekit_http_base("wss://livekit.example.com"),
+            "https://livekit.example.com"
+        );
+        assert_eq!(
+            livekit_http_base("https://livekit.example.com/"),
+            "https://livekit.example.com"
+        );
+    }
+
+    #[test]
+    fn twirp_list_participants_parses_string_and_integer_track_sources() {
+        let json = r#"{
+            "participants": [
+                {
+                    "identity": "id-ana",
+                    "name": "Ana",
+                    "tracks": [
+                        {"sid": "TR_1", "muted": true, "source": "MICROPHONE"},
+                        {"sid": "TR_2", "muted": false, "source": "SCREEN_SHARE"}
+                    ],
+                    "attributes": {"zenha.deafened": "1"}
+                },
+                {
+                    "identity": "id-bia",
+                    "name": "",
+                    "tracks": [
+                        {"sid": "TR_3", "muted": false, "source": 2},
+                        {"sid": "TR_4", "muted": true, "source": 4}
+                    ]
+                },
+                {
+                    "identity": "id-caio",
+                    "name": "Caio",
+                    "tracks": [
+                        {"sid": "TR_5", "muted": true, "source": 2}
+                    ]
+                }
+            ]
+        }"#;
+        let parsed: ListParticipantsResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            parsed.participants[0].tracks[0].source,
+            TRACK_SOURCE_MICROPHONE
+        );
+        assert_eq!(
+            parsed.participants[0].tracks[1].source,
+            TRACK_SOURCE_SCREEN_SHARE
+        );
+        assert_eq!(
+            parsed.participants[1].tracks[0].source,
+            TRACK_SOURCE_MICROPHONE
+        );
+        assert_eq!(
+            parsed.participants[1].tracks[1].source,
+            TRACK_SOURCE_SCREEN_SHARE_AUDIO
+        );
+
+        let occupants: Vec<Occupant> = parsed
+            .participants
+            .into_iter()
+            .map(participant_to_occupant)
+            .collect();
+        assert_eq!(
+            occupants,
+            vec![
+                Occupant {
+                    name: "Ana".to_owned(),
+                    voice: VoiceState {
+                        muted: true,
+                        deafened: true,
+                    },
+                },
+                Occupant {
+                    name: "id-bia".to_owned(),
+                    voice: VoiceState::default(),
+                },
+                Occupant {
+                    name: "Caio".to_owned(),
+                    voice: VoiceState {
+                        muted: true,
+                        deafened: false,
+                    },
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn twirp_error_detects_not_found_by_code_or_status() {
+        let by_code = parse_twirp_error(
+            reqwest::StatusCode::BAD_REQUEST,
+            br#"{"code":"not_found","msg":"requested room does not exist"}"#,
+        );
+        assert!(matches!(by_code, TwirpError::NotFound));
+        assert!(matches!(
+            map_moderation_error(by_code),
+            ModerationError::NotFound
+        ));
+
+        let by_status = parse_twirp_error(reqwest::StatusCode::NOT_FOUND, b"");
+        assert!(matches!(by_status, TwirpError::NotFound));
+
+        let other = parse_twirp_error(
+            reqwest::StatusCode::INTERNAL_SERVER_ERROR,
+            br#"{"code":"internal","msg":"boom"}"#,
+        );
+        assert!(matches!(other, TwirpError::Other(msg) if msg.contains("boom")));
+    }
+
+    #[test]
+    fn occupants_cache_serves_fresh_updates_clears_and_expires() {
+        let cache = OccupantsCache::new(Duration::from_secs(60));
+        let rooms = vec!["geral".to_owned(), "jogos".to_owned()];
+        let t0 = Instant::now();
+        assert!(cache.get_if_fresh(&rooms, t0).is_none());
+
+        let ana = Occupant {
+            name: "ana".to_owned(),
+            voice: VoiceState::default(),
+        };
+        let bia = Occupant {
+            name: "bia".to_owned(),
+            voice: VoiceState::default(),
+        };
+        cache.replace_all(HashMap::from([("geral".to_owned(), vec![ana.clone()])]), t0);
+        assert_eq!(
+            cache.get_if_fresh(&rooms, t0 + Duration::from_secs(10)),
+            Some(vec![vec![ana.clone()], vec![]])
+        );
+
+        cache.update_room("jogos".to_owned(), vec![bia.clone()]);
+        assert_eq!(
+            cache.get_if_fresh(&rooms, t0 + Duration::from_secs(20)),
+            Some(vec![vec![ana], vec![bia]])
+        );
+
+        cache.clear_room("geral");
+        assert_eq!(
+            cache.get_if_fresh(&rooms, t0 + Duration::from_secs(30)),
+            Some(vec![
+                vec![],
+                vec![Occupant {
+                    name: "bia".to_owned(),
+                    voice: VoiceState::default()
+                }]
+            ])
+        );
+
+        assert!(
+            cache
+                .get_if_fresh(&rooms, t0 + Duration::from_secs(60))
+                .is_none()
+        );
     }
 }

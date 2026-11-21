@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use axum::Router;
 use axum::body::Body;
@@ -8,7 +8,6 @@ use axum::http::StatusCode;
 use axum::http::{Request, header};
 use axum::response::Response;
 use http_body_util::BodyExt;
-use livekit_api::access_token::{AccessToken, VideoGrants};
 use tower::ServiceExt;
 use zenha_protocol::{
     ErrorResponse, SaveChatRequest, TokenRequest, UnlockRoomRequest, UnlockRoomResponse,
@@ -17,10 +16,12 @@ use zenha_protocol::{
 use crate::config::Config;
 use crate::directory::FakeDirectory;
 use crate::store::{ChatStore, RoomUpdate};
+use crate::token::{Claims, VideoGrants, sign_claims};
 
 use super::rooms::INVITE_HEADER;
 use super::{
-    AdminLoginLimiter, AppState, AvatarRateLimiter, ChatRateLimiter, RoomUnlockLimiter, router,
+    AdminLoginLimiter, AppState, AvatarRateLimiter, ChatRateLimiter, InviteCache,
+    RoomUnlockLimiter, router,
 };
 
 pub(super) const INVITE: &str = "s3cret-invite";
@@ -80,7 +81,9 @@ pub(super) fn state_with(
         config: Arc::new(config),
         directory: directory.clone(),
         moderator: directory,
+        occupants_cache: None,
         chat,
+        invite_cache: Arc::new(InviteCache::default()),
         chat_limiter: Arc::new(ChatRateLimiter::default()),
         avatar_limiter: Arc::new(AvatarRateLimiter::default()),
         admin_login_limiter: Arc::new(AdminLoginLimiter::default()),
@@ -148,20 +151,30 @@ pub(super) async fn error_message(response: Response) -> String {
 }
 
 pub(super) fn mint_room_jwt(client_id: &str, name: &str, room: &str, room_join: bool) -> String {
-    AccessToken::with_api_key(API_KEY, API_SECRET)
-        .with_ttl(Duration::from_secs(TTL))
-        .with_identity(client_id)
-        .with_name(name)
-        .with_grants(VideoGrants {
+    let now = i64::try_from(
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs(),
+    )
+    .unwrap();
+    let claims = Claims {
+        iss: API_KEY.to_owned(),
+        sub: client_id.to_owned(),
+        nbf: now,
+        exp: now + i64::try_from(TTL).unwrap(),
+        name: name.to_owned(),
+        video: VideoGrants {
             room_join,
             room: room.to_owned(),
             can_publish: Some(true),
             can_subscribe: Some(true),
             can_publish_data: Some(true),
-            ..Default::default()
-        })
-        .to_jwt()
-        .unwrap()
+            ..VideoGrants::default()
+        },
+        ..Claims::default()
+    };
+    sign_claims(API_SECRET, &claims).unwrap()
 }
 
 pub(super) fn post_chat_req(room: &str, auth: Option<&str>, body: &str) -> Request<Body> {

@@ -6,6 +6,7 @@ use super::{BUSY_TIMEOUT, ChatStoreError};
 
 pub(super) fn init_schema(conn: &Connection) -> Result<(), ChatStoreError> {
     conn.busy_timeout(BUSY_TIMEOUT)?;
+    conn.pragma_update(None, "auto_vacuum", "INCREMENTAL")?;
     conn.pragma_update(None, "journal_mode", "WAL")?;
     conn.pragma_update(None, "synchronous", "NORMAL")?;
     conn.execute_batch(

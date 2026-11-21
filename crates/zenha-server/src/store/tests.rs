@@ -55,6 +55,12 @@ async fn file_db_enables_wal_and_persists_across_reopen() {
             .unwrap();
         assert_eq!(mode.to_ascii_lowercase(), "wal");
 
+        let auto_vacuum: i64 = store
+            .with_conn(|conn| Ok(conn.pragma_query_value(None, "auto_vacuum", |r| r.get(0))?))
+            .await
+            .unwrap();
+        assert_eq!(auto_vacuum, 2);
+
         let outcome = store
             .insert(
                 "geral".to_owned(),

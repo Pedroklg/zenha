@@ -4,7 +4,6 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use axum::Router;
 use axum::http::StatusCode;
-use livekit_api::access_token::{AccessToken, VideoGrants};
 use tower::ServiceExt;
 use zenha_protocol::{
     ChatHistoryResponse, ChatMessage, MAX_CHAT_ID_LEN, MAX_CHAT_MESSAGE_LEN, SavedChatMessage,
@@ -12,6 +11,7 @@ use zenha_protocol::{
 };
 
 use crate::store::ChatStore;
+use crate::token::{Claims, VideoGrants, sign_claims};
 
 use super::super::router;
 use super::super::test_support::{
@@ -29,156 +29,60 @@ fn app_with_store(chat: Option<Arc<ChatStore>>) -> Router {
     ))
 }
 
-fn base64url_encode(input: &[u8]) -> String {
-    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
-    let mut out = String::new();
-    for chunk in input.chunks(3) {
-        let b0 = u32::from(chunk[0]);
-        let b1 = u32::from(*chunk.get(1).unwrap_or(&0));
-        let b2 = u32::from(*chunk.get(2).unwrap_or(&0));
-        let n = (b0 << 16) | (b1 << 8) | b2;
-        out.push(TABLE[((n >> 18) & 0x3f) as usize] as char);
-        out.push(TABLE[((n >> 12) & 0x3f) as usize] as char);
-        if chunk.len() > 1 {
-            out.push(TABLE[((n >> 6) & 0x3f) as usize] as char);
-        }
-        if chunk.len() > 2 {
-            out.push(TABLE[(n & 0x3f) as usize] as char);
-        }
-    }
-    out
-}
-
-fn sha256(data: &[u8]) -> [u8; 32] {
-    const K: [u32; 64] = [
-        0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4,
-        0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe,
-        0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f,
-        0x4a7484aa, 0x5cb0a9dc, 0x76f988da, 0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7,
-        0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc,
-        0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b,
-        0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070, 0x19a4c116,
-        0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
-        0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7,
-        0xc67178f2,
-    ];
-    let mut h: [u32; 8] = [
-        0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab,
-        0x5be0cd19,
-    ];
-    let bit_len = (data.len() as u64) * 8;
-    let mut padded = data.to_vec();
-    padded.push(0x80);
-    while (padded.len() % 64) != 56 {
-        padded.push(0);
-    }
-    padded.extend_from_slice(&bit_len.to_be_bytes());
-    for block in padded.chunks_exact(64) {
-        let mut w = [0_u32; 64];
-        for i in 0..16 {
-            w[i] = u32::from_be_bytes([
-                block[4 * i],
-                block[4 * i + 1],
-                block[4 * i + 2],
-                block[4 * i + 3],
-            ]);
-        }
-        for i in 16..64 {
-            let s0 = w[i - 15].rotate_right(7) ^ w[i - 15].rotate_right(18) ^ (w[i - 15] >> 3);
-            let s1 = w[i - 2].rotate_right(17) ^ w[i - 2].rotate_right(19) ^ (w[i - 2] >> 10);
-            w[i] = w[i - 16]
-                .wrapping_add(s0)
-                .wrapping_add(w[i - 7])
-                .wrapping_add(s1);
-        }
-        let [mut a, mut b, mut c, mut d, mut e, mut f, mut g, mut hh] = h;
-        for i in 0..64 {
-            let s1 = e.rotate_right(6) ^ e.rotate_right(11) ^ e.rotate_right(25);
-            let ch = (e & f) ^ ((!e) & g);
-            let temp1 = hh
-                .wrapping_add(s1)
-                .wrapping_add(ch)
-                .wrapping_add(K[i])
-                .wrapping_add(w[i]);
-            let s0 = a.rotate_right(2) ^ a.rotate_right(13) ^ a.rotate_right(22);
-            let maj = (a & b) ^ (a & c) ^ (b & c);
-            let temp2 = s0.wrapping_add(maj);
-            hh = g;
-            g = f;
-            f = e;
-            e = d.wrapping_add(temp1);
-            d = c;
-            c = b;
-            b = a;
-            a = temp1.wrapping_add(temp2);
-        }
-        for (slot, val) in h.iter_mut().zip([a, b, c, d, e, f, g, hh]) {
-            *slot = slot.wrapping_add(val);
-        }
-    }
-    let mut out = [0_u8; 32];
-    for (i, word) in h.iter().enumerate() {
-        out[4 * i..4 * (i + 1)].copy_from_slice(&word.to_be_bytes());
-    }
-    out
-}
-
-fn sign_hs256_jwt(claims_json: &str, secret: &str) -> String {
-    let header = base64url_encode(br#"{"alg":"HS256","typ":"JWT"}"#);
-    let payload = base64url_encode(claims_json.as_bytes());
-    let signing_input = format!("{header}.{payload}");
-    let mut key = [0_u8; 64];
-    let secret_bytes = secret.as_bytes();
-    if secret_bytes.len() > 64 {
-        let digest = sha256(secret_bytes);
-        key[..32].copy_from_slice(&digest);
-    } else {
-        key[..secret_bytes.len()].copy_from_slice(secret_bytes);
-    }
-    let mut ipad = [0x36_u8; 64];
-    let mut opad = [0x5c_u8; 64];
-    for i in 0..64 {
-        ipad[i] ^= key[i];
-        opad[i] ^= key[i];
-    }
-    let mut inner = ipad.to_vec();
-    inner.extend_from_slice(signing_input.as_bytes());
-    let inner_hash = sha256(&inner);
-    let mut outer = opad.to_vec();
-    outer.extend_from_slice(&inner_hash);
-    let sig = base64url_encode(&sha256(&outer));
-    format!("{signing_input}.{sig}")
-}
-
 #[tokio::test]
 async fn chat_routes_require_valid_bearer_token() {
     let router = app();
-    let expired = sign_hs256_jwt(
-        r#"{"exp":1,"iss":"test-key","nbf":0,"sub":"client-a","name":"Ana","video":{"roomJoin":true,"room":"geral"}}"#,
+    let now = i64::try_from(
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs(),
+    )
+    .unwrap();
+    let room_grants = || VideoGrants {
+        room_join: true,
+        room: "geral".to_owned(),
+        ..VideoGrants::default()
+    };
+    let expired = sign_claims(
         API_SECRET,
-    );
-    let empty_sub = sign_hs256_jwt(
-        &format!(
-            r#"{{"exp":{},"iss":"test-key","nbf":0,"sub":"","name":"Ana","video":{{"roomJoin":true,"room":"geral"}}}}"#,
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_secs()
-                + 600
-        ),
+        &Claims {
+            iss: API_KEY.to_owned(),
+            sub: "client-a".to_owned(),
+            nbf: 0,
+            exp: 1,
+            name: "Ana".to_owned(),
+            video: room_grants(),
+            ..Claims::default()
+        },
+    )
+    .unwrap();
+    let empty_sub = sign_claims(
         API_SECRET,
-    );
-    let wrong_secret = AccessToken::with_api_key(API_KEY, "wrong-secret-01234567890123456789")
-        .with_ttl(Duration::from_secs(600))
-        .with_identity("client-a")
-        .with_name("Ana")
-        .with_grants(VideoGrants {
-            room_join: true,
-            room: "geral".to_owned(),
-            ..Default::default()
-        })
-        .to_jwt()
-        .unwrap();
+        &Claims {
+            iss: API_KEY.to_owned(),
+            sub: String::new(),
+            nbf: 0,
+            exp: now + 600,
+            name: "Ana".to_owned(),
+            video: room_grants(),
+            ..Claims::default()
+        },
+    )
+    .unwrap();
+    let wrong_secret = sign_claims(
+        "wrong-secret-01234567890123456789",
+        &Claims {
+            iss: API_KEY.to_owned(),
+            sub: "client-a".to_owned(),
+            nbf: now,
+            exp: now + 600,
+            name: "Ana".to_owned(),
+            video: room_grants(),
+            ..Claims::default()
+        },
+    )
+    .unwrap();
 
     let bad_headers: Vec<Option<String>> = vec![
         None,

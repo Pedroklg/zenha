@@ -15,3 +15,9 @@ room:
   empty_timeout: 300
 logging:
   level: info
+# Optional: push room/participant/track changes straight to zenha-server so GET /rooms
+# does not have to poll ListParticipants on every refresh.
+# webhook:
+#   api_key: CHAVE_DE_PRODUCAO
+#   urls:
+#     - http://127.0.0.1:8787/internal/livekit-webhook

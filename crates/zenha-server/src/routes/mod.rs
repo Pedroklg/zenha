@@ -4,6 +4,7 @@ mod admin;
 mod avatar;
 mod chat;
 mod hooks;
+mod livekit_webhook;
 mod rate_limit;
 mod reports;
 mod rooms;
@@ -11,7 +12,7 @@ mod rooms;
 mod test_support;
 mod token;
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use argon2::{Argon2, PasswordHash, PasswordVerifier};
@@ -21,7 +22,6 @@ use axum::extract::DefaultBodyLimit;
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, patch, post, put};
-use livekit_api::access_token::{Claims, TokenVerifier};
 use subtle::ConstantTimeEq;
 use zenha_protocol::{
     ErrorResponse, MAX_AVATAR_UPLOAD_BYTES, MAX_CLIENT_REPORT_BODY_BYTES, MAX_WEBHOOK_BODY_BYTES,
@@ -29,8 +29,11 @@ use zenha_protocol::{
 };
 
 use crate::config::Config;
-use crate::directory::{RoomDirectory, RoomModerator};
+use crate::directory::{OccupantsCache, RoomDirectory, RoomModerator};
 use crate::store::{ChatStore, RoomRecord};
+use crate::token::{Claims, verify_token};
+
+const MAX_LIVEKIT_WEBHOOK_BODY_BYTES: usize = 256 * 1024;
 
 pub use self::admin::DEFAULT_ADMIN_FAILURE_DELAY;
 #[cfg(test)]
@@ -39,12 +42,75 @@ pub use self::rate_limit::{
     AdminLoginLimiter, AvatarRateLimiter, ChatRateLimiter, RoomUnlockLimiter,
 };
 
+pub struct InviteCache {
+    key: [u8; 32],
+    entry: Mutex<Option<(String, [u8; 32])>>,
+    #[cfg(test)]
+    hits: std::sync::atomic::AtomicUsize,
+}
+
+impl Default for InviteCache {
+    fn default() -> Self {
+        let mut key = [0_u8; 32];
+        key[..16].copy_from_slice(uuid::Uuid::new_v4().as_bytes());
+        key[16..].copy_from_slice(uuid::Uuid::new_v4().as_bytes());
+        Self {
+            key,
+            entry: Mutex::new(None),
+            #[cfg(test)]
+            hits: std::sync::atomic::AtomicUsize::new(0),
+        }
+    }
+}
+
+impl InviteCache {
+    fn lock_entry(&self) -> std::sync::MutexGuard<'_, Option<(String, [u8; 32])>> {
+        match self.entry.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        }
+    }
+
+    fn compute_mac(&self, candidate: &str) -> [u8; 32] {
+        crate::room_access::hmac_sha256(&self.key, candidate.as_bytes())
+    }
+
+    fn matches(&self, current_hash: &str, mac: &[u8; 32]) -> bool {
+        let guard = self.lock_entry();
+        let matched = guard.as_ref().is_some_and(|(cached_hash, cached_mac)| {
+            cached_hash == current_hash && bool::from(cached_mac.ct_eq(mac))
+        });
+        #[cfg(test)]
+        if matched {
+            self.hits.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+        matched
+    }
+
+    fn store(&self, current_hash: String, mac: [u8; 32]) {
+        let mut guard = self.lock_entry();
+        *guard = Some((current_hash, mac));
+    }
+
+    pub(super) fn clear(&self) {
+        let mut guard = self.lock_entry();
+        *guard = None;
+    }
+
+    #[cfg(test)]
+    pub(super) fn hits(&self) -> usize {
+        self.hits.load(std::sync::atomic::Ordering::Relaxed)
+    }
+}
+
 #[derive(Clone)]
 pub struct AppState {
     pub config: Arc<Config>,
     pub directory: Arc<dyn RoomDirectory>,
     pub moderator: Arc<dyn RoomModerator>,
+    pub occupants_cache: Option<Arc<OccupantsCache>>,
     pub chat: Option<Arc<ChatStore>>,
+    pub invite_cache: Arc<InviteCache>,
     pub chat_limiter: Arc<ChatRateLimiter>,
     pub avatar_limiter: Arc<AvatarRateLimiter>,
     pub admin_login_limiter: Arc<AdminLoginLimiter>,
@@ -113,6 +179,11 @@ pub fn router(state: AppState) -> Router {
                 .options(hooks::hook_preflight)
                 .layer(DefaultBodyLimit::max(MAX_WEBHOOK_BODY_BYTES))
                 .layer(axum::middleware::map_response(hooks::allow_any_origin)),
+        )
+        .route(
+            "/internal/livekit-webhook",
+            post(livekit_webhook::handle_livekit_webhook)
+                .layer(DefaultBodyLimit::max(MAX_LIVEKIT_WEBHOOK_BODY_BYTES)),
         )
         .with_state(state)
 }
@@ -233,8 +304,7 @@ fn verify_bearer_claims(config: &Config, headers: &HeaderMap) -> Result<Claims, 
     if !scheme.eq_ignore_ascii_case("bearer") || token.is_empty() {
         return Err(ApiError::InvalidToken);
     }
-    let claims = TokenVerifier::with_api_key(&config.livekit_api_key, &config.livekit_api_secret)
-        .verify(token)
+    let claims = verify_token(&config.livekit_api_key, &config.livekit_api_secret, token)
         .map_err(|_| ApiError::InvalidToken)?;
     if claims.sub.trim().is_empty() {
         return Err(ApiError::InvalidToken);
@@ -295,21 +365,29 @@ async fn room_records(state: &AppState) -> Result<Vec<RoomRecord>, ApiError> {
 }
 
 async fn verify_invite(state: &AppState, provided: &str) -> Result<bool, ApiError> {
-    if let Some(chat) = &state.chat {
-        let runtime_hash = chat.get_invite_code_hash().await.map_err(|err| {
+    let runtime_hash = if let Some(chat) = &state.chat {
+        chat.get_invite_code_hash().await.map_err(|err| {
             tracing::error!(%err, "reading runtime invite hash failed");
             ApiError::ChatStoreFailure
-        })?;
-        if let Some(hash) = runtime_hash {
-            return Ok(verify_password_hash(hash, provided.to_owned()).await);
-        }
+        })?
+    } else {
+        None
+    };
+
+    let Some(current_hash) = runtime_hash.or_else(|| state.config.invite_code_hash.clone()) else {
+        return Ok(invite_matches(&state.config.invite_code, provided));
+    };
+
+    let mac = state.invite_cache.compute_mac(provided);
+    if state.invite_cache.matches(&current_hash, &mac) {
+        return Ok(true);
     }
 
-    if let Some(hash) = &state.config.invite_code_hash {
-        Ok(verify_password_hash(hash.clone(), provided.to_owned()).await)
-    } else {
-        Ok(invite_matches(&state.config.invite_code, provided))
+    let valid = verify_password_hash(current_hash.clone(), provided.to_owned()).await;
+    if valid {
+        state.invite_cache.store(current_hash, mac);
     }
+    Ok(valid)
 }
 
 async fn verify_password_hash(hash: String, candidate: String) -> bool {
@@ -372,5 +450,66 @@ mod tests {
         assert!(!invite_matches("abc", "ab"));
         assert!(!invite_matches("abc", "abc\0"));
         assert!(!invite_matches("abc", ""));
+    }
+
+    #[tokio::test]
+    async fn invite_cache_hits_on_repeat_rejects_wrong_and_clears_on_rotation() {
+        let hash1 = crate::config::hash_secret("invite-one-2026").unwrap();
+        let hash2 = crate::config::hash_secret("invite-two-2026").unwrap();
+
+        let mut config = super::test_support::test_config();
+        config.invite_code = String::new();
+        config.invite_code_hash = Some(hash1);
+        let store = super::test_support::seeded_store(&config.rooms);
+        let state = super::test_support::state_with(
+            config,
+            super::test_support::default_fake_dir(),
+            Some(store.clone()),
+            std::time::Duration::ZERO,
+        );
+
+        assert!(!super::verify_invite(&state, "wrong").await.unwrap());
+        assert_eq!(state.invite_cache.hits(), 0);
+
+        // First valid check verifies Argon2 and populates the cache.
+        assert!(
+            super::verify_invite(&state, "invite-one-2026")
+                .await
+                .unwrap()
+        );
+        assert_eq!(state.invite_cache.hits(), 0);
+
+        // Second valid check hits the cache without running Argon2.
+        assert!(
+            super::verify_invite(&state, "invite-one-2026")
+                .await
+                .unwrap()
+        );
+        assert_eq!(state.invite_cache.hits(), 1);
+
+        // Wrong invite still fails when cache is populated.
+        assert!(!super::verify_invite(&state, "wrong").await.unwrap());
+        assert_eq!(state.invite_cache.hits(), 1);
+
+        // Rotating runtime hash invalidates the old invite even before clear, and clear drops it.
+        store.set_invite_code_hash(hash2).await.unwrap();
+        state.invite_cache.clear();
+        assert!(
+            !super::verify_invite(&state, "invite-one-2026")
+                .await
+                .unwrap()
+        );
+        assert!(
+            super::verify_invite(&state, "invite-two-2026")
+                .await
+                .unwrap()
+        );
+        assert_eq!(state.invite_cache.hits(), 1);
+        assert!(
+            super::verify_invite(&state, "invite-two-2026")
+                .await
+                .unwrap()
+        );
+        assert_eq!(state.invite_cache.hits(), 2);
     }
 }

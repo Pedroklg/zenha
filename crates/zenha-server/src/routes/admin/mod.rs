@@ -268,6 +268,10 @@ pub(super) async fn admin_delete_room(
         DeleteRoomOutcome::LastRoom => return Err(ApiError::CannotDeleteLastRoom),
     }
 
+    if let Some(cache) = &state.occupants_cache {
+        cache.clear_room(&id);
+    }
+
     broadcast_rooms_changed(&state).await;
     tracing::info!(%admin_id, room = %id, "admin deleted room");
     Ok(StatusCode::NO_CONTENT)
@@ -446,6 +450,7 @@ pub(super) async fn admin_rotate_invite(
         tracing::error!(%err, "storing invite hash failed");
         ApiError::ChatStoreFailure
     })?;
+    state.invite_cache.clear();
 
     tracing::info!(%admin_id, "admin rotated invite code");
     Ok(StatusCode::NO_CONTENT)
