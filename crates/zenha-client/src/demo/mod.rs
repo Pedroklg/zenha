@@ -127,6 +127,7 @@ pub struct DemoSession {
 
 impl DemoSession {
     pub fn new() -> Self {
+        chat::prepare_demo_image();
         Self::with_delays(DemoDelays::default())
     }
 
