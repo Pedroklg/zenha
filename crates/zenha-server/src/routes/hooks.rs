@@ -83,11 +83,16 @@ pub(super) async fn post_hook(
         ApiError::ChatStoreFailure
     })?;
     let payload = post_json.clone().into_bytes();
-    if let Err(err) = chat
+    match chat
         .save_webhook_post(record.room.clone(), id.clone(), post, post_json)
         .await
     {
-        tracing::error!(webhook = %id, %err, "storing webhook post failed");
+        Ok(true) => {}
+        Ok(false) => {
+            tracing::debug!(webhook = %id, "same link as the last post; skipped");
+            return Ok(StatusCode::NO_CONTENT);
+        }
+        Err(err) => tracing::error!(webhook = %id, %err, "storing webhook post failed"),
     }
 
     match state
