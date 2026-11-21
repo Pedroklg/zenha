@@ -9,6 +9,77 @@ use crate::ui_model::{ChatMessageView, FileTransferView, TransferStateView, UiEv
 
 use super::{DemoSession, REPLIES, SELF_IDENTITY, SELF_NAME};
 
+const DEMO_IMAGE_NAME: &str = "print-da-partida.png";
+
+fn demo_image_path() -> PathBuf {
+    std::env::temp_dir()
+        .join("zenha-demo")
+        .join(DEMO_IMAGE_NAME)
+}
+
+/// Draws the picture Ana sends in the demo, off the UI thread, so the demo needs no asset file.
+pub(super) fn prepare_demo_image() {
+    let path = demo_image_path();
+    let _ = std::thread::Builder::new()
+        .name("demo-image".to_owned())
+        .spawn(move || {
+            if path.exists() {
+                return;
+            }
+            if let Some(dir) = path.parent() {
+                let _ = std::fs::create_dir_all(dir);
+            }
+            if let Err(err) = draw_demo_image().save(&path) {
+                tracing::debug!(%err, "could not write the demo image");
+            }
+        });
+}
+
+/// A dusk landscape: sky gradient, sun and two mountain ridges.
+fn draw_demo_image() -> image::RgbImage {
+    const WIDTH: u32 = 960;
+    const HEIGHT: u32 = 540;
+    let mix = |a: [f32; 3], b: [f32; 3], t: f32| {
+        let t = t.clamp(0.0, 1.0);
+        image::Rgb([0, 1, 2].map(|i| (a[i] + (b[i] - a[i]) * t) as u8))
+    };
+    image::RgbImage::from_fn(WIDTH, HEIGHT, |x, y| {
+        let fx = x as f32 / WIDTH as f32;
+        let fy = y as f32 / HEIGHT as f32;
+        let far = 0.62 - 0.10 * (fx * 9.0).sin() - 0.04 * (fx * 23.0).sin();
+        let near = 0.80 - 0.07 * (fx * 5.0 + 1.0).sin() - 0.03 * (fx * 17.0).sin();
+        let sun_distance = (((fx - 0.68) * 16.0 / 9.0).powi(2) + (fy - 0.5).powi(2)).sqrt();
+        if fy > near {
+            mix([30.0, 26.0, 52.0], [12.0, 14.0, 28.0], (fy - near) * 4.0)
+        } else if fy > far {
+            mix([92.0, 64.0, 120.0], [44.0, 38.0, 78.0], (fy - far) * 5.0)
+        } else if sun_distance < 0.09 {
+            mix(
+                [255.0, 236.0, 180.0],
+                [255.0, 190.0, 120.0],
+                sun_distance / 0.09,
+            )
+        } else {
+            mix([36.0, 48.0, 112.0], [250.0, 140.0, 96.0], fy / 0.62)
+        }
+    })
+}
+
+pub(super) fn demo_image_transfer() -> FileTransferView {
+    FileTransferView {
+        id: "demo-image".to_owned(),
+        sender: "Ana".to_owned(),
+        name: DEMO_IMAGE_NAME.to_owned(),
+        size: 48 * 1024,
+        is_image: true,
+        outgoing: false,
+        sent_at_unix_ms: DemoSession::now_unix_ms(),
+        state: TransferStateView::Done {
+            path: demo_image_path(),
+        },
+    }
+}
+
 fn is_image_name(name: &str) -> bool {
     zenha_core::is_image_mime(zenha_core::mime_for_name(name))
 }

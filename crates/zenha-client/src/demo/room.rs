@@ -122,6 +122,10 @@ impl DemoSession {
             join + self.delays.reply * 2,
             UiEvent::WebhookPosted(started),
         );
+        self.schedule(
+            join + self.delays.reply * 3,
+            UiEvent::FileTransfer(super::chat::demo_image_transfer()),
+        );
         self.ana_sharing = true;
         self.schedule(
             join + self.delays.remote_share,
