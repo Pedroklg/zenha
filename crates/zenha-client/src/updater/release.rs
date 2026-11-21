@@ -238,6 +238,7 @@ fn fetch_latest_release(url: &str, repo: &str, current_version: &str) -> Option<
         }
     };
 
+    zenha_core::install_crypto_provider();
     runtime.block_on(async {
         let client = match reqwest::Client::builder()
             .https_only(true)

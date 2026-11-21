@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 use std::sync::atomic::Ordering;
-use std::sync::{Arc, Once, PoisonError};
+use std::sync::{Arc, PoisonError};
 use std::time::Duration;
 
 use livekit::prelude::{
@@ -152,7 +152,7 @@ impl LiveKitBackend {
 
     async fn establish(&self, url: &str, token: &str) -> Result<ConnectedRoom, SessionError> {
         self.shutdown().await;
-        install_crypto_provider();
+        crate::net::install_crypto_provider();
 
         let selection = self.selection();
         let audio = if self.options.is_tone() {
@@ -382,13 +382,6 @@ pub(super) async fn blocking<T: Send + 'static>(
     tokio::task::spawn_blocking(work)
         .await
         .map_err(|err| SessionError::Internal(format!("background task failed: {err}")))
-}
-
-fn install_crypto_provider() {
-    static INSTALL: Once = Once::new();
-    INSTALL.call_once(|| {
-        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
-    });
 }
 
 pub(super) fn apply_microphone_mute(room: &Room, muted: bool) {

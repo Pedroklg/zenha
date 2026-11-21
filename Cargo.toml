@@ -33,12 +33,12 @@ ndarray = "0.15"
 nnnoiseless = { version = "0.5.2", default-features = false }
 livekit = { version = "=0.11.0", default-features = false, features = ["native", "rustls-tls-webpki-roots"] }
 livekit-api = { version = "=0.10.2", default-features = false, features = ["services", "access-token", "rustls-tls-webpki-roots"] }
-rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std", "tls12"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sha2 = { version = "0.10.9", default-features = false }
 subtle = "2.6"
-reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls-no-provider"] }
 rfd = { version = "0.18", default-features = false }
 rusqlite = { version = "0.43.0", features = ["bundled"] }
 thiserror = "2.0"

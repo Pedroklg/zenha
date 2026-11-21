@@ -133,6 +133,7 @@ pub struct HttpTokenClient {
 
 impl HttpTokenClient {
     pub fn new(token_server_url: &str) -> Result<Self, SessionError> {
+        super::install_crypto_provider();
         let http = reqwest::Client::builder()
             .timeout(REQUEST_TIMEOUT)
             .build()

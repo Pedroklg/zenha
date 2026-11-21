@@ -38,6 +38,7 @@ pub use handle::SessionHandle;
 #[cfg(windows)]
 pub use livekit_backend::LiveKitBackend;
 pub use net::backoff::{ReconnectPolicy, backoff_delay};
+pub use net::install_crypto_provider;
 pub use net::token::{HttpTokenClient, TokenClient};
 pub use video::capture::{
     BgraFrame, CaptureEnd, FrameSink, FrameSource, Pacer, SlotSink, TestPatternSource,
