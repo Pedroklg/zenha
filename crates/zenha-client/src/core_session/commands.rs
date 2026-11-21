@@ -32,7 +32,6 @@ pub(super) fn to_core(command: UiCommand) -> Command {
             NoiseMode::Off => NoiseSuppression::Off,
             NoiseMode::Standard => NoiseSuppression::Standard,
             NoiseMode::Enhanced => NoiseSuppression::Enhanced,
-            NoiseMode::Maximum => NoiseSuppression::Maximum,
         }),
         UiCommand::RefreshCaptureTargets => Command::RefreshCaptureTargets,
         UiCommand::CancelCaptureTargets => Command::CancelCaptureTargets,

@@ -1,6 +1,8 @@
 use eframe::egui::{self, RichText};
 
-use crate::platform::hotkeys::{HotkeyAction, binding_from_key, binding_label, binding_warning};
+use crate::platform::hotkeys::{
+    HotkeyAction, binding_from_key, binding_from_mouse_button, binding_label, binding_warning,
+};
 use crate::platform::settings::{NoiseMode, VoiceMode};
 use zenha_protocol::RoomSummary;
 
@@ -176,16 +178,22 @@ fn content(ui: &mut egui::Ui, view: &mut SettingsView<'_>, actions: &mut Vec<Use
                 }
             }
         });
-    if audio.noise.uses_own_capture() {
-        ui.add_space(CONTROL_GAP);
-        ui.small(match audio.noise {
-            NoiseMode::Maximum => {
-                "Máxima: rede mais pesada (DeepFilterNet), usa mais CPU. Sem cancelamento de eco, use fone."
-            }
-            _ => "Reforçada: melhor contra teclado e ventilador. Sem cancelamento de eco, use fone.",
-        });
-        ui.add_space(ROW_GAP);
-        noise_gate(ui, audio, view.in_room, view.mic_muted, actions);
+    match audio.noise {
+        NoiseMode::Enhanced => {
+            ui.add_space(CONTROL_GAP);
+            ui.small(
+                "Reforçada (padrão): melhor contra teclado e ventilador. Sem cancelamento de eco, use fone.",
+            );
+            ui.add_space(ROW_GAP);
+            noise_gate(ui, audio, view.in_room, view.mic_muted, actions);
+        }
+        NoiseMode::Standard => {
+            ui.add_space(CONTROL_GAP);
+            ui.small(
+                "Reduzida: supressão leve com cancelamento de eco. Recomendada para caixa de som.",
+            );
+        }
+        NoiseMode::Off => {}
     }
 
     section_heading(ui, "Atalhos globais", true);

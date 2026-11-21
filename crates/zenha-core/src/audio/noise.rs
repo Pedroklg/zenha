@@ -14,12 +14,6 @@ const LOOKAHEAD_FRAMES: usize = 2;
 const ATTACK_SAMPLES: f32 = 240.0;
 const RELEASE_SAMPLES: f32 = 3840.0;
 
-/// Maps a local SNR estimate in dB to a speech probability: -5 dB is 0.0, 15 dB is 1.0.
-#[cfg_attr(not(windows), allow(dead_code))]
-pub(crate) fn speech_from_lsnr(lsnr_db: f32) -> f32 {
-    ((lsnr_db + 5.0) / 20.0).clamp(0.0, 1.0)
-}
-
 pub trait Denoiser {
     /// Cleans one frame of `DENOISE_FRAME` samples in place and returns the speech
     /// probability (0.0 to 1.0) when the engine computes one.
@@ -225,15 +219,6 @@ mod tests {
         let mut frame = noise(DENOISE_FRAME);
         let speech = denoiser.process(&mut frame);
         assert!(matches!(speech, Some(p) if (0.0..=1.0).contains(&p)));
-    }
-
-    #[test]
-    fn lsnr_maps_linearly_to_a_clamped_probability() {
-        assert_eq!(speech_from_lsnr(-15.0), 0.0);
-        assert_eq!(speech_from_lsnr(-5.0), 0.0);
-        assert!((speech_from_lsnr(5.0) - 0.5).abs() < 1e-6);
-        assert_eq!(speech_from_lsnr(15.0), 1.0);
-        assert_eq!(speech_from_lsnr(40.0), 1.0);
     }
 
     const N: usize = DENOISE_FRAME;

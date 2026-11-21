@@ -16,25 +16,24 @@ const FILE_NAME: &str = "settings.json";
 #[serde(rename_all = "snake_case")]
 pub enum NoiseMode {
     Off,
-    #[default]
     Standard,
+    #[default]
+    #[serde(alias = "maximum")]
     Enhanced,
-    Maximum,
 }
 
 impl NoiseMode {
-    pub const ALL: [NoiseMode; 4] = [Self::Off, Self::Standard, Self::Enhanced, Self::Maximum];
+    pub const ALL: [NoiseMode; 3] = [Self::Off, Self::Standard, Self::Enhanced];
 
     pub fn uses_own_capture(self) -> bool {
-        matches!(self, Self::Enhanced | Self::Maximum)
+        matches!(self, Self::Enhanced)
     }
 
     pub fn label(self) -> &'static str {
         match self {
             Self::Off => "Desligada",
-            Self::Standard => "Padrão",
+            Self::Standard => "Reduzida",
             Self::Enhanced => "Reforçada",
-            Self::Maximum => "Máxima",
         }
     }
 }
@@ -344,22 +343,43 @@ mod tests {
     }
 
     #[test]
-    fn maximum_mode_serializes_as_snake_case_and_uses_its_own_capture() {
-        assert_eq!(
-            serde_json::to_string(&NoiseMode::Maximum).unwrap(),
-            "\"maximum\""
-        );
+    fn noise_mode_defaults_to_enhanced_and_keeps_serde_compatibility() {
+        assert_eq!(NoiseMode::default(), NoiseMode::Enhanced);
+        assert_eq!(Settings::default().noise_suppression, NoiseMode::Enhanced);
         assert_eq!(
             serde_json::from_str::<NoiseMode>("\"maximum\"").unwrap(),
-            NoiseMode::Maximum
+            NoiseMode::Enhanced
         );
-        assert_eq!(NoiseMode::Maximum.label(), "Máxima");
-        assert!(NoiseMode::ALL.contains(&NoiseMode::Maximum));
+        assert_eq!(
+            serde_json::from_str::<Settings>(r#"{"noise_suppression":"maximum"}"#)
+                .unwrap()
+                .noise_suppression,
+            NoiseMode::Enhanced
+        );
+        assert_eq!(
+            serde_json::to_string(&NoiseMode::Enhanced).unwrap(),
+            "\"enhanced\""
+        );
+        assert_eq!(
+            serde_json::from_str::<NoiseMode>("\"standard\"").unwrap(),
+            NoiseMode::Standard
+        );
+        assert_eq!(
+            serde_json::to_string(&NoiseMode::Standard).unwrap(),
+            "\"standard\""
+        );
+        assert_eq!(NoiseMode::Off.label(), "Desligada");
+        assert_eq!(NoiseMode::Standard.label(), "Reduzida");
+        assert_eq!(NoiseMode::Enhanced.label(), "Reforçada");
+        assert_eq!(
+            NoiseMode::ALL,
+            [NoiseMode::Off, NoiseMode::Standard, NoiseMode::Enhanced]
+        );
         let own: Vec<_> = NoiseMode::ALL
             .into_iter()
             .filter(|mode| mode.uses_own_capture())
             .collect();
-        assert_eq!(own, [NoiseMode::Enhanced, NoiseMode::Maximum]);
+        assert_eq!(own, [NoiseMode::Enhanced]);
     }
 
     #[test]

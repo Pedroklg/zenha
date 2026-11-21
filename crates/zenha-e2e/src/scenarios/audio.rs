@@ -89,36 +89,23 @@ pub(super) fn audio_taps(log: &[String], identity: &str, kind: &str) -> Vec<(f64
         .collect()
 }
 
-/// The harness plays a tone on a third output device; the sharer sends the sound of the
-/// harness process with its screen share; the listener plays that through the test device.
 pub(super) fn enhanced_mic(ctx: &mut Ctx<'_>) -> anyhow::Result<()> {
-    own_capture_mic(ctx, NoiseKind::Enhanced).map(|_| ())
-}
-
-pub(super) fn maximum_mic(ctx: &mut Ctx<'_>) -> anyhow::Result<()> {
-    let speaker = own_capture_mic(ctx, NoiseKind::Maximum)?;
-    if !speaker
-        .log_tail(usize::MAX)
-        .iter()
-        .any(|line| line.contains("engine=\"deepfilternet\""))
-    {
-        bail!("the speaker never logged engine=\"deepfilternet\": it fell back to another engine");
-    }
-    Ok(())
-}
-
-pub(super) fn own_capture_mic(
-    ctx: &mut Ctx<'_>,
-    mode: NoiseKind,
-) -> anyhow::Result<Arc<BotProcess>> {
     const SPEAKER_BOT: &str = "speaker";
     let room = ctx.room();
     let baseline = ctx.baseline()?;
     let speaker = ctx.spawn_listener(SPEAKER_BOT)?;
-    speaker.send(&BotCommand::SetNoiseSuppression { mode })?;
+    speaker.send(&BotCommand::SetNoiseSuppression {
+        mode: NoiseKind::Enhanced,
+    })?;
     speaker.send(&BotCommand::SetNoiseGate { db: Some(-40) })?;
     ctx.join(&speaker, &room)?;
     let listener = ctx.spawn_listener(LISTENER_BOT)?;
+    // Enhanced is the default mode, so keep the listener on Standard and muted to avoid
+    // publishing the diagnostic enhanced tone back to the speaker.
+    listener.send(&BotCommand::SetNoiseSuppression {
+        mode: NoiseKind::Standard,
+    })?;
+    listener.send(&BotCommand::SetMuted { muted: true })?;
     let since = ctx.join(&listener, &room)?;
     let present = ctx.wait_tone_present("enhanced", &baseline, since, TONE_WITHIN)?;
 
@@ -129,7 +116,9 @@ pub(super) fn own_capture_mic(
     ctx.wait_tone_absent("standard", &baseline, &present, since, ABSENT_WITHIN)?;
 
     let since = Instant::now();
-    speaker.send(&BotCommand::SetNoiseSuppression { mode })?;
+    speaker.send(&BotCommand::SetNoiseSuppression {
+        mode: NoiseKind::Enhanced,
+    })?;
     ctx.wait_tone_present("enhanced_again", &baseline, since, TONE_WITHIN)?;
 
     std::thread::sleep(Duration::from_secs(4));
@@ -147,7 +136,7 @@ pub(super) fn own_capture_mic(
             );
         }
     }
-    Ok(speaker)
+    Ok(())
 }
 
 pub(super) fn mute(ctx: &mut Ctx<'_>) -> anyhow::Result<()> {
