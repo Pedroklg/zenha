@@ -10,29 +10,42 @@ pub(super) fn hotkeys_section(
 ) {
     if let Some(capturing) = hotkeys.capturing {
         for event in ui.input(|i| i.events.clone()) {
-            if let egui::Event::Key {
-                key,
-                physical_key,
-                pressed: true,
-                repeat: false,
-                modifiers,
-                ..
-            } = event
-            {
-                let key = physical_key.unwrap_or(key);
-                if key == egui::Key::Escape {
-                    actions.push(UserAction::CancelHotkeyCapture);
-                } else {
-                    match binding_from_key(key, modifiers) {
-                        Ok(binding) => {
-                            actions.push(UserAction::SetHotkey(capturing, Some(binding)));
-                        }
-                        Err(err) => {
-                            actions.push(UserAction::RejectHotkey(err.message().to_owned()));
+            match event {
+                egui::Event::Key {
+                    key,
+                    physical_key,
+                    pressed: true,
+                    repeat: false,
+                    modifiers,
+                    ..
+                } => {
+                    let key = physical_key.unwrap_or(key);
+                    if key == egui::Key::Escape {
+                        actions.push(UserAction::CancelHotkeyCapture);
+                    } else {
+                        match binding_from_key(key, modifiers) {
+                            Ok(binding) => {
+                                actions.push(UserAction::SetHotkey(capturing, Some(binding)));
+                            }
+                            Err(err) => {
+                                actions.push(UserAction::RejectHotkey(err.message().to_owned()));
+                            }
                         }
                     }
+                    break;
                 }
-                break;
+                egui::Event::PointerButton {
+                    button,
+                    pressed: true,
+                    modifiers,
+                    ..
+                } => {
+                    if let Some(binding) = binding_from_mouse_button(button, modifiers) {
+                        actions.push(UserAction::SetHotkey(capturing, Some(binding)));
+                        break;
+                    }
+                }
+                _ => {}
             }
         }
     }

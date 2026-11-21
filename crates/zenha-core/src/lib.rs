@@ -15,6 +15,8 @@ mod livekit_backend;
 mod net;
 mod session;
 mod video;
+#[cfg(windows)]
+pub mod win_platform;
 
 #[cfg(any(test, feature = "test-util"))]
 pub mod testing;
@@ -33,6 +35,8 @@ pub use backend::options::{
 };
 pub use backend::{BackendEvent, ConnectedRoom, MediaBackend};
 pub use chat::{CHAT_DELETE_TOPIC, CHAT_TOPIC};
+#[cfg(any(windows, test))]
+pub use files::receive::cleanup_orphan_received_dirs;
 pub use files::{FILE_TOPIC, is_image_mime, mime_for_name, received_path, sanitize_file_name};
 pub use handle::SessionHandle;
 #[cfg(windows)]

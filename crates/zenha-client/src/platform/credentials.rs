@@ -1,5 +1,6 @@
 //! Persisting the server password in Windows Credential Manager.
 
+#[cfg(windows)]
 const SERVICE: &str = "zenha";
 
 /// Loads the saved password for `server` from Windows Credential Manager.
@@ -7,10 +8,13 @@ const SERVICE: &str = "zenha";
 /// non-Windows platforms; access failures are only logged.
 #[cfg(windows)]
 pub fn load(server: &str) -> Option<String> {
-    let (user, entry) = entry_for(server)?;
-    match entry.get_password() {
-        Ok(password) if !password.is_empty() => Some(password),
-        Ok(_) | Err(keyring::Error::NoEntry) => None,
+    let user = server.trim();
+    if user.is_empty() {
+        return None;
+    }
+    match zenha_core::win_platform::credentials::read_password(SERVICE, user) {
+        Ok(Some(password)) if !password.is_empty() => Some(password),
+        Ok(_) => None,
         Err(err) => {
             tracing::warn!(%err, server = %user, "failed to load server password");
             None
@@ -26,13 +30,12 @@ pub fn load(_server: &str) -> Option<String> {
 /// Saves the password for `server` in Windows Credential Manager synchronously.
 #[cfg(windows)]
 pub fn store(server: &str, password: &str) {
-    if password.is_empty() {
+    let user = server.trim();
+    if user.is_empty() || password.is_empty() {
         return;
     }
-    let Some((user, entry)) = entry_for(server) else {
-        return;
-    };
-    if let Err(err) = entry.set_password(password) {
+    if let Err(err) = zenha_core::win_platform::credentials::write_password(SERVICE, user, password)
+    {
         tracing::warn!(%err, server = %user, "failed to save server password");
     }
 }
@@ -43,14 +46,12 @@ pub fn store(_server: &str, _password: &str) {}
 /// Removes the saved password for `server` from Windows Credential Manager synchronously.
 #[cfg(windows)]
 pub fn forget(server: &str) {
-    let Some((user, entry)) = entry_for(server) else {
+    let user = server.trim();
+    if user.is_empty() {
         return;
-    };
-    match entry.delete_credential() {
-        Ok(()) | Err(keyring::Error::NoEntry) => {}
-        Err(err) => {
-            tracing::warn!(%err, server = %user, "failed to delete server password");
-        }
+    }
+    if let Err(err) = zenha_core::win_platform::credentials::delete_password(SERVICE, user) {
+        tracing::warn!(%err, server = %user, "failed to delete server password");
     }
 }
 
@@ -71,21 +72,6 @@ pub fn forget_in_background(server: String) {
         return;
     }
     std::thread::spawn(move || forget(&server));
-}
-
-#[cfg(windows)]
-fn entry_for(server: &str) -> Option<(&str, keyring::Entry)> {
-    let user = server.trim();
-    if user.is_empty() {
-        return None;
-    }
-    match keyring::Entry::new(SERVICE, user) {
-        Ok(entry) => Some((user, entry)),
-        Err(err) => {
-            tracing::warn!(%err, server = %user, "failed to open credential entry");
-            None
-        }
-    }
 }
 
 #[cfg(test)]
