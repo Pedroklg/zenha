@@ -64,7 +64,10 @@ pub(super) fn apply_input(
         audio.set_recording_device(&info.id)
     };
     outcome.map_err(|err| {
-        SessionError::Internal(format!("could not select the input device: {err}"))
+        SessionError::Internal(format!(
+            "could not select the input device {:?}: {err}",
+            info.name
+        ))
     })?;
     Ok(Some(info.name))
 }
@@ -104,7 +107,10 @@ pub(super) fn apply_output(
         audio.set_playout_device(&info.id)
     };
     outcome.map_err(|err| {
-        SessionError::Internal(format!("could not select the output device: {err}"))
+        SessionError::Internal(format!(
+            "could not select the output device {:?}: {err}",
+            info.name
+        ))
     })?;
     Ok(Some(info.name))
 }
