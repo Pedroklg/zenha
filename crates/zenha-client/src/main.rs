@@ -23,7 +23,7 @@ pub(crate) const APP_NAME: &str = "Zenha";
 
 fn main() -> anyhow::Result<()> {
     let launch = cli::parse_args(std::env::args().skip(1));
-    let log_path = platform::logging::init(launch.debug);
+    let log_path = platform::logging::init(launch.debug, !launch.demo && !launch.diagnostics);
     tracing::info!(
         version = env!("CARGO_PKG_VERSION"),
         debug = launch.debug,

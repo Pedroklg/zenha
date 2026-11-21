@@ -9,6 +9,8 @@ use directories::BaseDirs;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::prelude::*;
 
+use super::error_report;
+
 const KEEP_FILES: usize = 10;
 const DEBUG_FILTER: &str = "info,zenha_client=debug,zenha_core=debug,zenha_protocol=debug";
 
@@ -17,10 +19,20 @@ pub fn log_dir() -> Option<PathBuf> {
 }
 
 /// Starts logging to stdout and to a new file for this run; returns the file path when it could be created.
-pub fn init(debug: bool) -> Option<PathBuf> {
+/// With `report_errors`, the app's warnings and errors also go to the server.
+pub fn init(debug: bool, report_errors: bool) -> Option<PathBuf> {
     let filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new(if debug { DEBUG_FILTER } else { "info" }));
+    let previous_log = log_dir().and_then(|dir| previous_logs(&dir).into_iter().next());
     let file = log_dir().and_then(|dir| open_run_file(&dir));
+    let report_layer = report_errors
+        .then(|| {
+            error_report::start(error_report::PreviousRun {
+                started: previous_log.as_deref().and_then(error_report::run_started),
+                log: previous_log,
+            })
+        })
+        .flatten();
     let (path, file_layer) = match file {
         Some((path, file)) => (
             Some(path),
@@ -36,6 +48,7 @@ pub fn init(debug: bool) -> Option<PathBuf> {
         .with(filter)
         .with(tracing_subscriber::fmt::layer())
         .with(file_layer)
+        .with(report_layer)
         .init();
     install_panic_hook();
     path

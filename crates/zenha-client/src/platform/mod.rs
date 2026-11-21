@@ -3,6 +3,7 @@
 pub mod clipboard_image;
 pub mod credentials;
 pub mod diagnostics;
+pub mod error_report;
 #[cfg(windows)]
 pub mod global_keys;
 pub mod hotkeys;
