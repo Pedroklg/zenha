@@ -10,6 +10,8 @@ use wasapi::{
     DeviceEnumerator, Direction, SampleType, StreamMode, WaveFormat, deinitialize, initialize_mta,
 };
 
+use crate::audio::reopen::{DEVICE_BACKOFF, run_reopening};
+
 pub(crate) const RENDER_SAMPLE_RATE: u32 = 48_000;
 pub(crate) const RENDER_CHANNELS: usize = 2;
 const POLL_INTERVAL: Duration = Duration::from_millis(5);
@@ -67,10 +69,9 @@ impl OutputStream {
                     tracing::warn!("audio output: could not initialise COM");
                     return;
                 }
-                match render(device_id.as_deref(), &flag, &mut fill) {
-                    Ok(()) => tracing::info!("audio output stopped"),
-                    Err(err) => tracing::warn!(%err, "audio output failed"),
-                }
+                run_reopening("audio output", &flag, DEVICE_BACKOFF, || {
+                    render(device_id.as_deref(), &flag, &mut fill)
+                });
                 deinitialize();
             })
             .map_err(|err| tracing::warn!(%err, "could not start the audio output thread"))

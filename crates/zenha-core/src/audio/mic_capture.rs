@@ -11,6 +11,7 @@ use wasapi::{
 };
 
 use crate::audio::noise::DENOISE_FRAME;
+use crate::audio::reopen::{DEVICE_BACKOFF, run_reopening};
 use crate::backend::support::drain_f32_le_to_i16;
 
 pub(crate) const CAPTURE_SAMPLE_RATE: u32 = 48_000;
@@ -47,10 +48,9 @@ impl MicCapture {
                     return;
                 }
                 let mut sink = build();
-                match capture(device_id.as_deref(), &flag, &mut sink) {
-                    Ok(()) => tracing::info!("microphone capture stopped"),
-                    Err(err) => tracing::warn!(%err, "microphone capture failed"),
-                }
+                run_reopening("microphone", &flag, DEVICE_BACKOFF, || {
+                    capture(device_id.as_deref(), &flag, &mut sink)
+                });
                 drop(sink);
                 deinitialize();
             })
