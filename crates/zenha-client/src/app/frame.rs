@@ -270,6 +270,9 @@ impl eframe::App for App {
             .data_mut(|d| d.insert_temp(prev_text_edit_focus_id(), text_edit_focused));
         let actions = self.resolve_effects(ui.ctx(), actions);
         self.dispatch(ui.ctx(), actions);
+        for url in take_steam_urls(ui.ctx()) {
+            crate::dialogs::open_with_shell(&url);
+        }
         self.prune_images();
         self.reset_renderers_outside_room();
 
@@ -307,6 +310,41 @@ impl eframe::App for App {
     }
 }
 
+/// egui hands every URL to the default web browser, which does not know `steam://`.
+fn take_steam_urls(ctx: &egui::Context) -> Vec<String> {
+    ctx.output_mut(|output| {
+        let mut taken = Vec::new();
+        output.commands.retain(|command| match command {
+            egui::OutputCommand::OpenUrl(open) if open.url.starts_with("steam://") => {
+                taken.push(open.url.clone());
+                false
+            }
+            _ => true,
+        });
+        taken
+    })
+}
+
 fn prev_text_edit_focus_id() -> egui::Id {
     egui::Id::unique("prev_text_edit_focused")
+}
+
+#[cfg(test)]
+mod steam_link_tests {
+    use eframe::egui;
+
+    #[test]
+    fn steam_urls_are_taken_and_web_urls_stay() {
+        let ctx = egui::Context::default();
+        ctx.open_url(egui::OpenUrl::same_tab("steam://connect/1.2.3.4:27015/xyz"));
+        ctx.open_url(egui::OpenUrl::new_tab("https://gamersclub.com.br/j/1/a"));
+        assert_eq!(
+            super::take_steam_urls(&ctx),
+            vec!["steam://connect/1.2.3.4:27015/xyz".to_owned()]
+        );
+        let left = ctx.output(|o| o.commands.clone());
+        assert!(
+            matches!(left.as_slice(), [egui::OutputCommand::OpenUrl(open)] if open.url.starts_with("https://"))
+        );
+    }
 }
