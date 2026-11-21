@@ -1,10 +1,11 @@
 //! Sends the app's own warnings and errors, and a crash of the previous run, to the server.
 //! The sender thread sleeps on a channel and only wakes when something went wrong.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::fmt::{self, Write as _};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
+use std::sync::{Mutex, PoisonError};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -26,6 +27,10 @@ const MIN_INTERVAL: Duration = Duration::from_secs(60);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 const NO_PREVIOUS_RUN_WINDOW: Duration = Duration::from_secs(24 * 60 * 60);
 const PANIC_MARKER: &str = "zenha::platform::logging: panic";
+/// libwebrtc's audio device messages; they say why the device could not start.
+const WEBRTC_AUDIO_PREFIX: &str = "(audio_device";
+const AUDIO_CONTEXT_LEN: usize = 10;
+const AUDIO_CONTEXT_MAX_AGE_MS: u64 = 60_000;
 
 /// What is known about the run before this one, to report how it ended.
 pub struct PreviousRun {
@@ -35,6 +40,44 @@ pub struct PreviousRun {
 
 pub struct ReportLayer {
     tx: SyncSender<ReportEvent>,
+    /// Recent libwebrtc audio device messages, sent along with the next report.
+    audio_context: Mutex<VecDeque<ReportEvent>>,
+}
+
+impl ReportLayer {
+    fn new(tx: SyncSender<ReportEvent>) -> Self {
+        Self {
+            tx,
+            audio_context: Mutex::new(VecDeque::new()),
+        }
+    }
+
+    fn queue(&self, event: ReportEvent) {
+        let mut context = self
+            .audio_context
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let fresh_after = event.at_unix_ms.saturating_sub(AUDIO_CONTEXT_MAX_AGE_MS);
+        // A full queue drops the event: reporting must never block logging.
+        for line in context
+            .drain(..)
+            .filter(|line| line.at_unix_ms >= fresh_after)
+        {
+            let _ = self.tx.try_send(line);
+        }
+        let _ = self.tx.try_send(event);
+    }
+
+    fn remember_audio(&self, event: ReportEvent) {
+        let mut context = self
+            .audio_context
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if context.len() == AUDIO_CONTEXT_LEN {
+            context.pop_front();
+        }
+        context.push_back(event);
+    }
 }
 
 /// Starts the sender thread and returns the layer that feeds it.
@@ -44,7 +87,7 @@ pub fn start(previous: PreviousRun) -> Option<ReportLayer> {
         .name("error-report".into())
         .spawn(move || run(&rx, &previous))
         .ok()?;
-    Some(ReportLayer { tx })
+    Some(ReportLayer::new(tx))
 }
 
 impl<S: Subscriber> Layer<S> for ReportLayer {
@@ -55,36 +98,54 @@ impl<S: Subscriber> Layer<S> for ReportLayer {
             Level::WARN => ReportLevel::Warn,
             _ => return,
         };
-        if !meta.target().starts_with("zenha") {
-            return;
-        }
         let mut text = EventText::default();
         event.record(&mut text);
+        let target = text.log_target.as_deref().unwrap_or(meta.target());
+        let is_app = target.starts_with("zenha");
+        let is_webrtc_audio = target == "libwebrtc" && text.text.starts_with(WEBRTC_AUDIO_PREFIX);
+        if !is_app && !is_webrtc_audio {
+            return;
+        }
         let report = ReportEvent {
             at_unix_ms: now_unix_ms(),
             level,
-            target: truncate(meta.target(), MAX_REPORT_TARGET_LEN),
-            message: clean(&text.0),
+            target: truncate(target, MAX_REPORT_TARGET_LEN),
+            message: clean(&text.text),
             count: 1,
         };
-        // A full queue drops the event: reporting must never block logging.
-        let _ = self.tx.try_send(report);
+        if is_app || (level == ReportLevel::Error && !is_known_webrtc_audio_noise(&report.message))
+        {
+            self.queue(report);
+        } else {
+            self.remember_audio(report);
+        }
     }
 }
 
+/// Errors libwebrtc logs on every normal start of the built-in echo canceller.
+fn is_known_webrtc_audio_noise(message: &str) -> bool {
+    message.contains(" AEC")
+}
+
 #[derive(Default)]
-struct EventText(String);
+struct EventText {
+    text: String,
+    /// Real target of an event bridged from the `log` crate.
+    log_target: Option<String>,
+}
 
 impl EventText {
     fn push(&mut self, field: &Field, value: &dyn fmt::Display) {
         match field.name() {
             "backtrace" => {}
+            "log.target" => self.log_target = Some(value.to_string()),
+            name if name.starts_with("log.") => {}
             "message" => {
-                let rest = std::mem::take(&mut self.0);
-                let _ = write!(self.0, "{value}{rest}");
+                let rest = std::mem::take(&mut self.text);
+                let _ = write!(self.text, "{value}{rest}");
             }
             name => {
-                let _ = write!(self.0, " {name}={value}");
+                let _ = write!(self.text, " {name}={value}");
             }
         }
     }
@@ -425,7 +486,7 @@ mod tests {
     fn layer_queues_only_the_apps_warnings_and_errors() {
         use tracing_subscriber::prelude::*;
         let (tx, rx) = sync_channel(8);
-        let subscriber = tracing_subscriber::registry().with(ReportLayer { tx });
+        let subscriber = tracing_subscriber::registry().with(ReportLayer::new(tx));
         tracing::subscriber::with_default(subscriber, || {
             tracing::warn!(target: "zenha_core::audio", err = "boom", what = "microphone", "audio device failed");
             tracing::info!(target: "zenha_core::audio", "audio started");
@@ -441,6 +502,60 @@ mod tests {
                     "audio device failed err=boom what=microphone".to_owned()
                 ),
                 (ReportLevel::Error, "panic".to_owned()),
+            ]
+        );
+    }
+
+    #[test]
+    fn webrtc_audio_messages_go_along_with_the_next_report() {
+        use tracing_subscriber::prelude::*;
+        let (tx, rx) = sync_channel(16);
+        let subscriber = tracing_subscriber::registry().with(ReportLayer::new(tx));
+        tracing::subscriber::with_default(subscriber, || {
+            tracing::warn!(
+                log.target = "libwebrtc",
+                "(audio_device_core_win.cc:1): format not supported"
+            );
+            tracing::error!(
+                log.target = "libwebrtc",
+                "(audio_device_core_win.cc:2): Attempt to set Windows AEC with recording already initialized"
+            );
+            tracing::error!(
+                log.target = "libwebrtc",
+                "(peer_connection.cc:3): unrelated"
+            );
+        });
+        assert!(rx.try_recv().is_err());
+        let (tx, rx) = sync_channel(16);
+        let layer = ReportLayer::new(tx);
+        let subscriber = tracing_subscriber::registry().with(layer);
+        tracing::subscriber::with_default(subscriber, || {
+            tracing::warn!(
+                log.target = "libwebrtc",
+                "(audio_device_core_win.cc:1): format not supported"
+            );
+            tracing::warn!(target: "zenha::core_session::translate", "could not select the input device");
+            tracing::error!(
+                log.target = "libwebrtc",
+                "(audio_device_core_win.cc:4): IAudioClient::Initialize failed"
+            );
+        });
+        let got: Vec<(String, String)> = rx.try_iter().map(|e| (e.target, e.message)).collect();
+        assert_eq!(
+            got,
+            vec![
+                (
+                    "libwebrtc".to_owned(),
+                    "(audio_device_core_win.cc:1): format not supported".to_owned()
+                ),
+                (
+                    "zenha::core_session::translate".to_owned(),
+                    "could not select the input device".to_owned()
+                ),
+                (
+                    "libwebrtc".to_owned(),
+                    "(audio_device_core_win.cc:4): IAudioClient::Initialize failed".to_owned()
+                ),
             ]
         );
     }
