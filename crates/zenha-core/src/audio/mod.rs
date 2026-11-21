@@ -12,4 +12,6 @@ pub(crate) mod mic_capture;
 pub(crate) mod noise;
 pub(crate) mod participant_volume;
 #[cfg(windows)]
+pub(crate) mod reopen;
+#[cfg(windows)]
 pub(crate) mod share_audio;
