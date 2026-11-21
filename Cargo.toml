@@ -2,7 +2,6 @@
 resolver = "3"
 members = ["crates/*", "xtask"]
 default-members = ["crates/*"]
-exclude = ["patches"]
 
 [workspace.package]
 version = "0.1.20"
@@ -112,6 +111,6 @@ codegen-units = 1
 strip = "debuginfo"
 
 [patch.crates-io]
-webrtc-sys = { path = "patches/webrtc-sys" }
-libwebrtc = { path = "patches/libwebrtc" }
-livekit = { path = "patches/livekit" }
+webrtc-sys = { git = "https://github.com/Pedroklg/rust-sdks", rev = "ba6c4d35e41968cedd370f64a2d18142a6956243" }
+libwebrtc = { git = "https://github.com/Pedroklg/rust-sdks", rev = "ba6c4d35e41968cedd370f64a2d18142a6956243" }
+livekit = { git = "https://github.com/Pedroklg/rust-sdks", rev = "ba6c4d35e41968cedd370f64a2d18142a6956243" }
