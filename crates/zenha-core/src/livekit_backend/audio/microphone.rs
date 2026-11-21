@@ -15,8 +15,6 @@ use tokio::sync::mpsc::{self, UnboundedSender};
 use tokio::time::MissedTickBehavior;
 
 use super::{EnhancedMic, Microphone, Selection};
-use crate::api::NoiseSuppression;
-use crate::audio::deep_filter::DeepFilterDenoiser;
 use crate::audio::mic_capture::{CAPTURE_SAMPLE_RATE, MicCapture};
 use crate::audio::noise::{Denoiser, NoiseGate, RnnoiseDenoiser};
 use crate::backend::BackendEvent;
@@ -43,7 +41,6 @@ pub(in crate::livekit_backend) async fn publish_selected_microphone(
     if selection.noise.uses_own_capture() {
         if let Some(mic) = publish_enhanced(
             room,
-            selection.noise,
             selection.input.clone(),
             LocalSpeaker::new(room, events, flags),
         )
@@ -144,18 +141,7 @@ fn enhanced_test_tone() -> Option<ToneGenerator> {
     ))
 }
 
-fn build_denoiser(mode: NoiseSuppression) -> Box<dyn Denoiser> {
-    if mode == NoiseSuppression::Maximum {
-        match DeepFilterDenoiser::new() {
-            Ok(denoiser) => {
-                tracing::info!(engine = "deepfilternet", "noise suppression engine ready");
-                return Box::new(denoiser);
-            }
-            Err(err) => {
-                tracing::warn!(%err, "deepfilternet unavailable, falling back to rnnoise");
-            }
-        }
-    }
+fn build_denoiser() -> Box<dyn Denoiser> {
     tracing::info!(engine = "rnnoise", "noise suppression engine ready");
     Box::new(RnnoiseDenoiser::new())
 }
@@ -163,7 +149,6 @@ fn build_denoiser(mode: NoiseSuppression) -> Box<dyn Denoiser> {
 /// Own capture, gain control and neural noise suppression, pushed as a manual audio source.
 async fn publish_enhanced(
     room: &Room,
-    mode: NoiseSuppression,
     input: Option<String>,
     mut speaker: LocalSpeaker,
 ) -> Option<EnhancedMic> {
@@ -200,14 +185,18 @@ async fn publish_enhanced(
     }
     let capture = MicCapture::start(input, move || {
         let mut apm = AudioProcessingModule::new(false, true, true, false);
-        let mut denoiser = build_denoiser(mode);
+        let mut denoiser = build_denoiser();
         let mut gate = NoiseGate::new();
         let mut meter = LevelMeter::default();
         move |frame: &mut [i16]| {
+            if speaker.silenced() {
+                speaker.report(false);
+                return;
+            }
+            let speech = denoiser.process(frame);
             if let Err(err) = apm.process_stream(frame, CAPTURE_SAMPLE_RATE as i32, 1) {
                 tracing::debug!(%err, "gain control failed for a frame");
             }
-            let speech = denoiser.process(frame);
             let threshold = gate_threshold(noise_gate.load(Ordering::Relaxed));
             let reading = gate.process(frame, threshold, speech);
             speaker.report(enhanced_voice(reading, threshold));
