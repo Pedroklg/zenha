@@ -1,17 +1,16 @@
-//! System tray icon and menu on Windows via `tray-icon`.
+//! System tray icon and menu on Windows via `zenha_core::win_platform::tray`.
 
 #[cfg(windows)]
-use std::sync::mpsc::{Receiver, channel};
+use std::sync::Arc;
 
 #[cfg(windows)]
 use eframe::egui;
 #[cfg(windows)]
-use tray_icon::menu::{CheckMenuItem, Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem};
-#[cfg(windows)]
-use tray_icon::{Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
+use zenha_core::win_platform::tray::{WinTray, WinTrayEvent};
 
 #[cfg(any(windows, test))]
 const ICON_SIZE: u32 = 32;
+
 #[cfg(windows)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TrayAction {
@@ -22,11 +21,7 @@ pub enum TrayAction {
 
 #[cfg(windows)]
 pub struct Tray {
-    icon: TrayIcon,
-    normal_rgba: Vec<u8>,
-    muted_rgba: Vec<u8>,
-    mute: CheckMenuItem,
-    events: Receiver<TrayAction>,
+    inner: WinTray,
     applied: Option<Option<bool>>,
 }
 
@@ -41,91 +36,32 @@ impl Tray {
             }
         };
         let muted_rgba = with_muted_badge(&rgba, ICON_SIZE);
-        let icon = match Icon::from_rgba(rgba.clone(), ICON_SIZE, ICON_SIZE) {
-            Ok(icon) => icon,
-            Err(err) => {
-                tracing::warn!(%err, "could not create tray icon image");
-                return None;
-            }
-        };
-        let open = MenuItem::new("Abrir", true, None);
-        let mute = CheckMenuItem::new("Microfone desligado", false, false, None);
-        let quit = MenuItem::new("Sair", true, None);
-        let menu = Menu::new();
-        if let Err(err) =
-            menu.append_items(&[&open, &mute, &PredefinedMenuItem::separator(), &quit])
-        {
-            tracing::warn!(%err, "could not build tray menu");
-            return None;
-        }
-        let icon = match TrayIconBuilder::new()
-            .with_tooltip(crate::APP_NAME)
-            .with_icon(icon)
-            .with_menu(Box::new(menu))
-            .with_menu_on_left_click(false)
-            .build()
-        {
-            Ok(icon) => icon,
+        let ctx = ctx.clone();
+        let wake = Arc::new(move || ctx.request_repaint());
+        let inner = match WinTray::new(rgba, muted_rgba, ICON_SIZE, crate::APP_NAME, wake) {
+            Ok(tray) => tray,
             Err(err) => {
                 tracing::warn!(%err, "could not create tray icon");
                 return None;
             }
         };
-        let open_id: MenuId = open.into_id();
-        let mute_id: MenuId = mute.id().clone();
-        let quit_id: MenuId = quit.into_id();
-        let (tx, events) = channel();
-        let tray_tx = tx.clone();
-        let tray_ctx = ctx.clone();
-        TrayIconEvent::set_event_handler(Some(move |event: TrayIconEvent| {
-            let is_open = matches!(
-                event,
-                TrayIconEvent::Click {
-                    button: MouseButton::Left,
-                    button_state: MouseButtonState::Up,
-                    ..
-                } | TrayIconEvent::DoubleClick {
-                    button: MouseButton::Left,
-                    ..
-                }
-            );
-            if is_open && tray_tx.send(TrayAction::Open).is_ok() {
-                tray_ctx.request_repaint();
-            }
-        }));
-        let menu_ctx = ctx.clone();
-        MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
-            let action = if event.id == open_id {
-                Some(TrayAction::Open)
-            } else if event.id == mute_id {
-                Some(TrayAction::ToggleMute)
-            } else if event.id == quit_id {
-                Some(TrayAction::Quit)
-            } else {
-                None
-            };
-            if let Some(action) = action
-                && tx.send(action).is_ok()
-            {
-                menu_ctx.request_repaint();
-            }
-        }));
         Some(Self {
-            icon,
-            normal_rgba: rgba,
-            muted_rgba,
-            mute,
-            events,
+            inner,
             applied: Some(None),
         })
     }
 
     pub fn actions(&mut self) -> Vec<TrayAction> {
         let mut out = Vec::new();
-        while let Ok(action) = self.events.try_recv() {
-            if action == TrayAction::ToggleMute {
-                self.applied = None;
-            }
+        for event in self.inner.drain_events() {
+            let action = match event {
+                WinTrayEvent::Open => TrayAction::Open,
+                WinTrayEvent::ToggleMute => {
+                    self.applied = None;
+                    TrayAction::ToggleMute
+                }
+                WinTrayEvent::Quit => TrayAction::Quit,
+            };
             out.push(action);
         }
         out
@@ -135,34 +71,13 @@ impl Tray {
         if self.applied == Some(muted) {
             return;
         }
-        self.mute.set_enabled(muted.is_some());
-        self.mute.set_checked(muted.unwrap_or(false));
-        self.set_muted_look(muted == Some(true));
-        self.applied = Some(muted);
-    }
-
-    fn set_muted_look(&self, muted: bool) {
-        let (rgba, tooltip) = if muted {
-            (
-                &self.muted_rgba,
-                format!("{} (microfone desligado)", crate::APP_NAME),
-            )
+        let tooltip = if muted == Some(true) {
+            format!("{} (microfone desligado)", crate::APP_NAME)
         } else {
-            (&self.normal_rgba, crate::APP_NAME.to_owned())
+            crate::APP_NAME.to_owned()
         };
-        let result = Icon::from_rgba(rgba.clone(), ICON_SIZE, ICON_SIZE)
-            .map_err(|err| err.to_string())
-            .and_then(|icon| {
-                self.icon
-                    .set_icon(Some(icon))
-                    .map_err(|err| err.to_string())
-            });
-        if let Err(err) = result {
-            tracing::warn!(%err, "could not update tray icon");
-        }
-        if let Err(err) = self.icon.set_tooltip(Some(tooltip)) {
-            tracing::warn!(%err, "could not update tray tooltip");
-        }
+        self.inner.set_state(muted, &tooltip);
+        self.applied = Some(muted);
     }
 }
 

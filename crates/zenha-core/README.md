@@ -12,7 +12,7 @@ The UI sends `Command`s and reads `Event`s through `SessionHandle`; the session 
 | `backend/` | `MediaBackend` trait, `no_media` (backend without media), `options` (`LiveKitBackendOptions`) and `support` (helpers shared by the backends) |
 | `livekit_backend/` | Real backend on the LiveKit SDK: `room`, `audio/` (devices, microphone, share), `events`, `data`, `stream_player`, `video/` (capture, convert, publish, watch), `files` |
 | `net/` | `token/` (`TokenClient` / `HttpTokenClient` for the token server, split into requests and errors) and `backoff` |
-| `audio/` | `mic_capture`, `share_audio`, `audio_render` (WASAPI, Windows only), `noise`, `deep_filter` (`Denoiser` trait, RNNoise, DeepFilterNet 3, noise gate), `cue`, `participant_volume`, `default_device` |
+| `audio/` | `mic_capture`, `share_audio`, `audio_render` (WASAPI, Windows only), `noise` (`Denoiser` trait, RNNoise, noise gate), `cue`, `participant_volume`, `default_device` |
 | `video/` | `FrameSlot`, share presets, `capture` (`FrameSource` trait) and `gpu_share/` (GPU capture and H.264 encoding) |
 | `files/` | File naming, safe writes and `receive` (incoming transfers) |
 | `chat`, `clock` | Chat message codec and a millisecond clock |

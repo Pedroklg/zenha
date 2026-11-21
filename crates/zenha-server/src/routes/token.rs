@@ -61,11 +61,11 @@ mod tests {
 
     use axum::Router;
     use axum::http::StatusCode;
-    use livekit_api::access_token::TokenVerifier;
     use tower::ServiceExt;
     use zenha_protocol::{ROOM_LOCKED_ERROR, TokenRequest, TokenResponse};
 
     use crate::config::Config;
+    use crate::token::verify_token;
 
     use super::super::router;
     use super::super::test_support::{
@@ -147,25 +147,26 @@ mod tests {
         let parsed: TokenResponse = serde_json::from_slice(&body_bytes(response).await).unwrap();
         assert_eq!(parsed.livekit_url, "ws://livekit.test:7880");
 
-        let claims = TokenVerifier::with_api_key(API_KEY, API_SECRET)
-            .verify(&parsed.token)
-            .unwrap();
+        let claims = verify_token(API_KEY, API_SECRET, &parsed.token).unwrap();
         assert_eq!(claims.sub, "inst-0123abcdef");
         assert_eq!(claims.name, "Pedro");
         assert_eq!(claims.iss, API_KEY);
         assert!(claims.video.room_join);
         assert_eq!(claims.video.room, "jogos");
-        assert!(claims.video.can_publish());
-        assert!(claims.video.can_subscribe());
-        assert!(claims.video.can_publish_data());
-        assert!(claims.video.can_update_own_metadata());
+        assert_eq!(claims.video.can_publish, Some(true));
+        assert_eq!(claims.video.can_subscribe, Some(true));
+        assert_eq!(claims.video.can_publish_data, Some(true));
+        assert_eq!(claims.video.can_update_own_metadata, Some(true));
         assert!(!claims.video.room_admin);
 
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as usize;
-        let ttl = TTL as usize;
+        let now = i64::try_from(
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+        )
+        .unwrap();
+        let ttl = i64::try_from(TTL).unwrap();
         assert!(claims.exp >= now + ttl - 5 && claims.exp <= now + ttl + 5);
     }
 

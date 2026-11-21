@@ -4,8 +4,6 @@
 pub(crate) mod audio_render;
 pub(crate) mod cue;
 #[cfg(windows)]
-pub(crate) mod deep_filter;
-#[cfg(windows)]
 pub(crate) mod default_device;
 #[cfg(windows)]
 pub(crate) mod mic_capture;

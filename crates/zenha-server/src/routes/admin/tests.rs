@@ -6,7 +6,6 @@ use axum::Router;
 use axum::body::Body;
 use axum::extract::ConnectInfo;
 use axum::http::{Request, StatusCode, header};
-use livekit_api::access_token::TokenVerifier;
 use tower::ServiceExt;
 use zenha_protocol::{
     ADMIN_CHAT_DELETE_TOPIC, ADMIN_MOVE_TOPIC, ADMIN_STOP_SHARE_TOPIC, AdminChatDelete,
@@ -149,9 +148,7 @@ async fn admin_login_succeeds_and_issues_admin_only_jwt() {
     assert_eq!(res.status(), StatusCode::OK);
     let parsed: AdminLoginResponse = serde_json::from_slice(&body_bytes(res).await).unwrap();
 
-    let claims = TokenVerifier::with_api_key(API_KEY, API_SECRET)
-        .verify(&parsed.token)
-        .unwrap();
+    let claims = crate::token::verify_token(API_KEY, API_SECRET, &parsed.token).unwrap();
     assert!(crate::token::is_admin_claims(&claims));
     assert_eq!(claims.sub, "admin-1");
     assert!(!claims.video.room_join);

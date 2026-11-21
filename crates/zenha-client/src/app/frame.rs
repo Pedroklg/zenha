@@ -16,13 +16,13 @@ use crate::views;
 
 use super::App;
 
-const REPAINT_INTERVAL: Duration = Duration::from_millis(100);
 const VIDEO_REPAINT_INTERVAL: Duration = Duration::from_millis(33);
 
 impl eframe::App for App {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.pump_session(ctx);
-        self.reset_renderers_outside_room();
+        self.sync_renderers();
+        self.prune_avatars(ctx);
         self.pump_update();
         self.pump_update_download(ctx);
         self.pump_demo_update(ctx);
@@ -83,7 +83,7 @@ impl eframe::App for App {
         self.renderer.set_paused(hidden);
         self.preview_renderer
             .set_paused(hidden || self.state.is_share_preview_collapsed());
-        self.reset_renderers_outside_room();
+        self.sync_renderers();
         self.pump_saves();
         self.pump_image_opens();
         self.pump_pasted_images(ui.ctx());
@@ -274,7 +274,8 @@ impl eframe::App for App {
             crate::dialogs::open_with_shell(&url);
         }
         self.prune_images();
-        self.reset_renderers_outside_room();
+        self.prune_avatars(ui.ctx());
+        self.sync_renderers();
 
         if ui.ctx().input(|i| i.viewport().close_requested())
             && self.state.close_to_tray
@@ -298,14 +299,16 @@ impl eframe::App for App {
                 .send_viewport_cmd(egui::ViewportCommand::Fullscreen(fullscreen));
         }
         if !self.is_hidden(ui.ctx()) {
-            let interval = if self.state.is_watching()
+            let wait = if self.state.is_watching()
                 || (self.state.is_sharing_local() && !self.state.is_share_preview_collapsed())
             {
-                VIDEO_REPAINT_INTERVAL
+                Some(VIDEO_REPAINT_INTERVAL)
             } else {
-                REPAINT_INTERVAL
+                self.state.next_refresh_wait(Instant::now())
             };
-            ui.ctx().request_repaint_after(interval);
+            if let Some(wait) = wait {
+                ui.ctx().request_repaint_after(wait);
+            }
         }
     }
 }

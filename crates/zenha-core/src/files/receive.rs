@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 
 pub const PROGRESS_INTERVAL: Duration = Duration::from_millis(100);
 pub const MAX_CONCURRENT_RECEIVES: usize = 8;
+const RECEIVED_ROOT_DIR: &str = "zenha-recebidos";
 
 #[derive(Debug, thiserror::Error)]
 pub enum ReceiveError {
@@ -144,7 +145,7 @@ impl FileReceiver {
     pub fn for_process() -> Self {
         Self::new(
             std::env::temp_dir()
-                .join("zenha-recebidos")
+                .join(RECEIVED_ROOT_DIR)
                 .join(std::process::id().to_string()),
         )
     }
@@ -179,6 +180,79 @@ impl Drop for ReceiveSlot {
     fn drop(&mut self) {
         self.0.fetch_sub(1, Ordering::AcqRel);
     }
+}
+
+/// Deletes temporary `zenha-recebidos/<pid>` folders left behind by exited processes.
+pub fn cleanup_orphan_received_dirs() {
+    let root = std::env::temp_dir().join(RECEIVED_ROOT_DIR);
+    cleanup_orphan_dirs_in(&root, process_is_alive);
+}
+
+fn cleanup_orphan_dirs_in(root: &Path, is_alive: impl Fn(u32) -> bool) {
+    let entries = match fs::read_dir(root) {
+        Ok(entries) => entries,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return,
+        Err(err) => {
+            tracing::debug!(%err, "could not read received files root folder");
+            return;
+        }
+    };
+    let current_pid = std::process::id();
+    for entry in entries.flatten() {
+        if !entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+            continue;
+        }
+        let file_name = entry.file_name();
+        let Some(pid) = file_name.to_str().and_then(|s| s.parse::<u32>().ok()) else {
+            continue;
+        };
+        if pid == current_pid || is_alive(pid) {
+            continue;
+        }
+        if let Err(err) = fs::remove_dir_all(entry.path())
+            && err.kind() != io::ErrorKind::NotFound
+        {
+            tracing::debug!(%err, pid, "could not remove orphan received files folder");
+        }
+    }
+}
+
+#[cfg(windows)]
+#[expect(
+    unsafe_code,
+    reason = "checking whether another process PID is still alive requires Win32 OpenProcess/GetExitCodeProcess"
+)]
+fn process_is_alive(pid: u32) -> bool {
+    use windows::Win32::Foundation::{CloseHandle, ERROR_INVALID_PARAMETER, STILL_ACTIVE};
+    use windows::Win32::System::Threading::{
+        GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+    use windows::core::HRESULT;
+
+    // SAFETY: `OpenProcess` with `PROCESS_QUERY_LIMITED_INFORMATION` is a read-only handle lookup
+    // by PID; any returned handle is closed before returning.
+    match unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) } {
+        Ok(handle) => {
+            let mut exit_code = 0u32;
+            // SAFETY: `handle` is a valid process handle and `exit_code` is a live local.
+            let ok = unsafe { GetExitCodeProcess(handle, &mut exit_code) }.is_ok();
+            // SAFETY: `handle` was returned by `OpenProcess` and is closed once here.
+            unsafe {
+                let _ = CloseHandle(handle);
+            }
+            !ok || exit_code == STILL_ACTIVE.0 as u32
+        }
+        Err(err) => {
+            // `ERROR_INVALID_PARAMETER` means no process with this PID exists;
+            // `ERROR_ACCESS_DENIED` (or any other error) errs on the side of keeping it.
+            err.code() != HRESULT::from_win32(ERROR_INVALID_PARAMETER.0)
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn process_is_alive(_pid: u32) -> bool {
+    true
 }
 
 #[cfg(test)]
@@ -295,5 +369,49 @@ mod tests {
         let receiver = FileReceiver::for_process();
         assert!(receiver.dir().starts_with(std::env::temp_dir()));
         assert!(receiver.dir().ends_with(std::process::id().to_string()));
+    }
+
+    #[test]
+    fn cleanup_orphan_dirs_removes_dead_pids_and_keeps_live_and_non_numeric() {
+        let root = temp_dir();
+        let current = std::process::id();
+        let dead_pid = if current == 100_001 { 100_002 } else { 100_001 };
+        let live_pid = if current == 100_003 { 100_004 } else { 100_003 };
+
+        let dead_dir = root.join(dead_pid.to_string());
+        let live_dir = root.join(live_pid.to_string());
+        let current_dir = root.join(current.to_string());
+        let other_dir = root.join("not-a-pid");
+        let numeric_file = root.join("99999");
+
+        fs::create_dir_all(&dead_dir).unwrap();
+        fs::write(dead_dir.join("stale.bin"), b"old").unwrap();
+        fs::create_dir_all(&live_dir).unwrap();
+        fs::write(live_dir.join("active.bin"), b"live").unwrap();
+        fs::create_dir_all(&current_dir).unwrap();
+        fs::create_dir_all(&other_dir).unwrap();
+        fs::write(&numeric_file, b"file").unwrap();
+
+        cleanup_orphan_dirs_in(&root, |pid| pid == live_pid);
+
+        assert!(!dead_dir.exists());
+        assert!(live_dir.exists());
+        assert!(current_dir.exists());
+        assert!(other_dir.exists());
+        assert!(numeric_file.exists());
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn cleanup_orphan_dirs_ignores_missing_root() {
+        let root = temp_dir();
+        cleanup_orphan_dirs_in(&root, |_| false);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn current_process_is_reported_alive() {
+        assert!(process_is_alive(std::process::id()));
     }
 }

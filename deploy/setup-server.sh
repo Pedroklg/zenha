@@ -204,6 +204,8 @@ if [[ -f "${SCRIPT_DIR}/Caddyfile" && "${SCRIPT_DIR}/Caddyfile" != "${CADDY_FILE
 else
   cat <<'EOF' >"${CADDY_FILE}"
 {$TOKEN_DOMAIN} {
+	@internal path /internal/*
+	respond @internal 404
 	reverse_proxy 127.0.0.1:8787
 }
 
@@ -235,6 +237,10 @@ room:
   empty_timeout: 300
 logging:
   level: info
+webhook:
+  api_key: ${LIVEKIT_API_KEY}
+  urls:
+    - http://127.0.0.1:8787/internal/livekit-webhook
 EOF
 chmod 0600 "${LIVEKIT_FILE}"
 chown root:root "${LIVEKIT_FILE}"

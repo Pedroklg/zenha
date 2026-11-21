@@ -1,6 +1,7 @@
 //! Room listing and occupants via `GET /rooms` and unlocking a password-protected room.
 
 use std::collections::HashMap;
+use std::time::Instant;
 
 use axum::Json;
 use axum::body::Bytes;
@@ -12,13 +13,63 @@ use zenha_protocol::{
 };
 
 use crate::directory::Occupant;
-
 use crate::room_access::{key_matches, lock_owners, room_key};
+use crate::store::RoomRecord;
 
 use super::admin::{OptionalPeerIp, resolved_client_ip};
 use super::{ApiError, AppState, room_records, verify_invite, verify_password_hash};
 
 pub(super) const INVITE_HEADER: &str = "x-invite-code";
+
+async fn fetch_rooms_occupants(
+    state: &AppState,
+    records: &[RoomRecord],
+) -> Result<Vec<Vec<Occupant>>, ApiError> {
+    if let Some(cache) = &state.occupants_cache {
+        let room_ids: Vec<String> = records.iter().map(|r| r.id.clone()).collect();
+        if let Some(cached) = cache.get_if_fresh(&room_ids, Instant::now()) {
+            return Ok(cached);
+        }
+    }
+
+    let mut join_set = tokio::task::JoinSet::new();
+    for (idx, record) in records.iter().enumerate() {
+        let directory = state.directory.clone();
+        let room_id = record.id.clone();
+        join_set.spawn(async move {
+            let result = directory.participants(&room_id).await;
+            (idx, room_id, result)
+        });
+    }
+
+    let mut results: Vec<Option<Vec<Occupant>>> = vec![None; records.len()];
+    while let Some(joined) = join_set.join_next().await {
+        let (idx, room_id, res) = joined.map_err(|err| {
+            tracing::warn!(%err, "room lookup task failed");
+            ApiError::DirectoryFailure
+        })?;
+        let occupants = res.map_err(|err| {
+            tracing::warn!(room = %room_id, %err, "room lookup failed");
+            ApiError::DirectoryFailure
+        })?;
+        if let Some(slot) = results.get_mut(idx) {
+            *slot = Some(occupants);
+        }
+    }
+
+    let ordered: Vec<Vec<Occupant>> = results.into_iter().map(Option::unwrap_or_default).collect();
+
+    if let Some(cache) = &state.occupants_cache {
+        let entries = records
+            .iter()
+            .zip(ordered.iter())
+            .map(|(record, occupants)| (record.id.clone(), occupants.clone()))
+            .collect();
+        cache.replace_all(entries, Instant::now());
+    }
+
+    Ok(ordered)
+}
 
 pub(super) async fn list_rooms(
     State(state): State<AppState>,
@@ -42,16 +93,9 @@ pub(super) async fn list_rooms(
     let secret = &state.config.livekit_api_secret;
 
     let records = room_records(&state).await?;
+    let all_occupants = fetch_rooms_occupants(&state, &records).await?;
     let mut rooms = Vec::with_capacity(records.len());
-    for record in &records {
-        let occupants = state
-            .directory
-            .participants(&record.id)
-            .await
-            .map_err(|err| {
-                tracing::warn!(room = %record.id, %err, "room lookup failed");
-                ApiError::DirectoryFailure
-            })?;
+    for (record, occupants) in records.iter().zip(all_occupants) {
         let owners = lock_owners(&records, record);
         let locked = !owners.is_empty();
         let unlocked = locked

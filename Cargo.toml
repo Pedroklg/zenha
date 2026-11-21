@@ -2,7 +2,6 @@
 resolver = "3"
 members = ["crates/*", "xtask"]
 default-members = ["crates/*"]
-exclude = ["patches"]
 
 [workspace.package]
 version = "0.1.20"
@@ -21,18 +20,13 @@ async-trait = "0.1"
 axum = "0.8"
 directories = "6.0"
 dotenvy = "0.15"
-deep_filter = { git = "https://github.com/Rikorose/DeepFilterNet", rev = "978576aa8400552a4ce9730838c635aa30db5e61", default-features = false, features = ["tract", "default-model"] }
 eframe = "0.37"
 egui_kittest = { version = "0.37", features = ["eframe"] }
 futures-util = { version = "0.3", default-features = false }
-global-hotkey = "=0.10.0"
 http-body-util = "0.1"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp"] }
-keyring = { version = "=3.6.3", default-features = false, features = ["windows-native"] }
-ndarray = "0.15"
 nnnoiseless = { version = "0.5.2", default-features = false }
 livekit = { version = "=0.11.0", default-features = false, features = ["native", "rustls-tls-webpki-roots"] }
-livekit-api = { version = "=0.10.2", default-features = false, features = ["services", "access-token", "rustls-tls-webpki-roots"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -46,7 +40,6 @@ tokio = { version = "1.54", features = ["macros", "rt-multi-thread", "net", "sig
 tower = { version = "0.5", features = ["util"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-tray-icon = "=0.26.1"
 uuid = { version = "1.10", features = ["v4"] }
 wasapi = "=0.27.0"
 windows = { version = "0.62.2", features = [
@@ -59,11 +52,16 @@ windows = { version = "0.62.2", features = [
     "Win32_Graphics_Dxgi_Common",
     "Win32_Graphics_Gdi",
     "Win32_Media_MediaFoundation",
+    "Win32_Security_Credentials",
     "Win32_System_Com",
+    "Win32_System_LibraryLoader",
     "Win32_System_Ole",
+    "Win32_System_Threading",
     "Win32_System_Variant",
     "Win32_System_WinRT_Direct3D11",
     "Win32_System_WinRT_Graphics_Capture",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_Shell",
     "Win32_UI_WindowsAndMessaging",
 ] }
 winresource = "=0.1.34"
@@ -113,6 +111,6 @@ codegen-units = 1
 strip = "debuginfo"
 
 [patch.crates-io]
-webrtc-sys = { path = "patches/webrtc-sys" }
-libwebrtc = { path = "patches/libwebrtc" }
-livekit = { path = "patches/livekit" }
+webrtc-sys = { git = "https://github.com/Pedroklg/rust-sdks", rev = "ba6c4d35e41968cedd370f64a2d18142a6956243" }
+libwebrtc = { git = "https://github.com/Pedroklg/rust-sdks", rev = "ba6c4d35e41968cedd370f64a2d18142a6956243" }
+livekit = { git = "https://github.com/Pedroklg/rust-sdks", rev = "ba6c4d35e41968cedd370f64a2d18142a6956243" }

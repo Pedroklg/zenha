@@ -1,45 +1,35 @@
-//! Registering and listening for global hotkeys on Windows via `global-hotkey`.
+//! Registering and listening for global hotkeys on Windows via `zenha_core::win_platform::hotkeys`.
 
-use std::sync::mpsc::{Receiver, channel};
+use std::sync::Arc;
 
 use eframe::egui;
-use global_hotkey::hotkey::HotKey;
-use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState};
+use zenha_core::win_platform::hotkeys::{WinHotkeys, parse_binding_spec};
 
 use crate::platform::hotkeys::HotkeyAction;
 
 pub struct GlobalKeys {
-    manager: GlobalHotKeyManager,
-    active: Vec<(HotkeyAction, HotKey)>,
+    manager: WinHotkeys,
+    active: Vec<(u32, HotkeyAction)>,
     applied: Vec<(HotkeyAction, String)>,
-    events: Receiver<(u32, bool)>,
+    next_id: u32,
 }
 
 impl GlobalKeys {
     pub fn new(ctx: &egui::Context) -> Option<Self> {
-        let manager = match GlobalHotKeyManager::new() {
+        let ctx = ctx.clone();
+        let wake = Arc::new(move || ctx.request_repaint());
+        let manager = match WinHotkeys::new(wake) {
             Ok(manager) => manager,
             Err(err) => {
                 tracing::warn!(%err, "could not create global hotkey manager");
                 return None;
             }
         };
-        let (tx, events) = channel();
-        let ctx = ctx.clone();
-        GlobalHotKeyEvent::set_event_handler(Some(move |event: GlobalHotKeyEvent| {
-            let pressed = match event.state {
-                HotKeyState::Pressed => true,
-                HotKeyState::Released => false,
-            };
-            if tx.send((event.id, pressed)).is_ok() {
-                ctx.request_repaint();
-            }
-        }));
         Some(Self {
             manager,
             active: Vec::new(),
             applied: Vec::new(),
-            events,
+            next_id: 1,
         })
     }
 
@@ -47,38 +37,47 @@ impl GlobalKeys {
         if self.applied == wanted {
             return None;
         }
-        for (_, hotkey) in self.active.drain(..) {
-            if let Err(err) = self.manager.unregister(hotkey) {
-                tracing::warn!(%err, "could not unregister global hotkey");
-            }
-        }
         let mut failed = Vec::new();
+        let mut specs = Vec::with_capacity(wanted.len());
+        let mut active = Vec::with_capacity(wanted.len());
+
         for (action, binding) in wanted {
-            let hotkey = match binding.parse::<HotKey>() {
-                Ok(hotkey) => hotkey,
+            match parse_binding_spec(binding) {
+                Ok(spec) => {
+                    let id = self.next_id;
+                    self.next_id = self.next_id.wrapping_add(1).max(1);
+                    specs.push((id, spec));
+                    active.push((id, *action));
+                }
                 Err(err) => {
                     tracing::warn!(%binding, %err, "could not parse global hotkey");
                     failed.push(*action);
-                    continue;
-                }
-            };
-            match self.manager.register(hotkey) {
-                Ok(()) => self.active.push((*action, hotkey)),
-                Err(err) => {
-                    tracing::warn!(%binding, %err, "could not register global hotkey");
-                    failed.push(*action);
                 }
             }
         }
+
+        match self.manager.set_bindings(&specs) {
+            Ok(()) => {
+                self.active = active;
+            }
+            Err(err) => {
+                tracing::warn!(%err, "could not register global hotkeys");
+                for (_, action) in active {
+                    failed.push(action);
+                }
+                self.active.clear();
+            }
+        }
+
         self.applied = wanted.to_vec();
         Some(failed)
     }
 
     pub fn events(&mut self) -> Vec<(HotkeyAction, bool)> {
         let mut out = Vec::new();
-        while let Ok((id, pressed)) = self.events.try_recv() {
-            if let Some(&(action, _)) = self.active.iter().find(|(_, hotkey)| hotkey.id() == id) {
-                out.push((action, pressed));
+        for event in self.manager.drain_events() {
+            if let Some(&(_, action)) = self.active.iter().find(|(id, _)| *id == event.id) {
+                out.push((action, event.pressed));
             }
         }
         out

@@ -168,6 +168,18 @@ impl AppState {
         }
     }
 
+    pub fn next_refresh_wait(&self, now: Instant) -> Option<Duration> {
+        if !matches!(self.screen, Screen::Lobby | Screen::InRoom(_)) {
+            return None;
+        }
+        Some(match self.last_refresh {
+            Some(last) => {
+                ROOMS_REFRESH_INTERVAL.saturating_sub(now.saturating_duration_since(last))
+            }
+            None => Duration::ZERO,
+        })
+    }
+
     pub(super) fn with_room(
         &mut self,
         f: impl FnOnce(&mut RoomState) -> Vec<UiCommand>,
@@ -765,6 +777,41 @@ mod tests {
         assert_eq!(
             state.poll_refresh(start + ROOMS_REFRESH_INTERVAL),
             Some(UiCommand::RefreshRooms)
+        );
+    }
+
+    #[test]
+    fn next_refresh_wait_tracks_interval_and_screen() {
+        let mut state = state_with_code();
+        let start = Instant::now();
+        assert_eq!(state.next_refresh_wait(start), None);
+
+        state.handle_action(UserAction::SubmitOnboarding);
+        assert_eq!(state.next_refresh_wait(start), Some(Duration::ZERO));
+        assert_eq!(state.poll_refresh(start), Some(UiCommand::RefreshRooms));
+        assert_eq!(state.next_refresh_wait(start), Some(ROOMS_REFRESH_INTERVAL));
+        assert_eq!(
+            state.next_refresh_wait(start + Duration::from_secs(2)),
+            Some(ROOMS_REFRESH_INTERVAL - Duration::from_secs(2))
+        );
+        assert_eq!(
+            state.next_refresh_wait(start + ROOMS_REFRESH_INTERVAL),
+            Some(Duration::ZERO)
+        );
+
+        state.handle_action(UserAction::JoinRoom("geral".to_owned()));
+        assert_eq!(state.next_refresh_wait(start), None);
+
+        state.apply_event(UiEvent::Joined {
+            room: "geral".to_owned(),
+            local_identity: "pedro".to_owned(),
+            participants: vec![person("ana")],
+        });
+        assert_eq!(state.next_refresh_wait(start), Some(Duration::ZERO));
+        state.mark_refreshed(start);
+        assert_eq!(
+            state.next_refresh_wait(start + Duration::from_secs(1)),
+            Some(ROOMS_REFRESH_INTERVAL - Duration::from_secs(1))
         );
     }
 

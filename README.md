@@ -92,7 +92,6 @@ See [docs/architecture.md](docs/architecture.md) for diagrams and [docs/adr/](do
 | `xtask` | `cargo ci`, review checks, icon generation |
 | [`deploy`](deploy/README.md) | Server config and OpenTofu infrastructure |
 | `installer` | Inno Setup script |
-| `patches` | Patched `libwebrtc` and `webrtc-sys` used via `[patch.crates-io]` |
 | `docs` | Architecture, deployment, standards and ADRs |
 
 `CLAUDE.md` files at the root and in each crate are short guides for AI coding agents.

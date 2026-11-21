@@ -61,8 +61,34 @@ fn test_device(enumerator: &DeviceEnumerator, target: Option<&str>) -> anyhow::R
 
 struct Captured {
     mono: Vec<f32>,
+    captured_samples: usize,
     sample_rate: u32,
     elapsed: Duration,
+}
+
+/// Aligns loopback samples to the wall-clock capture window.
+///
+/// WASAPI loopback produces no packets while the render endpoint is idle, so a short
+/// cue played after a lead delay would otherwise sit at sample 0 and be erased by the
+/// Hann window edge.
+fn align_to_window(mono: Vec<f32>, sample_rate: u32, lead: Duration, window: Duration) -> Vec<f32> {
+    if mono.is_empty() || sample_rate == 0 {
+        return mono;
+    }
+    let rate = f64::from(sample_rate);
+    let target_len = (rate * window.as_secs_f64()).round() as usize;
+    let lead_samples = (rate * lead.as_secs_f64()).round() as usize;
+    // Only prepend silence that fits inside the window ahead of the captured audio.
+    let max_lead = target_len.saturating_sub(mono.len());
+    let actual_lead = lead_samples.min(max_lead);
+    let total_len = (actual_lead + mono.len()).max(target_len);
+    let mut aligned = Vec::with_capacity(total_len);
+    aligned.resize(actual_lead, 0.0);
+    aligned.extend_from_slice(&mono);
+    if aligned.len() < target_len {
+        aligned.resize(target_len, 0.0);
+    }
+    aligned
 }
 
 /// COM is initialised on a fresh thread so no apartment state leaks into the caller.
@@ -117,6 +143,7 @@ fn capture_render(target: Option<String>, duration: Duration) -> anyhow::Result<
     client.start_stream().context("starting the stream")?;
 
     let started = Instant::now();
+    let mut first_packet_at: Option<Instant> = None;
     let mut bytes: VecDeque<u8> = VecDeque::new();
     while started.elapsed() < duration {
         while let Some(frames) = capture
@@ -126,6 +153,7 @@ fn capture_render(target: Option<String>, duration: Duration) -> anyhow::Result<
             if frames == 0 {
                 break;
             }
+            first_packet_at.get_or_insert_with(Instant::now);
             capture
                 .read_from_device_to_deque(&mut bytes)
                 .context("reading a packet")?;
@@ -140,8 +168,15 @@ fn capture_render(target: Option<String>, duration: Duration) -> anyhow::Result<
         .chunks_exact(BYTES_PER_SAMPLE)
         .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
         .collect();
+    let mono = downmix(&interleaved, channels);
+    let captured_samples = mono.len();
+    let lead = first_packet_at
+        .map(|at| at.saturating_duration_since(started))
+        .unwrap_or(Duration::ZERO);
+    let mono = align_to_window(mono, sample_rate, lead, elapsed);
     Ok(Captured {
-        mono: downmix(&interleaved, channels),
+        mono,
+        captured_samples,
         sample_rate,
         elapsed,
     })
@@ -303,7 +338,7 @@ impl AudioProbe for WasapiProbe {
         }
         let expected = f64::from(captured.sample_rate) * captured.elapsed.as_secs_f64();
         measurement.coverage = if expected > 0.0 {
-            (captured.mono.len() as f64 / expected).min(1.0)
+            (captured.captured_samples as f64 / expected).min(1.0)
         } else {
             0.0
         };
@@ -317,5 +352,50 @@ impl AudioProbe for WasapiProbe {
 
     fn pinned(&self) -> bool {
         self.target.is_some()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn align_to_window_preserves_empty_capture() {
+        assert!(
+            align_to_window(
+                Vec::new(),
+                48_000,
+                Duration::from_millis(300),
+                Duration::from_secs(1)
+            )
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn align_to_window_pads_leading_and_trailing_silence() {
+        let aligned = align_to_window(
+            vec![1.0; 100],
+            1_000,
+            Duration::from_millis(300),
+            Duration::from_secs(1),
+        );
+        assert_eq!(aligned.len(), 1_000);
+        assert!(aligned[..300].iter().all(|&s| s == 0.0));
+        assert!(aligned[300..400].iter().all(|&s| s == 1.0));
+        assert!(aligned[400..].iter().all(|&s| s == 0.0));
+    }
+
+    #[test]
+    fn align_to_window_caps_lead_to_remaining_room() {
+        let aligned = align_to_window(
+            vec![1.0; 800],
+            1_000,
+            Duration::from_millis(300),
+            Duration::from_secs(1),
+        );
+        assert_eq!(aligned.len(), 1_000);
+        assert!(aligned[..200].iter().all(|&s| s == 0.0));
+        assert!(aligned[200..].iter().all(|&s| s == 1.0));
     }
 }

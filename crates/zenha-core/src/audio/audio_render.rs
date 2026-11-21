@@ -1,10 +1,11 @@
 //! Own audio output through WASAPI: stereo, 48 kHz, filled by a callback.
 //! Only compiles on Windows.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{self, RecvTimeoutError, Sender, TryRecvError};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use wasapi::{
     DeviceEnumerator, Direction, SampleType, StreamMode, WaveFormat, deinitialize, initialize_mta,
@@ -14,36 +15,166 @@ use crate::audio::reopen::{DEVICE_BACKOFF, run_reopening};
 
 pub(crate) const RENDER_SAMPLE_RATE: u32 = 48_000;
 pub(crate) const RENDER_CHANNELS: usize = 2;
-const POLL_INTERVAL: Duration = Duration::from_millis(5);
+const EVENT_TIMEOUT_MS: u32 = 50;
 const BUFFER_DURATION_HNS: i64 = 600_000;
-const CUE_TAIL: Duration = Duration::from_millis(150);
+const CUE_IDLE_TIMEOUT: Duration = Duration::from_secs(3);
+const CUE_POLL_INTERVAL: Duration = Duration::from_millis(200);
+const CUE_STALE_GRACE: Duration = Duration::from_secs(2);
 
-fn fill_mono(samples: &[f32], cursor: &mut usize, out: &mut [f32]) {
-    for frame in out.chunks_mut(RENDER_CHANNELS) {
-        let sample = samples.get(*cursor).copied().unwrap_or(0.0);
-        *cursor = cursor.saturating_add(1);
-        frame.fill(sample);
+struct ActiveCue {
+    samples: Vec<f32>,
+    cursor: usize,
+}
+
+#[derive(Default)]
+struct CueMixer {
+    active: Vec<ActiveCue>,
+}
+
+impl CueMixer {
+    fn push(&mut self, samples: Vec<f32>) {
+        if !samples.is_empty() {
+            self.active.push(ActiveCue { samples, cursor: 0 });
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.active.is_empty()
+    }
+
+    fn clear(&mut self) {
+        self.active.clear();
+    }
+
+    fn fill(&mut self, out: &mut [f32]) {
+        if self.active.is_empty() {
+            out.fill(0.0);
+            return;
+        }
+        for frame in out.chunks_mut(RENDER_CHANNELS) {
+            let mut sum = 0.0f32;
+            for cue in &mut self.active {
+                if let Some(&sample) = cue.samples.get(cue.cursor) {
+                    sum += sample;
+                    cue.cursor += 1;
+                }
+            }
+            frame.fill(sum.clamp(-1.0, 1.0));
+        }
+        self.active.retain(|cue| cue.cursor < cue.samples.len());
     }
 }
+
+struct CueRequest {
+    device: Option<String>,
+    samples: Vec<f32>,
+}
+
+static CUE_SENDER: Mutex<Option<Sender<CueRequest>>> = Mutex::new(None);
 
 pub(crate) fn play_once(device: Option<String>, samples: Vec<f32>) {
     if samples.is_empty() {
         return;
     }
-    let duration = Duration::from_micros(
-        (samples.len() as u64).saturating_mul(1_000_000) / u64::from(RENDER_SAMPLE_RATE),
-    ) + CUE_TAIL;
-    if let Err(err) = thread::Builder::new()
+    let mut guard = CUE_SENDER.lock().unwrap_or_else(PoisonError::into_inner);
+    let request = match guard.as_ref() {
+        Some(tx) => match tx.send(CueRequest { device, samples }) {
+            Ok(()) => return,
+            Err(mpsc::SendError(request)) => request,
+        },
+        None => CueRequest { device, samples },
+    };
+    let (tx, rx) = mpsc::channel();
+    if tx.send(request).is_err() {
+        return;
+    }
+    match thread::Builder::new()
         .name("audio-cue".to_owned())
-        .spawn(move || {
-            let mut cursor = 0;
-            let _stream = OutputStream::start(device, move |out: &mut [f32]| {
-                fill_mono(&samples, &mut cursor, out);
-            });
-            thread::sleep(duration);
-        })
+        .spawn(move || cue_worker(rx))
     {
-        tracing::warn!(%err, "could not start the audio cue thread");
+        Ok(_) => *guard = Some(tx),
+        Err(err) => {
+            *guard = None;
+            tracing::warn!(%err, "could not start the audio cue worker");
+        }
+    }
+}
+
+fn cue_worker(rx: mpsc::Receiver<CueRequest>) {
+    let Ok(first) = rx.recv() else {
+        return;
+    };
+    let mixer = Arc::new(Mutex::new(CueMixer::default()));
+    let mut stream: Option<OutputStream> = None;
+    let mut current_device: Option<String> = None;
+    let mut idle_since: Option<Instant> = None;
+    let mut stale_after = Instant::now();
+    let mut pending = Some(first);
+
+    loop {
+        if let Some(req) = pending.take() {
+            idle_since = None;
+            if stream.is_some() && current_device != req.device {
+                // Drop the previous stream first so only one render thread drains the mixer.
+                stream = None;
+            }
+            let cue_duration = Duration::from_micros(
+                (req.samples.len() as u64).saturating_mul(1_000_000)
+                    / u64::from(RENDER_SAMPLE_RATE),
+            );
+            stale_after = stale_after.max(Instant::now() + cue_duration + CUE_STALE_GRACE);
+            mixer
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .push(req.samples);
+            if stream.is_none() {
+                current_device = req.device.clone();
+                let shared = mixer.clone();
+                stream = Some(OutputStream::start(req.device, move |out: &mut [f32]| {
+                    shared
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .fill(out);
+                }));
+            }
+            continue;
+        }
+
+        let is_empty = {
+            let mut guard = mixer.lock().unwrap_or_else(PoisonError::into_inner);
+            if !guard.is_empty() && Instant::now() >= stale_after {
+                guard.clear();
+            }
+            guard.is_empty()
+        };
+        let wait = if is_empty {
+            let since = *idle_since.get_or_insert_with(Instant::now);
+            let remaining = CUE_IDLE_TIMEOUT.saturating_sub(since.elapsed());
+            if remaining.is_zero() {
+                stream = None;
+                let mut guard = CUE_SENDER.lock().unwrap_or_else(PoisonError::into_inner);
+                match rx.try_recv() {
+                    Ok(req) => {
+                        pending = Some(req);
+                        continue;
+                    }
+                    Err(TryRecvError::Empty | TryRecvError::Disconnected) => {
+                        *guard = None;
+                        return;
+                    }
+                }
+            }
+            remaining
+        } else {
+            idle_since = None;
+            CUE_POLL_INTERVAL
+        };
+
+        match rx.recv_timeout(wait) {
+            Ok(req) => pending = Some(req),
+            Err(RecvTimeoutError::Timeout) => {}
+            Err(RecvTimeoutError::Disconnected) => return,
+        }
     }
 }
 
@@ -115,18 +246,18 @@ fn render(
     client.initialize_client(
         &format,
         Direction::Render,
-        StreamMode::PollingShared {
+        StreamMode::EventsShared {
             autoconvert: true,
             buffer_duration_hns: BUFFER_DURATION_HNS,
         },
         None,
     )?;
+    let event = client.set_get_eventhandle()?;
     let writer = client.get_audiorenderclient()?;
-    client.start_stream()?;
 
     let mut samples: Vec<f32> = Vec::new();
     let mut bytes: Vec<u8> = Vec::new();
-    while !stop.load(Ordering::SeqCst) {
+    let mut write_available = || -> Result<(), wasapi::WasapiError> {
         let frames = client.get_available_space_in_frames()? as usize;
         if frames > 0 {
             samples.clear();
@@ -138,7 +269,18 @@ fn render(
             }
             writer.write_to_device(&bytes, None)?;
         }
-        thread::sleep(POLL_INTERVAL);
+        Ok(())
+    };
+    // Fill the initial buffer before starting the stream so playback begins with audio.
+    write_available()?;
+    client.start_stream()?;
+
+    while !stop.load(Ordering::SeqCst) {
+        let _ = event.wait_for_event(EVENT_TIMEOUT_MS);
+        if stop.load(Ordering::SeqCst) {
+            break;
+        }
+        write_available()?;
     }
     client.stop_stream()
 }
@@ -148,17 +290,47 @@ mod tests {
     use super::*;
 
     #[test]
-    fn fill_mono_duplicates_channels_and_pads_with_zeros() {
-        let mono = [0.25f32, -0.5, 0.75];
-        let mut cursor = 0;
+    fn mixer_duplicates_mono_to_stereo_and_pads_with_zeros() {
+        let mut mixer = CueMixer::default();
+        mixer.push(vec![0.25, -0.5, 0.75]);
+        assert!(!mixer.is_empty());
+
         let mut first = [1.0f32; 4];
-        fill_mono(&mono, &mut cursor, &mut first);
+        mixer.fill(&mut first);
         assert_eq!(first, [0.25, 0.25, -0.5, -0.5]);
-        assert_eq!(cursor, 2);
+        assert!(!mixer.is_empty());
 
         let mut second = [1.0f32; 6];
-        fill_mono(&mono, &mut cursor, &mut second);
+        mixer.fill(&mut second);
         assert_eq!(second, [0.75, 0.75, 0.0, 0.0, 0.0, 0.0]);
-        assert_eq!(cursor, 5);
+        assert!(mixer.is_empty());
+    }
+
+    #[test]
+    fn mixer_sums_overlapping_cues_clamps_and_drains_finished() {
+        let mut mixer = CueMixer::default();
+        mixer.push(vec![0.7, -0.8, 0.3, 0.1]);
+        mixer.push(vec![0.6, -0.5]);
+
+        let mut first = [0.0f32; 4];
+        mixer.fill(&mut first);
+        assert_eq!(first, [1.0, 1.0, -1.0, -1.0]);
+        assert_eq!(mixer.active.len(), 1);
+
+        let mut second = [1.0f32; 4];
+        mixer.fill(&mut second);
+        assert_eq!(second, [0.3, 0.3, 0.1, 0.1]);
+        assert!(mixer.is_empty());
+    }
+
+    #[test]
+    fn empty_mixer_fills_silence_and_ignores_empty_cues() {
+        let mut mixer = CueMixer::default();
+        mixer.push(Vec::new());
+        assert!(mixer.is_empty());
+
+        let mut out = [0.5f32; 4];
+        mixer.fill(&mut out);
+        assert_eq!(out, [0.0, 0.0, 0.0, 0.0]);
     }
 }

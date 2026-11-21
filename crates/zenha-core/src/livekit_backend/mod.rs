@@ -188,7 +188,7 @@ impl Flags {
 
 /// Real media backend: LiveKit room, microphone and playback through the platform audio.
 pub struct LiveKitBackend {
-    connection: Mutex<Option<Connection>>,
+    connection: Arc<Mutex<Option<Connection>>>,
     flags: Arc<Flags>,
     selection: StdMutex<Selection>,
     local_share: Mutex<Option<LocalShare>>,
@@ -207,7 +207,7 @@ impl LiveKitBackend {
     /// Backend with the test hooks of `options`; `new` is the normal client behaviour.
     pub fn with_options(options: LiveKitBackendOptions) -> Self {
         Self {
-            connection: Mutex::new(None),
+            connection: Arc::new(Mutex::new(None)),
             flags: Arc::new(Flags::default()),
             selection: StdMutex::new(Selection::default()),
             local_share: Mutex::new(None),
@@ -356,7 +356,40 @@ impl MediaBackend for LiveKitBackend {
     }
 
     fn set_ui_visible(&self, visible: bool) {
-        self.flags.ui_visible.0.store(visible, Ordering::Relaxed);
+        let previous = self.flags.ui_visible.0.swap(visible, Ordering::SeqCst);
+        if previous == visible {
+            return;
+        }
+        if !visible {
+            self.watch.pause_stream();
+        }
+        if self.watch.watched_identity().is_none() {
+            return;
+        }
+        let Ok(handle) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        let connection = Arc::clone(&self.connection);
+        let watch = Arc::clone(&self.watch);
+        let flags = Arc::clone(&self.flags);
+        handle.spawn(async move {
+            let current = connection
+                .lock()
+                .await
+                .as_ref()
+                .map(|conn| (conn.room.clone(), conn.events_tx.clone()));
+            let Some((room, events)) = current else {
+                return;
+            };
+            let Some(identity) = watch.watched_identity() else {
+                return;
+            };
+            let visible = flags.ui_visible.0.load(Ordering::SeqCst);
+            let track = room::set_screen_share_video_subscribed(&room, &identity, visible);
+            if visible && let Some(video) = track {
+                watch.start_stream(&identity, video, events, Arc::clone(&flags.ui_visible.0));
+            }
+        });
     }
 
     fn play_cue(&self, cue: Cue) {

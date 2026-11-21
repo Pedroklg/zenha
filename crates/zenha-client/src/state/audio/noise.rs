@@ -93,6 +93,12 @@ mod tests {
         state.handle_action(UserAction::SelectNoiseMode(NoiseMode::Enhanced));
         state.apply_event(level.clone());
         assert!(state.audio.mic_level.is_some());
+        state.handle_action(UserAction::SelectNoiseMode(NoiseMode::Off));
+        assert_eq!(state.audio.mic_level, None);
+
+        state.handle_action(UserAction::SelectNoiseMode(NoiseMode::Enhanced));
+        state.apply_event(level.clone());
+        assert!(state.audio.mic_level.is_some());
         state.apply_event(UiEvent::Left);
         assert_eq!(state.audio.mic_level, None);
 
@@ -110,45 +116,22 @@ mod tests {
     }
 
     #[test]
-    fn maximum_mode_shows_the_mic_level_and_is_sent_and_saved() {
-        let mut state = AppState::new(&valid_settings(), None);
-        state.form.invite_code = "segredo".to_owned();
-        in_room(&mut state);
-        assert_eq!(
-            state.handle_action(UserAction::SelectNoiseMode(NoiseMode::Maximum)),
-            vec![UiCommand::SetNoiseSuppression(NoiseMode::Maximum)]
-        );
-        state.apply_event(UiEvent::MicLevel {
-            level_db: -30,
-            gate_open: false,
-        });
-        assert!(state.audio.mic_level.is_some());
-        let saved = state.take_pending_save().unwrap();
-        assert_eq!(saved.noise_suppression, NoiseMode::Maximum);
-
-        state.handle_action(UserAction::SelectNoiseMode(NoiseMode::Enhanced));
-        assert!(state.audio.mic_level.is_some());
-        state.handle_action(UserAction::SelectNoiseMode(NoiseMode::Off));
-        assert_eq!(state.audio.mic_level, None);
-    }
-
-    #[test]
     fn noise_mode_is_sent_saved_and_restored_on_join() {
         let mut state = AppState::new(&valid_settings(), None);
         assert_eq!(
-            state.handle_action(UserAction::SelectNoiseMode(NoiseMode::Enhanced)),
-            vec![UiCommand::SetNoiseSuppression(NoiseMode::Enhanced)]
+            state.handle_action(UserAction::SelectNoiseMode(NoiseMode::Standard)),
+            vec![UiCommand::SetNoiseSuppression(NoiseMode::Standard)]
         );
         assert!(
             state
-                .handle_action(UserAction::SelectNoiseMode(NoiseMode::Enhanced))
+                .handle_action(UserAction::SelectNoiseMode(NoiseMode::Standard))
                 .is_empty()
         );
         let saved = state.take_pending_save().unwrap();
-        assert_eq!(saved.noise_suppression, NoiseMode::Enhanced);
+        assert_eq!(saved.noise_suppression, NoiseMode::Standard);
 
         let mut restored = AppState::new(&saved, Some("segredo".to_owned()));
         let commands = restored.handle_action(UserAction::JoinRoom("geral".to_owned()));
-        assert!(commands.contains(&UiCommand::SetNoiseSuppression(NoiseMode::Enhanced)));
+        assert!(commands.contains(&UiCommand::SetNoiseSuppression(NoiseMode::Standard)));
     }
 }

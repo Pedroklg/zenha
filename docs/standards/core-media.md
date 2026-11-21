@@ -10,7 +10,7 @@ Complementa [general.md](general.md). Escopo: `crates/zenha-core/`.
 
 ## CORE-02: Conferência da assinatura do SDK na versão fixada
 
-- Antes de chamar métodos de `livekit` ou `libwebrtc`, confira a assinatura real nos fontes da versão fixada no `Cargo.lock` (em `~/.cargo/registry/src/` ou `patches/`).
+- Antes de chamar métodos de `livekit` ou `libwebrtc`, confira a assinatura real nos fontes da versão fixada no `Cargo.lock` (em `~/.cargo/registry/src/` ou `~/.cargo/git/checkouts/`).
 - Erros do SDK nunca chegam crus à UI: passam por sanitização (`sanitize_error` em `backend_support.rs`) ou viram variantes semânticas de `SessionError`.
 
 ## CORE-03: `unsafe` restrito, mínimo e documentado com `SAFETY:`

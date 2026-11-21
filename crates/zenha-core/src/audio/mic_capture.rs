@@ -4,7 +4,6 @@ use std::collections::VecDeque;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
 
 use wasapi::{
     DeviceEnumerator, Direction, SampleType, StreamMode, WaveFormat, deinitialize, initialize_mta,
@@ -15,7 +14,7 @@ use crate::audio::reopen::{DEVICE_BACKOFF, run_reopening};
 use crate::backend::support::drain_f32_le_to_i16;
 
 pub(crate) const CAPTURE_SAMPLE_RATE: u32 = 48_000;
-const POLL_INTERVAL: Duration = Duration::from_millis(5);
+const EVENT_TIMEOUT_MS: u32 = 100;
 const BUFFER_DURATION_HNS: i64 = 1_000_000;
 const BYTES_PER_SAMPLE: usize = 4;
 const FRAME_BYTES: usize = DENOISE_FRAME * BYTES_PER_SAMPLE;
@@ -96,12 +95,13 @@ fn capture(
     client.initialize_client(
         &format,
         Direction::Capture,
-        StreamMode::PollingShared {
+        StreamMode::EventsShared {
             autoconvert: true,
             buffer_duration_hns: BUFFER_DURATION_HNS,
         },
         None,
     )?;
+    let event = client.set_get_eventhandle()?;
     let reader = client.get_audiocaptureclient()?;
     client.start_stream()?;
 
@@ -122,7 +122,7 @@ fn capture(
         while drain_f32_le_to_i16(&mut bytes, &mut frame, &mut scratch) {
             sink(&mut frame);
         }
-        thread::sleep(POLL_INTERVAL);
+        let _ = event.wait_for_event(EVENT_TIMEOUT_MS);
     }
     client.stop_stream()
 }

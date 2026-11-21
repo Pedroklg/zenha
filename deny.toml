@@ -8,11 +8,7 @@ all-features = true
 version = 2
 yanked = "warn"
 ignore = [
-    # tract 0.19 is pinned by deep_filter; it only loads the model bundled in the binary.
-    { id = "RUSTSEC-2026-0319", reason = "tract-nnef only parses the bundled DeepFilterNet model" },
-    { id = "RUSTSEC-2024-0436", reason = "paste is a build-time proc macro pulled in by tract" },
-    { id = "RUSTSEC-2026-0217", reason = "anymap2 comes from liquid, a build dependency" },
-    { id = "RUSTSEC-2026-0543", reason = "chrono is unmaintained with no fix; it comes from livekit, livekit-api and pbjson-types" },
+    { id = "RUSTSEC-2026-0543", reason = "chrono is unmaintained with no fix; it comes from livekit" },
 ]
 
 [licenses]
@@ -51,7 +47,6 @@ allow = []
 deny = [
     { crate = "livekit", wrappers = ["zenha-core"], reason = "CORE-01/UI-01: apenas zenha-core pode depender de livekit" },
     { crate = "libwebrtc", wrappers = ["livekit"], reason = "CORE-01: libwebrtc só pode entrar via livekit dentro de zenha-core" },
-    { crate = "livekit-api", wrappers = ["zenha-server"], reason = "CORE-01/SRV-01: livekit-api restrito a zenha-server" },
     { crate = "eframe", wrappers = ["zenha-client", "egui_kittest"], reason = "UI-01: eframe restrito a zenha-client (egui_kittest só como dev-dependency dele)" },
     { crate = "axum", wrappers = ["zenha-server"], reason = "SRV-01: axum restrito a zenha-server" },
     { crate = "rusqlite", wrappers = ["zenha-server"], reason = "SRV-05: rusqlite restrito a zenha-server" },
@@ -66,6 +61,6 @@ allow-registry = [
     "https://github.com/rust-lang/crates.io-index",
 ]
 allow-git = [
-    # Pinned by rev in Cargo.toml for deep_filter (DeepFilterNet 3).
-    "https://github.com/Rikorose/DeepFilterNet",
+    # Fork pinned by rev (branch zenha-0.11): AudioTrack::set_volume + transceiver.stop() on unpublish.
+    "https://github.com/Pedroklg/rust-sdks",
 ]

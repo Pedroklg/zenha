@@ -1,4 +1,4 @@
-//! Conversion between `egui` keyboard events and the `global-hotkey` shortcut format.
+//! Conversion between `egui` keyboard/mouse events and Zenha's global hotkey format.
 
 use eframe::egui::{self, Key};
 
@@ -39,6 +39,22 @@ pub fn binding_from_key(
     modifiers: egui::Modifiers,
 ) -> Result<String, BindingError> {
     let token = key_token(key).ok_or(BindingError::Unsupported)?;
+    Ok(format_binding(token, modifiers))
+}
+
+pub fn binding_from_mouse_button(
+    button: egui::PointerButton,
+    modifiers: egui::Modifiers,
+) -> Option<String> {
+    let token = match button {
+        egui::PointerButton::Extra1 => "Mouse4",
+        egui::PointerButton::Extra2 => "Mouse5",
+        _ => return None,
+    };
+    Some(format_binding(token, modifiers))
+}
+
+fn format_binding(token: &str, modifiers: egui::Modifiers) -> String {
     let mut out = String::new();
     if modifiers.shift {
         out.push_str("shift+");
@@ -50,7 +66,7 @@ pub fn binding_from_key(
         out.push_str("alt+");
     }
     out.push_str(token);
-    Ok(out)
+    out
 }
 
 struct ParsedBinding<'a> {
@@ -134,6 +150,8 @@ fn token_label(token: &str) -> &str {
         "ArrowLeft" => "Esquerda",
         "ArrowRight" => "Direita",
         "Space" => "Espaço",
+        "Mouse4" => "Mouse 4",
+        "Mouse5" => "Mouse 5",
         other => other,
     }
 }
@@ -170,6 +188,8 @@ fn is_recommended_bare_token(token: &str) -> bool {
             | "PageUp"
             | "PageDown"
             | "Pause"
+            | "Mouse4"
+            | "Mouse5"
     )
 }
 
@@ -532,18 +552,55 @@ mod tests {
         );
     }
 
+    #[test]
+    fn maps_mouse_side_buttons_labels_and_skips_warning() {
+        assert_eq!(
+            binding_from_mouse_button(egui::PointerButton::Extra1, Modifiers::NONE),
+            Some("Mouse4".to_owned())
+        );
+        assert_eq!(
+            binding_from_mouse_button(egui::PointerButton::Extra2, Modifiers::NONE),
+            Some("Mouse5".to_owned())
+        );
+        assert_eq!(
+            binding_from_mouse_button(egui::PointerButton::Extra1, mods(true, false, false)),
+            Some("control+Mouse4".to_owned())
+        );
+        for ignored in [
+            egui::PointerButton::Primary,
+            egui::PointerButton::Secondary,
+            egui::PointerButton::Middle,
+        ] {
+            assert_eq!(binding_from_mouse_button(ignored, Modifiers::NONE), None);
+        }
+        assert_eq!(binding_label("Mouse4"), "Mouse 4");
+        assert_eq!(binding_label("Mouse5"), "Mouse 5");
+        assert_eq!(binding_label("control+Mouse4"), "Ctrl+Mouse 4");
+        assert_eq!(binding_warning("Mouse4"), None);
+        assert_eq!(binding_warning("Mouse5"), None);
+    }
+
     #[cfg(windows)]
     #[test]
-    fn all_tokens_round_trip_through_global_hotkey() {
-        use global_hotkey::hotkey::HotKey;
+    fn all_tokens_parse_in_win_hotkeys() {
+        use zenha_core::win_platform::hotkeys::parse_binding_spec;
 
         for &key in ALL_SUPPORTED_KEYS {
             for m in [Modifiers::NONE, mods(true, true, true)] {
                 let binding = binding_from_key(key, m).unwrap();
-                let parsed: HotKey = binding.parse().unwrap_or_else(|err| {
-                    panic!("failed to parse {binding:?} for {key:?}: {err}");
-                });
-                assert_eq!(parsed.into_string(), binding, "mismatch for {key:?}");
+                assert!(
+                    parse_binding_spec(&binding).is_ok(),
+                    "failed to parse {binding:?} for {key:?}"
+                );
+            }
+        }
+        for button in [egui::PointerButton::Extra1, egui::PointerButton::Extra2] {
+            for m in [Modifiers::NONE, mods(true, true, true)] {
+                let binding = binding_from_mouse_button(button, m).unwrap();
+                assert!(
+                    parse_binding_spec(&binding).is_ok(),
+                    "failed to parse {binding:?} for {button:?}"
+                );
             }
         }
     }

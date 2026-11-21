@@ -68,18 +68,16 @@ pub struct AudioDevice {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum NoiseSuppression {
     Off,
-    /// Built-in WebRTC suppression.
-    #[default]
+    /// Built-in WebRTC suppression with echo cancellation.
     Standard,
     /// Neural network (RNNoise) on a dedicated capture path; no echo cancellation.
+    #[default]
     Enhanced,
-    /// DeepFilterNet 3 network on the same dedicated capture path as Enhanced mode; heavier.
-    Maximum,
 }
 
 impl NoiseSuppression {
     pub fn uses_own_capture(self) -> bool {
-        matches!(self, Self::Enhanced | Self::Maximum)
+        matches!(self, Self::Enhanced)
     }
 }
 
@@ -592,11 +590,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn only_enhanced_and_maximum_use_their_own_capture() {
+    fn only_enhanced_uses_its_own_capture_and_is_the_default() {
+        assert_eq!(NoiseSuppression::default(), NoiseSuppression::Enhanced);
         assert!(!NoiseSuppression::Off.uses_own_capture());
         assert!(!NoiseSuppression::Standard.uses_own_capture());
         assert!(NoiseSuppression::Enhanced.uses_own_capture());
-        assert!(NoiseSuppression::Maximum.uses_own_capture());
     }
 
     #[test]

@@ -1,4 +1,4 @@
-//! The sixteen scenarios, their registry and the tools they share.
+//! The fifteen scenarios, their registry and the tools they share.
 
 mod audio;
 mod chat;
@@ -51,12 +51,6 @@ pub const ALL: &[ScenarioDef] = &[
         title: "Microfone reforçado publica só o próprio áudio e troca de modo com a sala aberta",
         needs_media: true,
         run: audio::enhanced_mic,
-    },
-    ScenarioDef {
-        name: "maximum-mic",
-        title: "Microfone no modo Máxima (DeepFilterNet) publica só o próprio áudio",
-        needs_media: true,
-        run: audio::maximum_mic,
     },
     ScenarioDef {
         name: "mute",
@@ -162,7 +156,6 @@ mod tests {
                 "playout-tone-first",
                 "playout-explicit-device",
                 "enhanced-mic",
-                "maximum-mic",
                 "mute",
                 "deafen",
                 "chat",

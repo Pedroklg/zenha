@@ -13,10 +13,10 @@ use anyhow::Context;
 use tokio::net::TcpListener;
 
 use crate::config::Config;
-use crate::directory::LiveKitDirectory;
+use crate::directory::{LiveKitDirectory, OccupantsCache};
 use crate::routes::{
     AdminLoginLimiter, AppState, AvatarRateLimiter, ChatRateLimiter, DEFAULT_ADMIN_FAILURE_DELAY,
-    RoomUnlockLimiter, router,
+    InviteCache, RoomUnlockLimiter, router,
 };
 use crate::store::ChatStore;
 
@@ -74,17 +74,22 @@ async fn main() -> anyhow::Result<()> {
         .await
         .with_context(|| format!("binding {}", config.bind_addr))?;
 
-    let directory = Arc::new(LiveKitDirectory::new(&config));
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
+    let directory =
+        Arc::new(LiveKitDirectory::new(&config).context("initializing livekit client")?);
     let state = AppState {
+        config: Arc::new(config),
         directory: directory.clone(),
         moderator: directory,
+        occupants_cache: Some(Arc::new(OccupantsCache::default())),
         chat,
+        invite_cache: Arc::new(InviteCache::default()),
         chat_limiter: Arc::new(ChatRateLimiter::default()),
         avatar_limiter: Arc::new(AvatarRateLimiter::default()),
         admin_login_limiter: Arc::new(AdminLoginLimiter::default()),
         unlock_limiter: Arc::new(RoomUnlockLimiter::default()),
         admin_failure_delay: DEFAULT_ADMIN_FAILURE_DELAY,
-        config: Arc::new(config),
     };
 
     axum::serve(

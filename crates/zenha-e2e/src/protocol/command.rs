@@ -11,7 +11,6 @@ pub enum NoiseKind {
     Off,
     Standard,
     Enhanced,
-    Maximum,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -174,7 +173,6 @@ impl BotCommand {
                 NoiseKind::Off => NoiseSuppression::Off,
                 NoiseKind::Standard => NoiseSuppression::Standard,
                 NoiseKind::Enhanced => NoiseSuppression::Enhanced,
-                NoiseKind::Maximum => NoiseSuppression::Maximum,
             }),
             Self::SetStreamVolume { percent } => Command::SetStreamVolume(*percent),
             Self::SetParticipantVolume { identity, percent } => Command::SetParticipantVolume {
