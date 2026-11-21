@@ -1,9 +1,10 @@
 //! Neural network noise suppression, behind its own interface so the engine can be swapped.
 
-use nnnoiseless::DenoiseState;
+use std::ffi::{c_float, c_int, c_void};
+use std::ptr::NonNull;
 
 /// Samples per frame: 10 ms of mono audio at 48 kHz.
-pub const DENOISE_FRAME: usize = nnnoiseless::FRAME_SIZE;
+pub const DENOISE_FRAME: usize = 480;
 
 const SILENCE_DB: f32 = -100.0;
 const HYSTERESIS_DB: f32 = 6.0;
@@ -14,22 +15,113 @@ const LOOKAHEAD_FRAMES: usize = 2;
 const ATTACK_SAMPLES: f32 = 240.0;
 const RELEASE_SAMPLES: f32 = 3840.0;
 
+#[repr(C, align(64))]
+struct AlignedWeights<T: ?Sized>(T);
+
+// Keep the static weights blob 64-byte aligned for RNNoise's SSE4.1/AVX2 tensor loads.
+static ALIGNED_WEIGHTS: &AlignedWeights<[u8]> = &AlignedWeights(*include_bytes!(
+    "../../third_party/rnnoise/rnnoise_little_0b50c45.bin"
+));
+
+#[repr(C)]
+struct DenoiseState {
+    _private: [u8; 0],
+}
+
+#[repr(C)]
+struct RnnModel {
+    _private: [u8; 0],
+}
+
+#[expect(
+    unsafe_code,
+    reason = "Xiph RNNoise v0.2 is linked as a C static library built by build.rs"
+)]
+// SAFETY: symbols and signatures match `third_party/rnnoise/include/rnnoise.h`.
+unsafe extern "C" {
+    fn rnnoise_get_frame_size() -> c_int;
+    fn rnnoise_model_from_buffer(ptr: *const c_void, len: c_int) -> *mut RnnModel;
+    fn rnnoise_model_free(model: *mut RnnModel);
+    fn rnnoise_create(model: *mut RnnModel) -> *mut DenoiseState;
+    fn rnnoise_destroy(st: *mut DenoiseState);
+    fn rnnoise_process_frame(
+        st: *mut DenoiseState,
+        out: *mut c_float,
+        input: *const c_float,
+    ) -> c_float;
+}
+
 pub trait Denoiser {
     /// Cleans one frame of `DENOISE_FRAME` samples in place and returns the speech
     /// probability (0.0 to 1.0) when the engine computes one.
     fn process(&mut self, frame: &mut [i16]) -> Option<f32>;
 }
 
+struct RnnoiseInner {
+    state: NonNull<DenoiseState>,
+    model: NonNull<RnnModel>,
+}
+
+impl Drop for RnnoiseInner {
+    #[expect(
+        unsafe_code,
+        reason = "destroys C-allocated RNNoise state and model handle in required order"
+    )]
+    fn drop(&mut self) {
+        // SAFETY: `rnnoise.h` requires destroying all `DenoiseState` instances before freeing
+        // the `RNNModel` they reference. Both pointers are uniquely owned by `self`.
+        unsafe {
+            rnnoise_destroy(self.state.as_ptr());
+            rnnoise_model_free(self.model.as_ptr());
+        }
+    }
+}
+
 pub struct RnnoiseDenoiser {
-    state: Box<DenoiseState<'static>>,
+    inner: Option<RnnoiseInner>,
     input: [f32; DENOISE_FRAME],
     output: [f32; DENOISE_FRAME],
 }
 
+#[expect(
+    unsafe_code,
+    reason = "DenoiseState is uniquely owned per denoiser and RNNModel references immutable static weights"
+)]
+// SAFETY: `DenoiseState` is not shared across threads and `ALIGNED_WEIGHTS` is `'static` read-only.
+unsafe impl Send for RnnoiseDenoiser {}
+
 impl RnnoiseDenoiser {
+    #[expect(
+        unsafe_code,
+        reason = "initializes Xiph RNNoise v0.2 from the static aligned binary weights buffer"
+    )]
     pub fn new() -> Self {
+        // SAFETY: `rnnoise_get_frame_size` returns a compile-time constant with no preconditions.
+        let frame_ok = unsafe { rnnoise_get_frame_size() } as usize == DENOISE_FRAME;
+        let inner = frame_ok
+            .then(|| c_int::try_from(ALIGNED_WEIGHTS.0.len()).ok())
+            .flatten()
+            .and_then(|len| {
+                // SAFETY: `ALIGNED_WEIGHTS` lives for `'static`, is 64-byte aligned, and matches `len`.
+                let model = NonNull::new(unsafe {
+                    rnnoise_model_from_buffer(ALIGNED_WEIGHTS.0.as_ptr().cast(), len)
+                })?;
+                // SAFETY: `model` is a valid non-null handle returned by `rnnoise_model_from_buffer`.
+                let state = NonNull::new(unsafe { rnnoise_create(model.as_ptr()) });
+                match state {
+                    Some(state) => Some(RnnoiseInner { state, model }),
+                    None => {
+                        // SAFETY: `rnnoise_create` failed so no state references `model`; free it now.
+                        unsafe { rnnoise_model_free(model.as_ptr()) };
+                        None
+                    }
+                }
+            });
+        if inner.is_none() {
+            tracing::warn!("could not initialize RNNoise v0.2 model");
+        }
         Self {
-            state: DenoiseState::new(),
+            inner,
             input: [0.0; DENOISE_FRAME],
             output: [0.0; DENOISE_FRAME],
         }
@@ -43,15 +135,28 @@ impl Default for RnnoiseDenoiser {
 }
 
 impl Denoiser for RnnoiseDenoiser {
+    #[expect(
+        unsafe_code,
+        reason = "invokes rnnoise_process_frame on fixed-size 480-sample input/output buffers"
+    )]
     fn process(&mut self, frame: &mut [i16]) -> Option<f32> {
         if frame.len() != DENOISE_FRAME {
             return None;
         }
+        let inner = self.inner.as_ref()?;
         // RNNoise works on f32 samples in the i16 range.
         for (slot, sample) in self.input.iter_mut().zip(frame.iter()) {
             *slot = f32::from(*sample);
         }
-        let speech = self.state.process_frame(&mut self.output, &self.input);
+        // SAFETY: `inner.state` is a valid `DenoiseState`, and both `output` and `input`
+        // have exactly `DENOISE_FRAME` (480) elements matching `rnnoise_get_frame_size()`.
+        let speech = unsafe {
+            rnnoise_process_frame(
+                inner.state.as_ptr(),
+                self.output.as_mut_ptr(),
+                self.input.as_ptr(),
+            )
+        };
         for (sample, value) in frame.iter_mut().zip(self.output.iter()) {
             *sample = value.round().clamp(-32768.0, 32767.0) as i16;
         }
@@ -191,6 +296,16 @@ mod tests {
                 ((seed % 2001) as i16) - 1000
             })
             .collect()
+    }
+
+    #[test]
+    #[expect(unsafe_code, reason = "queries the C library frame size constant")]
+    fn rnnoise_v02_frame_size_and_alignment_match() {
+        // SAFETY: `rnnoise_get_frame_size` returns a compile-time constant with no preconditions.
+        let frame_size = unsafe { rnnoise_get_frame_size() };
+        assert_eq!(frame_size as usize, DENOISE_FRAME);
+        assert_eq!((ALIGNED_WEIGHTS.0.as_ptr() as usize) % 64, 0);
+        assert!(RnnoiseDenoiser::new().inner.is_some());
     }
 
     #[test]

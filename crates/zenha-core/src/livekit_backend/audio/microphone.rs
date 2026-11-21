@@ -142,7 +142,10 @@ fn enhanced_test_tone() -> Option<ToneGenerator> {
 }
 
 fn build_denoiser() -> Box<dyn Denoiser> {
-    tracing::info!(engine = "rnnoise", "noise suppression engine ready");
+    tracing::info!(
+        engine = "rnnoise-v0.2-little",
+        "noise suppression engine ready"
+    );
     Box::new(RnnoiseDenoiser::new())
 }
 

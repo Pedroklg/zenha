@@ -18,6 +18,7 @@ anyhow = "1.0"
 argon2 = "=0.6.0"
 async-trait = "0.1"
 axum = "0.8"
+cc = "1.11"
 directories = "6.0"
 dotenvy = "0.15"
 eframe = "0.37"
@@ -25,7 +26,6 @@ egui_kittest = { version = "0.37", features = ["eframe"] }
 futures-util = { version = "0.3", default-features = false }
 http-body-util = "0.1"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp"] }
-nnnoiseless = { version = "0.5.2", default-features = false }
 livekit = { version = "=0.11.0", default-features = false, features = ["native", "rustls-tls-webpki-roots"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 serde = { version = "1.0", features = ["derive"] }
