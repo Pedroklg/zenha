@@ -210,6 +210,20 @@ fn participant_status_row(ui: &mut egui::Ui, participant: &ParticipantView, is_s
             )
             .truncate(),
         );
+    } else if participant.deafened {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            let (icon_rect, _) = ui.allocate_exact_size(Vec2::splat(14.0), Sense::hover());
+            icons::headphones(ui.painter(), icon_rect, theme::TEXT_WEAK, true);
+            let text = if participant.muted {
+                "Microfone e fone desligados"
+            } else {
+                "Fone desligado"
+            };
+            ui.add(
+                egui::Label::new(RichText::new(text).size(13.0).color(theme::TEXT_WEAK)).truncate(),
+            );
+        });
     } else if participant.muted {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 4.0;

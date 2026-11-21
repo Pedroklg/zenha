@@ -462,6 +462,7 @@ fn room_ui_footer_chat_and_participant_card_layout_at_1280x720() {
                 identity: demo::SELF_IDENTITY.to_owned(),
                 name: long_name.to_owned(),
                 muted: false,
+                deafened: false,
                 speaking: false,
                 avatar_version: None,
             },

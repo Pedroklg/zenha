@@ -229,6 +229,7 @@ pub struct ParticipantView {
     pub identity: String,
     pub name: String,
     pub muted: bool,
+    pub deafened: bool,
     pub speaking: bool,
     pub avatar_version: Option<String>,
 }

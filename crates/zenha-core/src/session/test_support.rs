@@ -42,6 +42,7 @@ pub(super) fn participant(identity: &str) -> Participant {
         identity: identity.to_owned(),
         name: identity.to_uppercase(),
         muted: false,
+        deafened: false,
         speaking: false,
         avatar_version: None,
     }

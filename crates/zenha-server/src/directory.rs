@@ -3,6 +3,7 @@ use livekit_api::services::ServerError;
 use livekit_api::services::ServerErrorCode;
 use livekit_api::services::ServiceError;
 use livekit_api::services::room::{RoomClient, SendDataOptions};
+use zenha_protocol::{DEAFENED_ATTR, VoiceState, parse_deafened_attribute};
 
 use crate::config::Config;
 
@@ -12,6 +13,12 @@ const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
 pub const TRACK_SOURCE_MICROPHONE: i32 = 2;
 pub const TRACK_SOURCE_SCREEN_SHARE: i32 = 3;
 pub const TRACK_SOURCE_SCREEN_SHARE_AUDIO: i32 = 4;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Occupant {
+    pub name: String,
+    pub voice: VoiceState,
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum DirectoryError {
@@ -29,7 +36,7 @@ pub enum ModerationError {
 
 #[async_trait]
 pub trait RoomDirectory: Send + Sync {
-    async fn participants(&self, room: &str) -> Result<Vec<String>, DirectoryError>;
+    async fn participants(&self, room: &str) -> Result<Vec<Occupant>, DirectoryError>;
 }
 
 #[async_trait]
@@ -112,16 +119,26 @@ fn map_moderation_error(err: ServiceError) -> ModerationError {
 
 #[async_trait]
 impl RoomDirectory for LiveKitDirectory {
-    async fn participants(&self, room: &str) -> Result<Vec<String>, DirectoryError> {
+    async fn participants(&self, room: &str) -> Result<Vec<Occupant>, DirectoryError> {
         match self.client.list_participants(room).await {
             Ok(participants) => Ok(participants
                 .into_iter()
-                .map(|p| {
-                    if p.name.is_empty() {
+                .map(|p| Occupant {
+                    voice: VoiceState {
+                        muted: p
+                            .tracks
+                            .iter()
+                            .any(|track| track.source == TRACK_SOURCE_MICROPHONE && track.muted),
+                        deafened: p
+                            .attributes
+                            .get(DEAFENED_ATTR)
+                            .is_some_and(|raw| parse_deafened_attribute(raw)),
+                    },
+                    name: if p.name.is_empty() {
                         p.identity
                     } else {
                         p.name
-                    }
+                    },
                 })
                 .collect()),
             Err(err) if is_not_found(&err) => Ok(Vec::new()),
@@ -210,8 +227,9 @@ mod fake {
     use async_trait::async_trait;
 
     use super::{
-        DirectoryError, ModerationError, RoomDirectory, RoomModerator, TRACK_SOURCE_MICROPHONE,
-        TRACK_SOURCE_SCREEN_SHARE, TRACK_SOURCE_SCREEN_SHARE_AUDIO,
+        DirectoryError, ModerationError, Occupant, RoomDirectory, RoomModerator,
+        TRACK_SOURCE_MICROPHONE, TRACK_SOURCE_SCREEN_SHARE, TRACK_SOURCE_SCREEN_SHARE_AUDIO,
+        VoiceState,
     };
 
     #[derive(Debug, Clone, PartialEq, Eq)]
@@ -244,6 +262,7 @@ mod fake {
     pub struct FakeDirectory {
         rooms: Mutex<HashMap<String, Vec<String>>>,
         tracks: Mutex<HashMap<(String, String), Vec<FakeTrack>>>,
+        voices: Mutex<HashMap<(String, String), VoiceState>>,
         failing: HashSet<String>,
         fail_moderation: bool,
         fail_send_data: bool,
@@ -256,6 +275,14 @@ mod fake {
                 room.to_owned(),
                 names.iter().map(|n| (*n).to_owned()).collect(),
             );
+            self
+        }
+
+        pub fn with_voice(self, room: &str, name: &str, voice: VoiceState) -> Self {
+            self.voices
+                .lock()
+                .unwrap()
+                .insert((room.to_owned(), name.to_owned()), voice);
             self
         }
 
@@ -335,17 +362,28 @@ mod fake {
 
     #[async_trait]
     impl RoomDirectory for FakeDirectory {
-        async fn participants(&self, room: &str) -> Result<Vec<String>, DirectoryError> {
+        async fn participants(&self, room: &str) -> Result<Vec<Occupant>, DirectoryError> {
             if self.failing.contains(room) {
                 return Err(DirectoryError::Backend("fake failure".to_owned()));
             }
-            Ok(self
+            let names = self
                 .rooms
                 .lock()
                 .unwrap()
                 .get(room)
                 .cloned()
-                .unwrap_or_default())
+                .unwrap_or_default();
+            let voices = self.voices.lock().unwrap();
+            Ok(names
+                .into_iter()
+                .map(|name| Occupant {
+                    voice: voices
+                        .get(&(room.to_owned(), name.clone()))
+                        .copied()
+                        .unwrap_or_default(),
+                    name,
+                })
+                .collect())
         }
     }
 

@@ -52,6 +52,8 @@ pub struct Participant {
     pub identity: String,
     pub name: String,
     pub muted: bool,
+    /// Headphones off, from the participant's `zenha.deafened` attribute.
+    pub deafened: bool,
     pub speaking: bool,
     pub avatar_version: Option<String>,
 }
@@ -415,6 +417,10 @@ pub enum Event {
     ParticipantMuteChanged {
         identity: String,
         muted: bool,
+    },
+    ParticipantDeafenChanged {
+        identity: String,
+        deafened: bool,
     },
     ParticipantSpeakingChanged {
         identity: String,

@@ -401,6 +401,23 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
+    async fn a_participant_turning_the_headphones_off_reaches_the_ui() {
+        let mut h = harness();
+        h.join("geral").await;
+        assert!(h.backend.emit(BackendEvent::DeafenChanged {
+            identity: "ana".to_owned(),
+            deafened: true,
+        }));
+        assert_eq!(
+            h.next().await,
+            Event::ParticipantDeafenChanged {
+                identity: "ana".to_owned(),
+                deafened: true,
+            }
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
     async fn server_initiated_mute_updates_local_state_without_fighting() {
         let mut h = harness();
         h.join("geral").await;

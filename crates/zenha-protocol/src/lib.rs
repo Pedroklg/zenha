@@ -35,6 +35,8 @@ pub const ADMIN_MOVE_TOPIC: &str = "admin.move";
 pub const ADMIN_CHAT_DELETE_TOPIC: &str = "admin.chat_delete";
 pub const ROOMS_CHANGED_TOPIC: &str = "rooms.changed";
 pub const AVATAR_ATTR: &str = "zenha.avatar";
+/// `"1"` while the participant has the headphones off; any other value means on.
+pub const DEAFENED_ATTR: &str = "zenha.deafened";
 pub const AVATAR_SIZE_PX: u32 = 128;
 pub const MAX_AVATAR_UPLOAD_BYTES: usize = 2 * 1024 * 1024;
 pub const MAX_AVATAR_VERSION_LEN: usize = 32;
@@ -92,9 +94,33 @@ pub struct RoomSummary {
     pub unlocked: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent: Option<String>,
+    /// Microphone and headphones of each entry of `participants`, same order.
+    /// Empty when nobody has either off, and from servers older than 0.1.20.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub voice: Vec<VoiceState>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VoiceState {
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub muted: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub deafened: bool,
+}
+
+pub fn deafened_attribute(deafened: bool) -> &'static str {
+    if deafened { "1" } else { "0" }
+}
+
+pub fn parse_deafened_attribute(raw: &str) -> bool {
+    raw.trim() == "1"
 }
 
 impl RoomSummary {
+    pub fn voice_of(&self, index: usize) -> VoiceState {
+        self.voice.get(index).copied().unwrap_or_default()
+    }
+
     pub fn occupant_count(&self) -> usize {
         self.participant_count.max(self.participants.len())
     }
@@ -630,6 +656,31 @@ mod tests {
                 max: MAX_CHAT_MESSAGE_LEN
             })
         );
+    }
+
+    #[test]
+    fn room_summary_voice_round_trips_and_defaults_per_occupant() {
+        let summary = RoomSummary {
+            name: "geral".to_owned(),
+            participants: vec!["ana".to_owned(), "bia".to_owned()],
+            voice: vec![
+                VoiceState::default(),
+                VoiceState {
+                    muted: true,
+                    deafened: true,
+                },
+            ],
+            ..RoomSummary::default()
+        };
+        let json = serde_json::to_string(&summary).unwrap();
+        assert!(json.contains(r#""voice":[{},{"muted":true,"deafened":true}]"#));
+        assert_eq!(serde_json::from_str::<RoomSummary>(&json).unwrap(), summary);
+        assert_eq!(summary.voice_of(0), VoiceState::default());
+        assert!(summary.voice_of(1).deafened);
+        assert_eq!(summary.voice_of(5), VoiceState::default());
+        assert!(parse_deafened_attribute(deafened_attribute(true)));
+        assert!(!parse_deafened_attribute(deafened_attribute(false)));
+        assert!(!parse_deafened_attribute(""));
     }
 
     #[test]

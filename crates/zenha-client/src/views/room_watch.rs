@@ -218,6 +218,12 @@ fn compact_participants_strip(
                             icons::mic(ui.painter(), icon_rect, theme::TEXT_WEAK, true);
                             response.on_hover_text("Microfone desligado");
                         }
+                        if participant.deafened {
+                            let (icon_rect, response) =
+                                ui.allocate_exact_size(Vec2::splat(14.0), Sense::hover());
+                            icons::headphones(ui.painter(), icon_rect, theme::TEXT_WEAK, true);
+                            response.on_hover_text("Fone desligado");
+                        }
                     });
                 })
                 .response;

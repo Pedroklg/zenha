@@ -12,7 +12,9 @@ use livekit::prelude::{
 use tokio::sync::mpsc::{self, UnboundedSender};
 use tokio::task::JoinHandle;
 use tokio::time::timeout;
-use zenha_protocol::{AVATAR_ATTR, parse_avatar_attribute};
+use zenha_protocol::{
+    AVATAR_ATTR, DEAFENED_ATTR, parse_avatar_attribute, parse_deafened_attribute,
+};
 
 use crate::api::{Participant, SessionError};
 use crate::audio::share_audio::AudioScope;
@@ -209,6 +211,7 @@ impl LiveKitBackend {
             name: display_name(local.name(), &local_identity),
             identity: local_identity.clone(),
             muted: self.flags.microphone_muted.load(Ordering::SeqCst),
+            deafened: self.flags.output_muted.load(Ordering::SeqCst),
             speaking: false,
             avatar_version: avatar_version(&local_attributes),
         }];
@@ -481,6 +484,12 @@ fn microphone_muted(participant: &RemoteParticipant) -> bool {
         })
 }
 
+pub(super) fn deafened(attributes: &HashMap<String, String>) -> bool {
+    attributes
+        .get(DEAFENED_ATTR)
+        .is_some_and(|value| parse_deafened_attribute(value))
+}
+
 fn avatar_version(attributes: &HashMap<String, String>) -> Option<String> {
     attributes
         .get(AVATAR_ATTR)
@@ -493,6 +502,7 @@ pub(super) fn remote_view(participant: &RemoteParticipant) -> Participant {
     Participant {
         name: display_name(participant.name(), &identity),
         muted: microphone_muted(participant),
+        deafened: deafened(&attributes),
         speaking: false,
         avatar_version: avatar_version(&attributes),
         identity,

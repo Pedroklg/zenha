@@ -592,6 +592,7 @@ mod tests {
             identity: "client-pedro".to_owned(),
             name: "pedro".to_owned(),
             muted: false,
+            deafened: false,
             speaking: false,
             avatar_version: None,
         }]);

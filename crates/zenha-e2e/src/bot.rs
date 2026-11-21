@@ -287,6 +287,7 @@ mod tests {
                 identity: "bot".into(),
                 name: "bot".into(),
                 muted: false,
+                deafened: false,
                 speaking: false,
                 avatar_version: None,
             }]);
@@ -360,6 +361,7 @@ mod tests {
                 identity: "other".into(),
                 name: "Other".into(),
                 muted: false,
+                deafened: false,
                 speaking: false,
                 avatar_version: None,
             }));

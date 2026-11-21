@@ -255,6 +255,7 @@ impl MediaBackend for LiveKitBackend {
         self.flags.output_muted.store(muted, Ordering::SeqCst);
         if let Some(room) = self.current_room().await {
             room::apply_output_mute(&room, muted);
+            self.publish_deafened_attribute(&room, muted).await;
         }
         Ok(())
     }
