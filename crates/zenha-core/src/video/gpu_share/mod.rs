@@ -18,7 +18,7 @@ use livekit::webrtc::video_frame::{EncodedFrameType, EncodedVideoCodec, EncodedV
 use livekit::webrtc::video_source::VideoResolution;
 use livekit::webrtc::video_source::native::NativeVideoSource;
 use tokio::sync::oneshot;
-use windows::Win32::Foundation::HMODULE;
+use windows::Win32::Foundation::{CloseHandle, HANDLE, HMODULE};
 use windows::Win32::Graphics::Direct3D::{
     D3D_DRIVER_TYPE_HARDWARE, D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_11_1,
 };
@@ -31,7 +31,11 @@ use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM;
 use windows::Win32::Graphics::Dxgi::IDXGIAdapter;
 use windows::Win32::Media::MediaFoundation::{MFSTARTUP_LITE, MFShutdown, MFStartup};
 use windows::Win32::System::Com::{COINIT_MULTITHREADED, CoInitializeEx, CoUninitialize};
-use windows::core::Interface;
+use windows::Win32::System::Threading::{
+    CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, CreateWaitableTimerExW, INFINITE, SetWaitableTimer,
+    TIMER_ALL_ACCESS, WaitForSingleObject,
+};
+use windows::core::{Interface, PCWSTR};
 
 use crate::api::SessionError;
 use crate::video::capture::{CaptureEnd, FrameSource, Pacer};
@@ -178,6 +182,57 @@ impl FrameSource for GpuShare {
         Err(SessionError::Video(
             "the GPU share has no thumbnails".to_owned(),
         ))
+    }
+}
+
+struct HighResTimer(Option<HANDLE>);
+
+impl HighResTimer {
+    fn new() -> Self {
+        // SAFETY: unnamed high-resolution waitable timer without security attributes; closed in `Drop`.
+        let handle = unsafe {
+            CreateWaitableTimerExW(
+                None,
+                PCWSTR::null(),
+                CREATE_WAITABLE_TIMER_HIGH_RESOLUTION,
+                TIMER_ALL_ACCESS.0,
+            )
+        }
+        .ok();
+        Self(handle)
+    }
+
+    fn sleep(&self, duration: Duration) {
+        if duration.is_zero() {
+            return;
+        }
+        let Some(handle) = self.0 else {
+            std::thread::sleep(duration);
+            return;
+        };
+        let ticks = i64::try_from((duration.as_nanos() / 100).max(1)).unwrap_or(i64::MAX);
+        let due_time = -ticks;
+        // SAFETY: `handle` is a valid waitable timer owned by `self` and `due_time` is a live local.
+        let armed = unsafe { SetWaitableTimer(handle, &due_time, 0, None, None, false) }.is_ok();
+        if armed {
+            // SAFETY: `handle` is a valid armed waitable timer; waiting blocks until it signals.
+            unsafe {
+                let _ = WaitForSingleObject(handle, INFINITE);
+            }
+        } else {
+            std::thread::sleep(duration);
+        }
+    }
+}
+
+impl Drop for HighResTimer {
+    fn drop(&mut self) {
+        if let Some(handle) = self.0.take() {
+            // SAFETY: `handle` was returned by `CreateWaitableTimerExW` and is closed once here.
+            unsafe {
+                let _ = CloseHandle(handle);
+            }
+        }
     }
 }
 
@@ -405,7 +460,7 @@ fn run(
         config,
         device,
         context,
-        pipeline,
+        pipeline: Some(pipeline),
         source,
         preview: output.preview,
         preview_gate: PreviewGate::new(SHARE_PREVIEW_INTERVAL),
@@ -426,7 +481,7 @@ struct Share {
     config: GpuShareConfig,
     device: ID3D11Device,
     context: ID3D11DeviceContext,
-    pipeline: Pipeline,
+    pipeline: Option<Pipeline>,
     source: NativeVideoSource,
     preview: FrameSlot,
     preview_gate: PreviewGate,
@@ -438,33 +493,37 @@ impl Share {
     fn run(&mut self, stop: &AtomicBool) -> Result<Option<CaptureEnd>, GpuError> {
         let start = Instant::now();
         let mut pacer = Pacer::new(self.config.fps, start);
+        let timer = HighResTimer::new();
         let mut stats = Stats::default();
         let mut window_start = start;
         let mut last_submit: Option<Instant> = None;
         let mut force_key = true;
         let mut resize = ResizeWatch::default();
         while !stop.load(Ordering::SeqCst) {
-            std::thread::sleep(pacer.until_next(Instant::now()));
-            if self.pipeline.capture.closed() {
+            timer.sleep(pacer.until_next(Instant::now()));
+            let Some(pipeline) = self.pipeline.as_mut() else {
+                return Err(GpuError::Unsupported("gpu share pipeline missing"));
+            };
+            if pipeline.capture.closed() {
                 return Ok(Some(CaptureEnd::TargetClosed));
             }
             force_key |= self.source.take_keyframe_request();
             if let Some(rate) = self.source.take_rate_control_request() {
-                self.pipeline
+                pipeline
                     .encoder
                     .set_bitrate(rate.target_bitrate_bps.min(self.config.bitrate_bps));
             }
-            let captured = self
-                .pipeline
+            let captured = pipeline
                 .capture
-                .copy_latest(&self.context, &self.pipeline.input)?;
+                .copy_latest(&self.context, &pipeline.input)?;
             let now = Instant::now();
             if let Some(content) = captured {
                 stats.captured += 1;
-                resize.observe(self.pipeline.capture.size(), content, now);
+                resize.observe(pipeline.capture.size(), content, now);
             }
             if resize.due(now) {
-                self.pipeline = Pipeline::new(&self.device, &self.context, &self.config)?;
+                self.pipeline = None;
+                self.pipeline = Some(Pipeline::new(&self.device, &self.context, &self.config)?);
                 force_key = true;
                 last_submit = None;
                 continue;
@@ -473,15 +532,16 @@ impl Share {
             if fresh {
                 self.push_preview(now);
             }
+            let Some(pipeline) = self.pipeline.as_mut() else {
+                return Err(GpuError::Unsupported("gpu share pipeline missing"));
+            };
             let due = last_submit.is_none_or(|at| at.elapsed() >= KEEPALIVE);
             let began = Instant::now();
             let outputs = if fresh || force_key || due {
-                let texture = self.pipeline.converter.convert()?;
+                let texture = pipeline.converter.convert()?;
                 let timestamp = i64::try_from(start.elapsed().as_nanos() / 100).unwrap_or(i64::MAX);
-                let (outputs, accepted) = self
-                    .pipeline
-                    .encoder
-                    .encode(&texture, timestamp, force_key)?;
+                let (outputs, accepted) =
+                    pipeline.encoder.encode(&texture, timestamp, force_key)?;
                 if accepted {
                     stats.submitted += 1;
                     stats.busy += began.elapsed();
@@ -492,9 +552,9 @@ impl Share {
                 }
                 outputs
             } else {
-                self.pipeline.encoder.poll()?
+                pipeline.encoder.poll()?
             };
-            let (width, height) = self.pipeline.out_size;
+            let (width, height) = pipeline.out_size;
             for output in outputs {
                 stats.encoded += 1;
                 let sent = Instant::now();
@@ -530,9 +590,12 @@ impl Share {
         if !self.ui_visible.load(Ordering::Relaxed) || !self.preview_gate.take(now) {
             return;
         }
-        let (width, height) = self.pipeline.preview.size();
+        let Some(pipeline) = self.pipeline.as_mut() else {
+            return;
+        };
+        let (width, height) = pipeline.preview.size();
         let mut result = Ok(());
-        let (preview, context) = (&mut self.pipeline.preview, &self.context);
+        let (preview, context) = (&mut pipeline.preview, &self.context);
         self.preview
             .push_with(width, height, |dst| result = preview.read(context, dst));
         if let Err(err) = result {
@@ -544,6 +607,13 @@ impl Share {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn high_res_timer_sleeps_short_duration() {
+        let timer = HighResTimer::new();
+        timer.sleep(Duration::ZERO);
+        timer.sleep(Duration::from_millis(1));
+    }
 
     #[test]
     fn output_size_fits_the_preset_and_stays_even() {

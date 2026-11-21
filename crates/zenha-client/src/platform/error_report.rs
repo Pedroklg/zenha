@@ -161,9 +161,33 @@ impl Visit for EventText {
     }
 }
 
+struct HttpSender {
+    runtime: tokio::runtime::Runtime,
+    client: reqwest::Client,
+}
+
+impl HttpSender {
+    fn new() -> Option<Self> {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .ok()?;
+        zenha_core::install_crypto_provider();
+        let client = {
+            let _guard = runtime.enter();
+            reqwest::Client::builder()
+                .timeout(REQUEST_TIMEOUT)
+                .build()
+                .ok()?
+        };
+        Some(Self { runtime, client })
+    }
+}
+
 fn run(rx: &Receiver<ReportEvent>, previous: &PreviousRun) {
     thread::sleep(STARTUP_DELAY);
     let mut pending = previous_run_events(previous);
+    let mut sender: Option<HttpSender> = None;
     loop {
         if pending.is_empty() {
             match rx.recv() {
@@ -173,7 +197,7 @@ fn run(rx: &Receiver<ReportEvent>, previous: &PreviousRun) {
             thread::sleep(BATCH_DELAY);
         }
         pending.extend(rx.try_iter());
-        send(merge(std::mem::take(&mut pending)));
+        send(merge(std::mem::take(&mut pending)), &mut sender);
         thread::sleep(MIN_INTERVAL);
     }
 }
@@ -194,7 +218,7 @@ fn merge(events: Vec<ReportEvent>) -> Vec<ReportEvent> {
     merged
 }
 
-fn send(events: Vec<ReportEvent>) {
+fn send(events: Vec<ReportEvent>, sender: &mut Option<HttpSender>) {
     if events.is_empty() {
         return;
     }
@@ -220,17 +244,14 @@ fn send(events: Vec<ReportEvent>) {
         os: truncate(&os_version(), MAX_REPORT_META_LEN),
         events,
     };
-    let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-    else {
+    if sender.is_none() {
+        *sender = HttpSender::new();
+    }
+    let Some(http) = sender.as_ref() else {
         return;
     };
-    zenha_core::install_crypto_provider();
-    let result = runtime.block_on(async {
-        reqwest::Client::builder()
-            .timeout(REQUEST_TIMEOUT)
-            .build()?
+    let result = http.runtime.block_on(async {
+        http.client
             .post(format!("{server}/client-reports"))
             .header("x-invite-code", invite)
             .json(&report)

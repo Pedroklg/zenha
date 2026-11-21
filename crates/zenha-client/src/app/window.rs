@@ -2,7 +2,7 @@
 
 use eframe::egui;
 
-use crate::state::Screen;
+use crate::state::{LocalShare, Screen};
 use crate::ui_model::UiCommand;
 
 use super::App;
@@ -21,10 +21,27 @@ impl App {
         }
     }
 
-    pub(super) fn reset_renderers_outside_room(&mut self) {
-        if !matches!(self.state.screen, Screen::InRoom(_)) {
-            self.renderer.reset();
-            self.preview_renderer.reset();
+    pub(super) fn sync_renderers(&mut self) {
+        match &self.state.screen {
+            Screen::InRoom(room) => {
+                if room.share.watching.is_none() {
+                    self.renderer.reset();
+                }
+                if room.share.local != LocalShare::Active || room.share.preview_collapsed {
+                    self.preview_renderer.reset();
+                }
+            }
+            _ => {
+                self.renderer.reset();
+                self.preview_renderer.reset();
+            }
+        }
+    }
+
+    pub(super) fn prune_avatars(&mut self, ctx: &egui::Context) {
+        if matches!(self.state.screen, Screen::Onboarding) {
+            let local_id = self.state.client_id();
+            self.avatars.clear_unused(ctx, |id| id == local_id);
         }
     }
 

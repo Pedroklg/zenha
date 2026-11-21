@@ -1,6 +1,7 @@
 //! Reception of frames from the watched remote stream.
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Instant;
 
@@ -65,6 +66,18 @@ impl Watch {
             .is_some_and(|state| state.identity == identity)
     }
 
+    pub(crate) fn watched_identity(&self) -> Option<String> {
+        self.lock().as_ref().map(|state| state.identity.clone())
+    }
+
+    pub(crate) fn pause_stream(&self) {
+        if let Some(state) = self.lock().as_mut()
+            && let Some(task) = state.task.take()
+        {
+            task.abort();
+        }
+    }
+
     pub(crate) fn clear_if(&self, identity: &str) -> bool {
         let matches = self
             .lock()
@@ -88,7 +101,7 @@ impl Watch {
         identity: &str,
         track: RtcVideoTrack,
         events: UnboundedSender<BackendEvent>,
-        ui_visible: Arc<std::sync::atomic::AtomicBool>,
+        ui_visible: Arc<AtomicBool>,
     ) {
         let mut guard = self.lock();
         let Some(state) = guard.as_mut().filter(|state| state.identity == identity) else {
@@ -112,13 +125,13 @@ async fn read_frames(
     slot: FrameSlot,
     identity: String,
     events: UnboundedSender<BackendEvent>,
-    ui_visible: Arc<std::sync::atomic::AtomicBool>,
+    ui_visible: Arc<AtomicBool>,
 ) {
     let mut stream = NativeVideoStream::new(track);
     let mut meter = ShareMeter::new(Instant::now());
     let mut size = (0u32, 0u32);
     while let Some(frame) = stream.next().await {
-        if !ui_visible.load(std::sync::atomic::Ordering::Relaxed) {
+        if !ui_visible.load(Ordering::Relaxed) {
             continue;
         }
         let started = Instant::now();
@@ -159,8 +172,10 @@ async fn read_frames(
             );
         }
     }
-    let _ = events.send(BackendEvent::WatchEnded {
-        identity,
-        reason: None,
-    });
+    if ui_visible.load(Ordering::Acquire) {
+        let _ = events.send(BackendEvent::WatchEnded {
+            identity,
+            reason: None,
+        });
+    }
 }

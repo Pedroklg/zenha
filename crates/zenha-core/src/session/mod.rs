@@ -43,6 +43,8 @@ struct Session {
     phase: Phase,
     admin: Option<AdminSession>,
     rooms_refresh_sleep: Option<Pin<Box<Sleep>>>,
+    rooms_refresh_in_flight: bool,
+    rooms_refresh_queued: bool,
     muted: bool,
     deafened: bool,
     sharing: bool,
@@ -78,6 +80,8 @@ pub(crate) async fn run(
         phase: Phase::Idle,
         admin: None,
         rooms_refresh_sleep: None,
+        rooms_refresh_in_flight: false,
+        rooms_refresh_queued: false,
         muted: false,
         deafened: false,
         sharing: false,
@@ -104,7 +108,7 @@ pub(crate) async fn run(
             Some(rooms) = rooms_rx.recv() => session.on_rooms(rooms),
             _ = wait_optional(&mut session.rooms_refresh_sleep) => {
                 session.rooms_refresh_sleep = None;
-                session.refresh_rooms();
+                session.refresh_rooms_or_queue();
             }
         }
     }

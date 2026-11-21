@@ -9,6 +9,7 @@ use livekit::prelude::{
     PlatformAudio, RemoteParticipant, RemoteTrack, RemoteTrackPublication, Room, RoomError,
     RoomOptions, TrackKind, TrackSource,
 };
+use livekit::webrtc::video_track::RtcVideoTrack;
 use tokio::sync::mpsc::{self, UnboundedSender};
 use tokio::task::JoinHandle;
 use tokio::time::timeout;
@@ -335,13 +336,14 @@ impl LiveKitBackend {
         if let Some(previous) = previous.filter(|previous| previous != identity) {
             set_screen_share_subscribed(&room, &previous, false);
         }
-        publication.set_subscribed(true);
+        let visible = self.flags.ui_visible.0.load(Ordering::SeqCst);
+        publication.set_subscribed(visible);
         for sound in participant.track_publications().into_values() {
             if is_share_audio(&sound) {
                 sound.set_subscribed(true);
             }
         }
-        if let Some(RemoteTrack::Video(video)) = publication.track() {
+        if visible && let Some(RemoteTrack::Video(video)) = publication.track() {
             self.watch.start_stream(
                 identity,
                 video.rtc_track(),
@@ -453,6 +455,24 @@ pub(super) fn set_screen_share_subscribed(room: &Room, identity: &str, subscribe
             publication.set_subscribed(subscribed);
         }
     }
+}
+
+pub(super) fn set_screen_share_video_subscribed(
+    room: &Room,
+    identity: &str,
+    subscribed: bool,
+) -> Option<RtcVideoTrack> {
+    let participant = find_participant(room, identity)?;
+    for publication in participant.track_publications().into_values() {
+        if is_screen_share(&publication) {
+            publication.set_subscribed(subscribed);
+            if subscribed && let Some(RemoteTrack::Video(video)) = publication.track() {
+                return Some(video.rtc_track());
+            }
+            return None;
+        }
+    }
+    None
 }
 
 /// The room is joined with auto-subscribe off: audio is subscribed explicitly here and

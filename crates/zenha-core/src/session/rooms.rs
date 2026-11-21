@@ -68,7 +68,7 @@ impl Session {
                     room: unlocked.room,
                     key: RoomKey(unlocked.room_key),
                 });
-                self.refresh_rooms();
+                self.refresh_rooms_or_queue();
             }
             Err(err) => self.emit(Event::CommandFailed(err)),
         }
@@ -107,7 +107,11 @@ impl Session {
         }
     }
 
-    pub(super) fn refresh_rooms(&self) {
+    pub(super) fn refresh_rooms(&mut self) {
+        if self.rooms_refresh_in_flight {
+            return;
+        }
+        self.rooms_refresh_in_flight = true;
         let tokens = self.tokens.clone();
         let rooms_tx = self.rooms_tx.clone();
         let invite_code = self.config.invite_code.clone();
@@ -117,7 +121,16 @@ impl Session {
         });
     }
 
+    pub(super) fn refresh_rooms_or_queue(&mut self) {
+        if self.rooms_refresh_in_flight {
+            self.rooms_refresh_queued = true;
+            return;
+        }
+        self.refresh_rooms();
+    }
+
     pub(super) fn on_rooms(&mut self, result: Result<Vec<RoomSummary>, SessionError>) {
+        self.rooms_refresh_in_flight = false;
         match result {
             Ok(rooms) => {
                 self.room_parents = rooms
@@ -127,6 +140,9 @@ impl Session {
                 self.emit(Event::RoomsUpdated(rooms));
             }
             Err(err) => self.emit(Event::CommandFailed(err)),
+        }
+        if std::mem::take(&mut self.rooms_refresh_queued) {
+            self.refresh_rooms();
         }
     }
 
@@ -381,5 +397,289 @@ mod tests {
             Some("k")
         );
         assert_eq!(room_key_for(&keys, None, "filha"), None);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn concurrent_refresh_rooms_deduplicates_and_queues_change_follow_up() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        use async_trait::async_trait;
+        use tokio::sync::Notify;
+        use zenha_protocol::{
+            AdminLoginRequest, AdminLoginResponse, AdminRoom, AdminWebhook, AvatarUploadResponse,
+            ChatHistoryResponse, ChatMessage, CreateRoomRequest, CreateWebhookRequest,
+            CreatedWebhook, MoveParticipantRequest, SaveChatRequest, TokenRequest, TokenResponse,
+            UnlockRoomRequest, UnlockRoomResponse, UpdateInviteRequest, UpdateRoomRequest,
+        };
+
+        use crate::net::token::TokenClient;
+
+        struct GatedRoomsClient {
+            inner: FakeTokenClient,
+            started: Arc<Notify>,
+            release: Arc<Notify>,
+            in_flight_calls: Arc<AtomicUsize>,
+        }
+
+        #[async_trait]
+        impl TokenClient for GatedRoomsClient {
+            async fn fetch_token(
+                &self,
+                request: TokenRequest,
+            ) -> Result<TokenResponse, SessionError> {
+                self.inner.fetch_token(request).await
+            }
+
+            async fn fetch_rooms(
+                &self,
+                invite_code: &str,
+                room_keys: &BTreeMap<String, String>,
+            ) -> Result<Vec<RoomSummary>, SessionError> {
+                self.in_flight_calls.fetch_add(1, Ordering::SeqCst);
+                self.started.notify_one();
+                self.release.notified().await;
+                self.inner.fetch_rooms(invite_code, room_keys).await
+            }
+
+            async fn unlock_room(
+                &self,
+                room: &str,
+                request: UnlockRoomRequest,
+            ) -> Result<UnlockRoomResponse, SessionError> {
+                self.inner.unlock_room(room, request).await
+            }
+
+            async fn save_chat(
+                &self,
+                jwt: &str,
+                room: &str,
+                request: SaveChatRequest,
+            ) -> Result<ChatMessage, SessionError> {
+                self.inner.save_chat(jwt, room, request).await
+            }
+
+            async fn fetch_chat_history(
+                &self,
+                jwt: &str,
+                room: &str,
+                before: Option<&str>,
+            ) -> Result<ChatHistoryResponse, SessionError> {
+                self.inner.fetch_chat_history(jwt, room, before).await
+            }
+
+            async fn delete_chat(
+                &self,
+                jwt: &str,
+                room: &str,
+                id: &str,
+            ) -> Result<(), SessionError> {
+                self.inner.delete_chat(jwt, room, id).await
+            }
+
+            async fn admin_login(
+                &self,
+                request: AdminLoginRequest,
+            ) -> Result<AdminLoginResponse, SessionError> {
+                self.inner.admin_login(request).await
+            }
+
+            async fn admin_create_room(
+                &self,
+                jwt: &str,
+                request: CreateRoomRequest,
+            ) -> Result<AdminRoom, SessionError> {
+                self.inner.admin_create_room(jwt, request).await
+            }
+
+            async fn admin_update_room(
+                &self,
+                jwt: &str,
+                id: &str,
+                request: UpdateRoomRequest,
+            ) -> Result<AdminRoom, SessionError> {
+                self.inner.admin_update_room(jwt, id, request).await
+            }
+
+            async fn admin_delete_room(&self, jwt: &str, id: &str) -> Result<(), SessionError> {
+                self.inner.admin_delete_room(jwt, id).await
+            }
+
+            async fn admin_mute_participant(
+                &self,
+                jwt: &str,
+                room: &str,
+                identity: &str,
+            ) -> Result<(), SessionError> {
+                self.inner.admin_mute_participant(jwt, room, identity).await
+            }
+
+            async fn admin_stop_share_participant(
+                &self,
+                jwt: &str,
+                room: &str,
+                identity: &str,
+            ) -> Result<(), SessionError> {
+                self.inner
+                    .admin_stop_share_participant(jwt, room, identity)
+                    .await
+            }
+
+            async fn admin_kick_participant(
+                &self,
+                jwt: &str,
+                room: &str,
+                identity: &str,
+            ) -> Result<(), SessionError> {
+                self.inner.admin_kick_participant(jwt, room, identity).await
+            }
+
+            async fn admin_move_participant(
+                &self,
+                jwt: &str,
+                room: &str,
+                identity: &str,
+                request: MoveParticipantRequest,
+            ) -> Result<(), SessionError> {
+                self.inner
+                    .admin_move_participant(jwt, room, identity, request)
+                    .await
+            }
+
+            async fn admin_delete_chat(
+                &self,
+                jwt: &str,
+                room: &str,
+                id: &str,
+            ) -> Result<(), SessionError> {
+                self.inner.admin_delete_chat(jwt, room, id).await
+            }
+
+            async fn admin_rotate_invite(
+                &self,
+                jwt: &str,
+                request: UpdateInviteRequest,
+            ) -> Result<(), SessionError> {
+                self.inner.admin_rotate_invite(jwt, request).await
+            }
+
+            async fn admin_list_webhooks(
+                &self,
+                jwt: &str,
+            ) -> Result<Vec<AdminWebhook>, SessionError> {
+                self.inner.admin_list_webhooks(jwt).await
+            }
+
+            async fn admin_create_webhook(
+                &self,
+                jwt: &str,
+                request: &CreateWebhookRequest,
+            ) -> Result<CreatedWebhook, SessionError> {
+                self.inner.admin_create_webhook(jwt, request).await
+            }
+
+            async fn admin_delete_webhook(&self, jwt: &str, id: &str) -> Result<(), SessionError> {
+                self.inner.admin_delete_webhook(jwt, id).await
+            }
+
+            async fn upload_avatar(
+                &self,
+                jwt: &str,
+                bytes: Vec<u8>,
+            ) -> Result<AvatarUploadResponse, SessionError> {
+                self.inner.upload_avatar(jwt, bytes).await
+            }
+
+            async fn delete_avatar(&self, jwt: &str) -> Result<(), SessionError> {
+                self.inner.delete_avatar(jwt).await
+            }
+
+            async fn download_avatar(
+                &self,
+                jwt: &str,
+                identity: &str,
+                version: Option<&str>,
+            ) -> Result<Option<Vec<u8>>, SessionError> {
+                self.inner.download_avatar(jwt, identity, version).await
+            }
+        }
+
+        let backend = FakeBackend::new();
+        let inner = FakeTokenClient::new();
+        let started = Arc::new(Notify::new());
+        let release = Arc::new(Notify::new());
+        let in_flight_calls = Arc::new(AtomicUsize::new(0));
+        let tokens = Arc::new(GatedRoomsClient {
+            inner: inner.clone(),
+            started: Arc::clone(&started),
+            release: Arc::clone(&release),
+            in_flight_calls: Arc::clone(&in_flight_calls),
+        });
+        let (command_tx, command_rx) = mpsc::unbounded_channel();
+        let (event_tx, mut event_rx) = mpsc::unbounded_channel();
+        tokio::spawn(run(
+            config(),
+            Arc::new(backend.clone()),
+            tokens,
+            command_rx,
+            EventSink::new(event_tx),
+            ReconnectPolicy::default(),
+        ));
+
+        // Join a room so we can also test `ROOMS_CHANGED` arriving mid-flight.
+        command_tx
+            .send(Command::Join {
+                room: "geral".to_owned(),
+            })
+            .unwrap();
+        assert_eq!(event_rx.recv().await.unwrap(), Event::Connecting);
+        assert!(matches!(
+            event_rx.recv().await.unwrap(),
+            Event::Joined { .. }
+        ));
+        assert!(matches!(
+            event_rx.recv().await.unwrap(),
+            Event::ChatHistory { before: None, .. }
+        ));
+
+        // Fire several RefreshRooms commands while the first call is blocked.
+        command_tx.send(Command::RefreshRooms).unwrap();
+        started.notified().await;
+        command_tx.send(Command::RefreshRooms).unwrap();
+        command_tx.send(Command::RefreshRooms).unwrap();
+        tokio::task::yield_now().await;
+        assert_eq!(in_flight_calls.load(Ordering::SeqCst), 1);
+
+        // Releasing the first call yields exactly one RoomsUpdated and no stacked requests.
+        release.notify_one();
+        assert!(matches!(
+            event_rx.recv().await.unwrap(),
+            Event::RoomsUpdated(_)
+        ));
+        tokio::task::yield_now().await;
+        assert_eq!(inner.rooms_calls(), 1);
+        assert_eq!(in_flight_calls.load(Ordering::SeqCst), 1);
+
+        // Start another refresh, and let a debounced ROOMS_CHANGED fire while it is in flight.
+        command_tx.send(Command::RefreshRooms).unwrap();
+        started.notified().await;
+        assert!(backend.emit_server_data(ROOMS_CHANGED_TOPIC, b"{}".to_vec()));
+        tokio::time::advance(ROOMS_CHANGED_DEBOUNCE).await;
+        tokio::task::yield_now().await;
+        assert_eq!(in_flight_calls.load(Ordering::SeqCst), 2);
+
+        // Completing the in-flight refresh automatically triggers one follow-up refresh.
+        release.notify_one();
+        assert!(matches!(
+            event_rx.recv().await.unwrap(),
+            Event::RoomsUpdated(_)
+        ));
+        started.notified().await;
+        assert_eq!(in_flight_calls.load(Ordering::SeqCst), 3);
+        release.notify_one();
+        assert!(matches!(
+            event_rx.recv().await.unwrap(),
+            Event::RoomsUpdated(_)
+        ));
+        assert_eq!(inner.rooms_calls(), 3);
     }
 }

@@ -117,6 +117,7 @@ fn run(launch: cli::LaunchArgs) -> anyhow::Result<()> {
                 &platform::clipboard_image::paste_temp_dir(),
             );
             updater::cleanup_update_dir(&updater::update_temp_dir());
+            zenha_core::cleanup_orphan_received_dirs();
         })
     {
         tracing::debug!(%err, "could not start startup cleanup thread");

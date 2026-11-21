@@ -337,11 +337,18 @@ fn spawn_avatar_download(
                     Ok(None)
                 } else {
                     let write_path = cache_path.clone();
-                    tokio::task::spawn_blocking(move || write_cached_png(&write_path, &bytes))
-                        .await
-                        .map_err(|err| SessionError::Internal(err.to_string()))
-                        .and_then(|res| res)
-                        .map(|()| Some(cache_path))
+                    let prune_dir = cache_dir.clone();
+                    let prune_id = identity.clone();
+                    let prune_ver = version.clone();
+                    tokio::task::spawn_blocking(move || {
+                        write_cached_png(&write_path, &bytes)?;
+                        prune_old_avatars(&prune_dir, &prune_id, &prune_ver);
+                        Ok(())
+                    })
+                    .await
+                    .map_err(|err| SessionError::Internal(err.to_string()))
+                    .and_then(|res| res)
+                    .map(|()| Some(cache_path))
                 }
             }
             Ok(None) => Ok(None),
@@ -387,6 +394,28 @@ async fn read_avatar_file(path: PathBuf) -> Result<Vec<u8>, SessionError> {
 
 fn is_non_empty_file(path: &Path) -> bool {
     std::fs::metadata(path).is_ok_and(|meta| meta.is_file() && meta.len() > 0)
+}
+
+fn prune_old_avatars(cache_dir: &Path, identity: &str, current_version: &str) {
+    let prefix = format!("{identity}-");
+    let keep = format!("{identity}-{current_version}.png");
+    let Ok(entries) = std::fs::read_dir(cache_dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        if name == keep || !name.starts_with(&prefix) || !name.ends_with(".png") {
+            continue;
+        }
+        if let Err(err) = std::fs::remove_file(entry.path())
+            && err.kind() != std::io::ErrorKind::NotFound
+        {
+            tracing::debug!(%err, file = %name, "could not prune stale cached avatar");
+        }
+    }
 }
 
 fn write_cached_png(target: &Path, bytes: &[u8]) -> Result<(), SessionError> {
@@ -682,5 +711,72 @@ mod tests {
             h.backend.calls().last(),
             Some(&BackendCall::SetAvatarAttribute(None))
         );
+    }
+
+    #[tokio::test]
+    async fn downloading_new_avatar_version_prunes_older_versions_for_same_identity_only() {
+        let temp = TempDir::new("prune");
+        let cache = temp.path.join("avatars");
+        let mut h = AvatarHarness::start(cache.clone(), None);
+        h.tokens
+            .set_avatar_bytes("client-ana", "1111111111111111", vec![1, 2, 3]);
+        h.tokens
+            .set_avatar_bytes("client-ana", "2222222222222222", vec![4, 5, 6]);
+        h.tokens
+            .set_avatar_bytes("client-bia", "aaaaaaaaaaaaaaaa", vec![7, 8, 9]);
+        h.join("geral").await;
+
+        h.backend.emit(BackendEvent::AvatarChanged {
+            identity: "client-ana".to_owned(),
+            version: Some("1111111111111111".to_owned()),
+        });
+        assert!(matches!(
+            h.events.recv().await.unwrap(),
+            Event::ParticipantAvatarChanged { .. }
+        ));
+        assert!(matches!(
+            h.events.recv().await.unwrap(),
+            Event::AvatarCached { .. }
+        ));
+
+        h.backend.emit(BackendEvent::AvatarChanged {
+            identity: "client-bia".to_owned(),
+            version: Some("aaaaaaaaaaaaaaaa".to_owned()),
+        });
+        assert!(matches!(
+            h.events.recv().await.unwrap(),
+            Event::ParticipantAvatarChanged { .. }
+        ));
+        assert!(matches!(
+            h.events.recv().await.unwrap(),
+            Event::AvatarCached { .. }
+        ));
+
+        let ana_old = cache.join("client-ana-1111111111111111.png");
+        let ana_new = cache.join("client-ana-2222222222222222.png");
+        let bia_file = cache.join("client-bia-aaaaaaaaaaaaaaaa.png");
+        assert!(ana_old.exists());
+        assert!(bia_file.exists());
+
+        h.backend.emit(BackendEvent::AvatarChanged {
+            identity: "client-ana".to_owned(),
+            version: Some("2222222222222222".to_owned()),
+        });
+        assert!(matches!(
+            h.events.recv().await.unwrap(),
+            Event::ParticipantAvatarChanged { .. }
+        ));
+        assert_eq!(
+            h.events.recv().await.unwrap(),
+            Event::AvatarCached {
+                identity: "client-ana".to_owned(),
+                version: "2222222222222222".to_owned(),
+                path: ana_new.clone(),
+            }
+        );
+
+        assert!(!ana_old.exists());
+        assert_eq!(std::fs::read(&ana_new).unwrap(), vec![4, 5, 6]);
+        assert_eq!(std::fs::read(&bia_file).unwrap(), vec![7, 8, 9]);
     }
 }
