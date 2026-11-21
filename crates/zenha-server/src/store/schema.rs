@@ -52,7 +52,18 @@ pub(super) fn init_schema(conn: &Connection) -> Result<(), ChatStoreError> {
                 created_at_unix_ms INTEGER NOT NULL
             );
             CREATE INDEX IF NOT EXISTS idx_webhook_posts_room_order
-                ON webhook_posts (room, created_at_unix_ms DESC);",
+                ON webhook_posts (room, created_at_unix_ms DESC);
+            CREATE TABLE IF NOT EXISTS client_reports (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                client_id TEXT NOT NULL,
+                display_name TEXT NOT NULL,
+                version TEXT NOT NULL,
+                os TEXT NOT NULL,
+                received_at_unix_ms INTEGER NOT NULL,
+                events_json TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_client_reports_client
+                ON client_reports (client_id, id DESC);",
     )?;
     migrate_rooms(conn)?;
     Ok(())

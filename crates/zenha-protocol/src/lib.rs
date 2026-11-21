@@ -6,8 +6,10 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
+mod report;
 mod webhook;
 
+pub use report::*;
 pub use webhook::*;
 
 pub const MAX_DISPLAY_NAME_LEN: usize = 32;

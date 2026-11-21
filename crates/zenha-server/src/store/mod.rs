@@ -2,6 +2,7 @@
 
 mod avatars;
 mod messages;
+mod reports;
 mod rooms;
 mod schema;
 #[cfg(test)]

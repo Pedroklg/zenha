@@ -5,6 +5,7 @@ mod avatar;
 mod chat;
 mod hooks;
 mod rate_limit;
+mod reports;
 mod rooms;
 #[cfg(test)]
 mod test_support;
@@ -23,7 +24,8 @@ use axum::routing::{delete, get, patch, post, put};
 use livekit_api::access_token::{Claims, TokenVerifier};
 use subtle::ConstantTimeEq;
 use zenha_protocol::{
-    ErrorResponse, MAX_AVATAR_UPLOAD_BYTES, MAX_WEBHOOK_BODY_BYTES, validate_room_name,
+    ErrorResponse, MAX_AVATAR_UPLOAD_BYTES, MAX_CLIENT_REPORT_BODY_BYTES, MAX_WEBHOOK_BODY_BYTES,
+    validate_room_name,
 };
 
 use crate::config::Config;
@@ -56,6 +58,11 @@ pub fn router(state: AppState) -> Router {
         .route("/token", post(token::issue_token))
         .route("/rooms", get(rooms::list_rooms))
         .route("/rooms/{room}/unlock", post(rooms::unlock_room))
+        .route(
+            "/client-reports",
+            post(reports::post_client_report)
+                .layer(DefaultBodyLimit::max(MAX_CLIENT_REPORT_BODY_BYTES)),
+        )
         .route(
             "/avatar",
             put(avatar::put_avatar)
