@@ -55,6 +55,14 @@ pub fn reveal_file(path: &std::path::Path) {
     }
 }
 
+/// Opens a non-web link (like `steam://`) with the app registered for its scheme.
+#[cfg(windows)]
+pub fn open_with_shell(url: &str) {
+    if let Err(err) = std::process::Command::new("explorer").arg(url).spawn() {
+        tracing::debug!(%err, "could not open link");
+    }
+}
+
 #[cfg(not(windows))]
 pub fn show_error(_text: &str) {}
 
@@ -63,6 +71,9 @@ pub fn show_info(_text: &str) {}
 
 #[cfg(not(windows))]
 pub fn reveal_file(_path: &std::path::Path) {}
+
+#[cfg(not(windows))]
+pub fn open_with_shell(_url: &str) {}
 
 #[cfg(not(windows))]
 pub fn pick_file() -> Option<PathBuf> {
