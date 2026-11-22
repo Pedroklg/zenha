@@ -4,7 +4,25 @@
 
 use std::thread;
 
-use wasapi::{DeviceEnumerator, Direction, deinitialize, initialize_mta};
+use wasapi::{Device, DeviceEnumerator, Direction, WasapiError, deinitialize, initialize_mta};
+
+/// Opens the chosen device, or the Windows default when it is `None` or no longer exists
+/// (a saved device that was removed would otherwise fail on every retry).
+pub(crate) fn device_or_default(
+    enumerator: &DeviceEnumerator,
+    device_id: Option<&str>,
+    direction: Direction,
+) -> Result<Device, WasapiError> {
+    if let Some(id) = device_id {
+        match enumerator.get_device(id) {
+            Ok(device) => return Ok(device),
+            Err(err) => {
+                tracing::warn!(%err, device_id = id, "saved audio device not found, using the windows default");
+            }
+        }
+    }
+    enumerator.get_default_device(direction)
+}
 
 pub(crate) fn default_input_id() -> Option<String> {
     default_id(false)
