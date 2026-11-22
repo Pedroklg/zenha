@@ -89,6 +89,53 @@ pub(super) fn audio_taps(log: &[String], identity: &str, kind: &str) -> Vec<(f64
         .collect()
 }
 
+/// The listener's microphone is replaced by its own sound at half level, 60 ms late, like
+/// headphones leaking into the microphone; the canceller must remove almost all of it.
+/// The tone is 440 Hz because a pure 1290 Hz tone defeats the canceller even offline.
+pub(super) fn echo_cancel(ctx: &mut Ctx<'_>) -> anyhow::Result<()> {
+    const ECHO_TONE_HZ: f64 = 440.0;
+    const LISTEN_FOR: Duration = Duration::from_secs(14);
+    const MIN_REDUCTION_DB: f64 = 20.0;
+    let room = ctx.room();
+    let invite = ctx.setup.invite.clone();
+    let tone = ctx.spawn(TONE_BOT, Some(ECHO_TONE_HZ), false, &invite, None)?;
+    ctx.join(&tone, &room)?;
+    let listener = ctx.spawn_listener_with(LISTENER_BOT, Some(0.5))?;
+    ctx.join(&listener, &room)?;
+    std::thread::sleep(LISTEN_FOR);
+    let reports: Vec<(f64, f64)> = listener
+        .log_tail(usize::MAX)
+        .iter()
+        .filter(|line| line.contains("echo test"))
+        .filter_map(|line| {
+            let field = |name: &str| -> Option<f64> {
+                line.split_whitespace()
+                    .find_map(|part| part.strip_prefix(name))?
+                    .trim_matches('"')
+                    .parse()
+                    .ok()
+            };
+            Some((field("before_rms=")?, field("reduction_db=")?))
+        })
+        .collect();
+    let Some(recent) = reports.len().checked_sub(3).map(|start| &reports[start..]) else {
+        bail!("the listener logged only {} echo reports", reports.len());
+    };
+    for (index, (before, reduction)) in recent.iter().enumerate() {
+        ctx.rec
+            .number(&format!("echo_{index}_before_rms"), *before, "");
+        ctx.rec
+            .number(&format!("echo_{index}_reduction"), *reduction, "dB");
+        if *before < 20.0 {
+            bail!("the simulated echo is too quiet to measure (rms {before:.1})");
+        }
+        if *reduction < MIN_REDUCTION_DB {
+            bail!("the echo was reduced by only {reduction:.1} dB");
+        }
+    }
+    Ok(())
+}
+
 pub(super) fn enhanced_mic(ctx: &mut Ctx<'_>) -> anyhow::Result<()> {
     const SPEAKER_BOT: &str = "speaker";
     let room = ctx.room();

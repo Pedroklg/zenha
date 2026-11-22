@@ -154,6 +154,89 @@ fn build_denoiser() -> Box<dyn Denoiser> {
     Box::new(RnnoiseDenoiser::new())
 }
 
+/// `ZENHA_ECHO_TEST=gain` (diagnostic) turns echo cancellation on and replaces the microphone with
+/// this app's own sound times `gain`, 60 ms late, as headphones leaking into the microphone would.
+fn echo_test_gain() -> Option<f32> {
+    std::env::var("ZENHA_ECHO_TEST").ok()?.trim().parse().ok()
+}
+
+struct EchoTest {
+    leaked: Arc<StdMutex<std::collections::VecDeque<i16>>>,
+    _capture: ShareAudioCapture,
+    before: f64,
+    after: f64,
+    frames: u32,
+}
+
+impl EchoTest {
+    const DELAY_SAMPLES: usize = 60 * CAPTURE_SAMPLE_RATE as usize / 1000;
+    const REPORT_FRAMES: u32 = 200;
+
+    fn start(gain: f32) -> Self {
+        let leaked = Arc::new(StdMutex::new(std::collections::VecDeque::from(vec![
+            0i16;
+            Self::DELAY_SAMPLES
+        ])));
+        let sink = leaked.clone();
+        let capture =
+            ShareAudioCapture::start(AudioScope::Process(std::process::id()), move |frame| {
+                let mut queue = sink.lock().unwrap_or_else(PoisonError::into_inner);
+                for pair in frame.chunks(SHARE_AUDIO_CHANNELS as usize) {
+                    let mono = pair.iter().map(|&s| f32::from(s)).sum::<f32>() / pair.len() as f32;
+                    queue.push_back((mono * gain) as i16);
+                }
+                let excess = queue.len().saturating_sub(Self::DELAY_SAMPLES * 4);
+                queue.drain(..excess);
+            });
+        tracing::info!(
+            gain,
+            "echo test: microphone replaced by the app's own sound"
+        );
+        Self {
+            leaked,
+            _capture: capture,
+            before: 0.0,
+            after: 0.0,
+            frames: 0,
+        }
+    }
+
+    fn replace_microphone(&mut self, frame: &mut [i16]) {
+        let mut queue = self.leaked.lock().unwrap_or_else(PoisonError::into_inner);
+        for sample in frame.iter_mut() {
+            *sample = queue.pop_front().unwrap_or(0);
+        }
+        drop(queue);
+        self.before += energy(frame);
+    }
+
+    fn measure(&mut self, frame: &[i16]) {
+        self.after += energy(frame);
+        self.frames += 1;
+        if self.frames == Self::REPORT_FRAMES {
+            let samples = f64::from(self.frames) * frame.len() as f64;
+            let before = (self.before / samples).sqrt();
+            let after = (self.after / samples).sqrt();
+            tracing::info!(
+                before_rms = format!("{before:.1}"),
+                after_rms = format!("{after:.1}"),
+                reduction_db = format!("{:.1}", 20.0 * (before / after.max(1.0)).log10()),
+                queued = self
+                    .leaked
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .len(),
+                "echo test"
+            );
+            (self.before, self.after, self.frames) = (0.0, 0.0, 0);
+        }
+    }
+}
+
+fn energy(frame: &[i16]) -> f64 {
+    frame.iter().map(|&s| f64::from(s) * f64::from(s)).sum()
+}
+
 /// Removes from the own capture what this app plays (voices, stream sound, cues),
 /// taken from the loopback of its own process as the echo reference.
 struct EchoCanceller {
@@ -211,7 +294,8 @@ async fn publish_enhanced(
 ) -> Option<EnhancedMic> {
     let events = speaker.events.clone();
     let noise_gate = speaker.flags.noise_gate.clone();
-    let echo = speaker.flags.echo_cancellation.load(Ordering::SeqCst);
+    let echo_test = echo_test_gain();
+    let echo = echo_test.is_some() || speaker.flags.echo_cancellation.load(Ordering::SeqCst);
     let source = NativeAudioSource::new(
         AudioSourceOptions::default(),
         CAPTURE_SAMPLE_RATE,
@@ -244,6 +328,7 @@ async fn publish_enhanced(
     let capture = MicCapture::start(input, move || {
         let mut apm = AudioProcessingModule::new(false, true, true, strong);
         let canceller = echo.then(EchoCanceller::start);
+        let mut leak = echo_test.map(EchoTest::start);
         let mut denoiser = build_denoiser();
         let mut gate = NoiseGate::new();
         let mut meter = LevelMeter::default();
@@ -252,8 +337,14 @@ async fn publish_enhanced(
                 speaker.report(false);
                 return;
             }
+            if let Some(leak) = &mut leak {
+                leak.replace_microphone(frame);
+            }
             if let Some(canceller) = &canceller {
                 canceller.process(frame);
+            }
+            if let Some(leak) = &mut leak {
+                leak.measure(frame);
             }
             let speech = denoiser.process(frame);
             if let Err(err) = apm.process_stream(frame, CAPTURE_SAMPLE_RATE as i32, 1) {
@@ -378,5 +469,53 @@ async fn tone_loop(source: NativeAudioSource, hz: f64, amplitude: f64) {
             tracing::warn!(%err, "test tone stopped");
             return;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use livekit::webrtc::native::apm::AudioProcessingModule;
+
+    const FRAME: usize = 480;
+
+    fn rms(samples: &[i16]) -> f64 {
+        let sum: f64 = samples.iter().map(|&s| f64::from(s) * f64::from(s)).sum();
+        (sum / samples.len().max(1) as f64).sqrt()
+    }
+
+    /// Simulated room: the microphone hears the played sound 40 ms later at a third of its level.
+    #[test]
+    fn echo_canceller_removes_a_delayed_copy_of_the_reference() {
+        let mut apm = AudioProcessingModule::new(true, false, false, false);
+        let mut seed = 12345u32;
+        let mut played: Vec<Vec<i16>> = Vec::new();
+        let (mut before, mut after) = (Vec::new(), Vec::new());
+        for index in 0usize..800 {
+            let mut reverse = vec![0i16; FRAME * 2];
+            for pair in reverse.chunks_mut(2) {
+                seed = seed.wrapping_mul(1_103_515_245).wrapping_add(12345);
+                let value = ((seed >> 16) as i16) / 4;
+                pair.fill(value);
+            }
+            played.push(reverse.iter().step_by(2).copied().collect());
+            apm.process_reverse_stream(&mut reverse, 48_000, 2).unwrap();
+            let mut capture: Vec<i16> = match index.checked_sub(4) {
+                Some(old) => played[old].iter().map(|&s| s / 3).collect(),
+                None => vec![0; FRAME],
+            };
+            if index >= 600 {
+                before.extend_from_slice(&capture);
+            }
+            apm.process_stream(&mut capture, 48_000, 1).unwrap();
+            if index >= 600 {
+                after.extend_from_slice(&capture);
+            }
+        }
+        let reduction_db = 20.0 * (rms(&before) / rms(&after).max(1.0)).log10();
+        println!("echo reduction {reduction_db:.1} dB");
+        assert!(
+            reduction_db > 20.0,
+            "echo only reduced by {reduction_db:.1} dB"
+        );
     }
 }

@@ -78,6 +78,8 @@ pub struct BotSpec {
     pub invite: String,
     pub tone: Option<(f64, f64)>,
     pub test_pattern: bool,
+    /// Replaces the enhanced microphone with the bot's own sound times this gain.
+    pub echo_test: Option<f32>,
 }
 
 #[derive(Default)]
@@ -131,6 +133,9 @@ impl BotProcess {
             command.arg("--allow-non-windows");
         }
         command.env("ZENHA_AUDIO_TAP", "1");
+        if let Some(gain) = spec.echo_test {
+            command.env("ZENHA_ECHO_TEST", gain.to_string());
+        }
         // A bot that shares its screen sends the sound of the side-tone process, nothing else.
         let share_audio = SHARE_AUDIO_PID.load(Ordering::SeqCst);
         if share_audio != 0 {

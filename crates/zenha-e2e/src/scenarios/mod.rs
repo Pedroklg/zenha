@@ -53,6 +53,12 @@ pub const ALL: &[ScenarioDef] = &[
         run: audio::enhanced_mic,
     },
     ScenarioDef {
+        name: "echo-cancel",
+        title: "Cancelamento de eco tira do microfone o som que o próprio app toca",
+        needs_media: true,
+        run: audio::echo_cancel,
+    },
+    ScenarioDef {
         name: "mute",
         title: "Mute de quem fala some e volta na saída de áudio",
         needs_media: true,
@@ -156,6 +162,7 @@ mod tests {
                 "playout-tone-first",
                 "playout-explicit-device",
                 "enhanced-mic",
+                "echo-cancel",
                 "mute",
                 "deafen",
                 "chat",
