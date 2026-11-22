@@ -42,7 +42,7 @@ const GATE_CONTROL_WIDTH: f32 = 240.0;
 const GATE_VALUE_WIDTH: f32 = 64.0;
 const GATE_MIN_DB: i8 = -70;
 const GATE_MAX_DB: i8 = -20;
-const GATE_DEFAULT_DB: i8 = -45;
+const GATE_DEFAULT_DB: i8 = crate::platform::settings::DEFAULT_NOISE_GATE_DB;
 const AVATAR_PREVIEW_SIZE: f32 = 48.0;
 const METER_FLOOR_DB: f32 = -70.0;
 
