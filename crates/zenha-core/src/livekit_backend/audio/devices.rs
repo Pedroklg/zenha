@@ -3,6 +3,8 @@
 use livekit::prelude::{
     AudioProcessingOptions, PlatformAudio, PlayoutDeviceInfo, RecordingDeviceInfo,
 };
+use livekit::rtc_engine::lk_runtime::LkRuntime;
+use livekit::webrtc::peer_connection_factory::native::PeerConnectionFactoryExt;
 
 use crate::api::{AudioDevice, NoiseSuppression, SessionError};
 use crate::backend::support::{audio_device, unique_devices};
@@ -137,6 +139,33 @@ pub(in crate::livekit_backend) fn apply_selection(audio: &PlatformAudio, selecti
         output_is_system_default = selection.output.is_none(),
         "audio devices chosen for this connection"
     );
+}
+
+/// Opens the engine's voice output right away, so a device that refuses its 16-bit format
+/// is caught before anyone speaks. `ZENHA_FORCE_OWN_VOICE_OUTPUT` simulates the refusal.
+pub(in crate::livekit_backend) fn engine_output_opens() -> bool {
+    if std::env::var_os("ZENHA_FORCE_OWN_VOICE_OUTPUT").is_some() {
+        return false;
+    }
+    let runtime = LkRuntime::instance();
+    let factory = runtime.pc_factory();
+    factory.set_adm_playout_enabled(true);
+    factory.playout_is_initialized() || factory.init_playout()
+}
+
+/// The engine keeps decoding voices on its silent clock, so the app can play them itself.
+pub(in crate::livekit_backend) fn stop_engine_output() {
+    tracing::warn!(
+        "the voice engine could not open the output device, playing voices through the app's own output"
+    );
+    let runtime = LkRuntime::instance();
+    let factory = runtime.pc_factory();
+    factory.set_adm_playout_enabled(false);
+    // The Windows echo canceller refuses to record while the engine plays nothing.
+    factory.enable_builtin_aec(false);
+    if !(factory.init_playout() && factory.start_playout()) {
+        tracing::warn!("could not start the engine's silent voice clock");
+    }
 }
 
 pub(super) fn processing_for(mode: NoiseSuppression) -> AudioProcessingOptions {
