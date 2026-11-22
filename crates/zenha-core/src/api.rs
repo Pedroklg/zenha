@@ -70,14 +70,16 @@ pub enum NoiseSuppression {
     Off,
     /// Built-in WebRTC suppression with echo cancellation.
     Standard,
-    /// Neural network (RNNoise) on a dedicated capture path; no echo cancellation.
+    /// Neural network (RNNoise) on a dedicated capture path; echo cancellation is optional.
     #[default]
     Enhanced,
+    /// `Enhanced` followed by the WebRTC suppression, for loud rooms.
+    Strong,
 }
 
 impl NoiseSuppression {
     pub fn uses_own_capture(self) -> bool {
-        matches!(self, Self::Enhanced)
+        matches!(self, Self::Enhanced | Self::Strong)
     }
 }
 
@@ -290,6 +292,8 @@ pub enum Command {
     SetInputDevice(Option<String>),
     SetOutputDevice(Option<String>),
     SetNoiseSuppression(NoiseSuppression),
+    /// Echo cancellation of the own capture modes (`Enhanced` and `Strong`).
+    SetEchoCancellation(bool),
     /// Volume of the watched stream's sound, from 0 to 100.
     SetStreamVolume(u8),
     /// Volume of a remote participant, from 0 to 200 (100 is the default).
@@ -360,6 +364,9 @@ impl fmt::Debug for Command {
             Self::SetOutputDevice(id) => f.debug_tuple("SetOutputDevice").field(id).finish(),
             Self::SetNoiseSuppression(mode) => {
                 f.debug_tuple("SetNoiseSuppression").field(mode).finish()
+            }
+            Self::SetEchoCancellation(enabled) => {
+                f.debug_tuple("SetEchoCancellation").field(enabled).finish()
             }
             Self::SetStreamVolume(percent) => {
                 f.debug_tuple("SetStreamVolume").field(percent).finish()
@@ -595,6 +602,7 @@ mod tests {
         assert!(!NoiseSuppression::Off.uses_own_capture());
         assert!(!NoiseSuppression::Standard.uses_own_capture());
         assert!(NoiseSuppression::Enhanced.uses_own_capture());
+        assert!(NoiseSuppression::Strong.uses_own_capture());
     }
 
     #[test]

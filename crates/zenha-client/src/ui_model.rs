@@ -45,6 +45,7 @@ pub enum UiCommand {
     SetInputDevice(Option<String>),
     SetOutputDevice(Option<String>),
     SetNoiseSuppression(NoiseMode),
+    SetEchoCancellation(bool),
     SetStreamVolume(u8),
     SetParticipantVolume {
         identity: String,
@@ -106,6 +107,9 @@ impl fmt::Debug for UiCommand {
             Self::SetOutputDevice(id) => f.debug_tuple("SetOutputDevice").field(id).finish(),
             Self::SetNoiseSuppression(mode) => {
                 f.debug_tuple("SetNoiseSuppression").field(mode).finish()
+            }
+            Self::SetEchoCancellation(enabled) => {
+                f.debug_tuple("SetEchoCancellation").field(enabled).finish()
             }
             Self::SetStreamVolume(percent) => {
                 f.debug_tuple("SetStreamVolume").field(percent).finish()

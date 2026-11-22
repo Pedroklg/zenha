@@ -202,6 +202,7 @@ impl AppState {
                 .then_some(self.audio.stream_volume),
             participant_volumes: self.audio.participant_volumes.clone(),
             noise_gate_db: self.audio.noise_gate,
+            echo_cancellation: self.audio.echo_cancellation,
             mute_hotkey: self.hotkeys.mute.clone(),
             deafen_hotkey: self.hotkeys.deafen.clone(),
             ptt_hotkey: self.hotkeys.ptt.clone(),

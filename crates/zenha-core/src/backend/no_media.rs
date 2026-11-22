@@ -98,6 +98,10 @@ impl MediaBackend for NoMediaBackend {
         Ok(())
     }
 
+    async fn set_echo_cancellation(&self, _enabled: bool) -> Result<(), SessionError> {
+        Ok(())
+    }
+
     async fn set_stream_volume(&self, _percent: u8) -> Result<(), SessionError> {
         Ok(())
     }

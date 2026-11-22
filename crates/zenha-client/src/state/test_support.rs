@@ -23,6 +23,7 @@ pub(super) fn valid_settings() -> Settings {
         stream_volume: None,
         participant_volumes: BTreeMap::new(),
         noise_gate_db: None,
+        echo_cancellation: false,
         mute_hotkey: None,
         deafen_hotkey: None,
         ptt_hotkey: None,

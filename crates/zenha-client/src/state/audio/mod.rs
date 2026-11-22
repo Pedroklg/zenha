@@ -36,6 +36,7 @@ pub struct AudioState {
     pub stream_volume: u8,
     pub participant_volumes: BTreeMap<String, u16>,
     pub noise_gate: Option<i8>,
+    pub echo_cancellation: bool,
     pub mic_level: Option<MicLevelView>,
     pub(super) loaded: bool,
 }
@@ -53,6 +54,7 @@ impl AudioState {
                 .min(FULL_VOLUME),
             participant_volumes: normalize_participant_volumes(&settings.participant_volumes),
             noise_gate: settings.noise_gate_db,
+            echo_cancellation: settings.echo_cancellation,
             ..Self::default()
         }
     }

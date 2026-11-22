@@ -42,6 +42,7 @@ pub enum BackendCall {
     SetInputDevice(Option<String>),
     SetOutputDevice(Option<String>),
     SetNoiseSuppression(NoiseSuppression),
+    SetEchoCancellation(bool),
     SetStreamVolume(u8),
     SetParticipantVolume {
         identity: String,
@@ -379,6 +380,13 @@ impl MediaBackend for FakeBackend {
         lock(&self.state)
             .calls
             .push(BackendCall::SetNoiseSuppression(mode));
+        Ok(())
+    }
+
+    async fn set_echo_cancellation(&self, enabled: bool) -> Result<(), SessionError> {
+        lock(&self.state)
+            .calls
+            .push(BackendCall::SetEchoCancellation(enabled));
         Ok(())
     }
 

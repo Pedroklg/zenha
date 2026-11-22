@@ -54,6 +54,12 @@ impl Session {
         }
     }
 
+    pub(super) async fn set_echo_cancellation(&mut self, enabled: bool) {
+        if let Err(err) = self.backend.set_echo_cancellation(enabled).await {
+            self.emit(Event::CommandFailed(err));
+        }
+    }
+
     pub(super) async fn set_stream_volume(&mut self, percent: u8) {
         if let Err(err) = self.backend.set_stream_volume(percent.min(100)).await {
             self.emit(Event::CommandFailed(err));

@@ -118,6 +118,8 @@ impl ShareSids {
 struct Flags {
     microphone_muted: AtomicBool,
     output_muted: AtomicBool,
+    /// Echo cancellation of the own capture, against what this app plays.
+    echo_cancellation: AtomicBool,
     ui_visible: UiVisibleFlag,
     share_sids: ShareSids,
     /// 100 minus the stream volume, so the zero default means full volume.
@@ -399,6 +401,14 @@ impl MediaBackend for LiveKitBackend {
 
     async fn set_noise_suppression(&self, mode: NoiseSuppression) -> Result<(), SessionError> {
         self.select_noise_suppression(mode).await
+    }
+
+    async fn set_echo_cancellation(&self, enabled: bool) -> Result<(), SessionError> {
+        let previous = self.flags.echo_cancellation.swap(enabled, Ordering::SeqCst);
+        if previous != enabled && self.selection().noise.uses_own_capture() {
+            self.republish_microphone().await;
+        }
+        Ok(())
     }
 
     async fn set_stream_volume(&self, percent: u8) -> Result<(), SessionError> {

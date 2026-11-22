@@ -179,11 +179,24 @@ fn content(ui: &mut egui::Ui, view: &mut SettingsView<'_>, actions: &mut Vec<Use
             }
         });
     match audio.noise {
-        NoiseMode::Enhanced => {
+        NoiseMode::Enhanced | NoiseMode::Strong => {
             ui.add_space(CONTROL_GAP);
-            ui.small(
-                "Reforçada (padrão): melhor contra teclado e ventilador. Sem cancelamento de eco, use fone.",
-            );
+            ui.small(if audio.noise == NoiseMode::Strong {
+                "Intensa: a Reforçada com um filtro extra, para ambiente barulhento. Pode abafar um pouco a voz."
+            } else {
+                "Reforçada (padrão): melhor contra teclado e ventilador."
+            });
+            ui.add_space(ROW_GAP);
+            let mut echo = audio.echo_cancellation;
+            if ui
+                .checkbox(&mut echo, "Cancelamento de eco")
+                .on_hover_text(
+                    "Ligue se você usa caixa de som e os outros ouvem a própria voz de volta. Com fone não precisa.",
+                )
+                .changed()
+            {
+                actions.push(UserAction::SetEchoCancellation(echo));
+            }
             ui.add_space(ROW_GAP);
             noise_gate(ui, audio, view.in_room, view.mic_muted, actions);
         }

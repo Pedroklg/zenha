@@ -147,6 +147,7 @@ impl Session {
             Command::SetInputDevice(id) => self.set_input_device(id).await,
             Command::SetOutputDevice(id) => self.set_output_device(id).await,
             Command::SetNoiseSuppression(mode) => self.set_noise_suppression(mode).await,
+            Command::SetEchoCancellation(enabled) => self.set_echo_cancellation(enabled).await,
             Command::SetStreamVolume(percent) => self.set_stream_volume(percent).await,
             Command::SetParticipantVolume { identity, percent } => {
                 self.set_participant_volume(identity, percent).await;
