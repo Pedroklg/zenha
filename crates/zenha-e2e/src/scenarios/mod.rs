@@ -101,6 +101,12 @@ pub const ALL: &[ScenarioDef] = &[
         run: audio::participant_volume,
     },
     ScenarioDef {
+        name: "volume-sticks",
+        title: "Volume por pessoa se mantém depois de ensurdecer, mute, reentrada e alguém novo",
+        needs_media: true,
+        run: audio::volume_sticks,
+    },
+    ScenarioDef {
         name: "room-switch",
         title: "Troca de sala e volta com presença e áudio",
         needs_media: true,
@@ -170,6 +176,7 @@ mod tests {
                 "share",
                 "share-audio",
                 "participant-volume",
+                "volume-sticks",
                 "room-switch",
                 "cue",
             ]
