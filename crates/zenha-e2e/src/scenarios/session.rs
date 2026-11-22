@@ -6,6 +6,7 @@ use anyhow::bail;
 
 use super::ctx::*;
 use super::room_name;
+use crate::detect::TONE_HZ;
 use crate::proc::{http_request, require_status};
 use crate::protocol::{BotCommand, BotEvent};
 
@@ -31,7 +32,7 @@ pub(super) fn token(ctx: &mut Ctx<'_>) -> anyhow::Result<()> {
     let alice = ctx.spawn_tone("alice", false)?;
     ctx.join(&alice, &room)?;
 
-    let mallory = ctx.spawn("mallory", true, false, "convite-errado")?;
+    let mallory = ctx.spawn("mallory", Some(TONE_HZ), false, "convite-errado", None)?;
     let mark = mallory.send(&BotCommand::Join { room })?;
     let (_, failed) = mallory.wait(mark, JOIN_TIMEOUT, "the invite rejection", |e| {
         matches!(e, BotEvent::Failed { .. })

@@ -98,16 +98,18 @@ impl<'a> Ctx<'a> {
     pub(super) fn spawn(
         &mut self,
         name: &str,
-        tone: bool,
+        tone_hz: Option<f64>,
         pattern: bool,
         invite: &str,
+        echo_test: Option<f32>,
     ) -> anyhow::Result<Arc<BotProcess>> {
         let spec = BotSpec {
             name: name.to_owned(),
             token_url: self.setup.token_url(),
             invite: invite.to_owned(),
-            tone: tone.then_some((TONE_HZ, TONE_AMPLITUDE)),
+            tone: tone_hz.map(|hz| (hz, TONE_AMPLITUDE)),
             test_pattern: pattern,
+            echo_test,
         };
         let log = self
             .setup
@@ -117,7 +119,11 @@ impl<'a> Ctx<'a> {
         self.bots.push(bot.clone());
         self.rec.step(format!(
             "bot {name} started ({})",
-            if tone { "tone" } else { "real audio device" }
+            if tone_hz.is_some() {
+                "tone"
+            } else {
+                "real audio device"
+            }
         ));
         Ok(bot)
     }
@@ -128,12 +134,20 @@ impl<'a> Ctx<'a> {
         pattern: bool,
     ) -> anyhow::Result<Arc<BotProcess>> {
         let invite = self.setup.invite.clone();
-        self.spawn(name, true, pattern, &invite)
+        self.spawn(name, Some(TONE_HZ), pattern, &invite, None)
     }
 
     pub(super) fn spawn_listener(&mut self, name: &str) -> anyhow::Result<Arc<BotProcess>> {
+        self.spawn_listener_with(name, None)
+    }
+
+    pub(super) fn spawn_listener_with(
+        &mut self,
+        name: &str,
+        echo_test: Option<f32>,
+    ) -> anyhow::Result<Arc<BotProcess>> {
         let invite = self.setup.invite.clone();
-        let bot = self.spawn(name, false, false, &invite)?;
+        let bot = self.spawn(name, None, false, &invite, echo_test)?;
         let devices = self.refresh_devices(&bot)?;
         if self.env.listener_outputs.is_empty() {
             self.env.listener_inputs = devices.inputs;
