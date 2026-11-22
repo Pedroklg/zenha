@@ -14,11 +14,13 @@ use livekit::webrtc::audio_stream::native::NativeAudioStream;
 use crate::api::{AudioDevices, NoiseSuppression, SessionError};
 use crate::audio::mic_capture::MicCapture;
 use crate::audio::participant_volume::volume_gain;
-use crate::livekit_backend::room::{apply_microphone_mute, apply_participant_volume, blocking};
+use crate::livekit_backend::room::{
+    apply_microphone_mute, apply_participant_volume, attach_voices, blocking,
+};
 use crate::livekit_backend::{LiveKitBackend, TaskGuard};
 
 use devices::{apply_input, apply_output, input_devices, output_devices, processing_for};
-pub(super) use devices::{apply_selection, open_audio};
+pub(super) use devices::{apply_selection, engine_output_opens, open_audio, stop_engine_output};
 pub(super) use microphone::{LocalSpeaker, publish_selected_microphone, publish_tone};
 pub(super) use share::{ShareAudio, publish_share_audio, stop_share_audio};
 
@@ -187,12 +189,22 @@ impl LiveKitBackend {
         let Some(audio) = self.current_audio().await else {
             return Ok(());
         };
+        if self.flags.own_voice_output.load(Ordering::SeqCst) {
+            return Ok(());
+        }
         let result = blocking(move || apply_output(&audio, id.as_deref(), true)).await;
         match result.and_then(|applied| applied.map(|_| ())) {
             Ok(()) => Ok(()),
             Err(err) => {
-                self.update_selection(|s| s.output = previous);
-                Err(err)
+                tracing::warn!(%err, "output device switch failed");
+                let Some(room) = self.current_room().await else {
+                    self.update_selection(|s| s.output = previous);
+                    return Err(err);
+                };
+                blocking(stop_engine_output).await?;
+                self.flags.own_voice_output.store(true, Ordering::SeqCst);
+                attach_voices(&room, &self.flags);
+                Ok(())
             }
         }
     }
@@ -215,6 +227,7 @@ impl LiveKitBackend {
     ) -> Result<(), SessionError> {
         let clamped = self.flags.set_participant_volume(identity, percent);
         let gain = volume_gain(clamped);
+        self.flags.set_voice_gain(identity, gain as f32);
         let applied_to_tracks = if let Some(room) = self.current_room().await {
             apply_participant_volume(&room, identity, gain)
         } else {

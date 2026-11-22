@@ -30,8 +30,9 @@ use crate::video::{CaptureTarget, FrameSlot, SharePreset, VideoFrame};
 
 use super::LiveKitBackend;
 use super::audio::{
-    LocalSpeaker, Microphone, apply_selection, open_audio, publish_selected_microphone,
-    publish_share_audio, publish_tone, stop_share_audio,
+    LocalSpeaker, Microphone, apply_selection, engine_output_opens, open_audio,
+    publish_selected_microphone, publish_share_audio, publish_tone, stop_engine_output,
+    stop_share_audio,
 };
 use super::events::pump_events;
 
@@ -141,6 +142,7 @@ impl LiveKitBackend {
         self.stop_local_share().await;
         self.watch.clear();
         self.flags.stop_stream();
+        self.flags.stop_voices();
         let connection = self.connection.lock().await.take();
         let Some(connection) = connection else {
             return;
@@ -179,6 +181,10 @@ impl LiveKitBackend {
         // default *communications* endpoints, so the selection only sticks from here on.
         if let Some(audio) = &audio {
             apply_selection(audio, &selection);
+            if !engine_output_opens() {
+                stop_engine_output();
+                self.flags.own_voice_output.store(true, Ordering::SeqCst);
+            }
         }
         self.flags.set_stream_output(selection.output.clone());
 
@@ -484,12 +490,26 @@ fn sweep_publications(room: &Room, events: &UnboundedSender<BackendEvent>, flags
             if wants_audio(&publication) {
                 publication.set_subscribed(true);
                 if let Some(RemoteTrack::Audio(audio)) = publication.track() {
-                    flags.apply_participant_volume(&identity, &audio.rtc_track());
+                    flags.attach_voice(&identity, publication.sid().to_string(), audio.rtc_track());
                 }
             } else if is_screen_share(&publication) {
                 let _ = events.send(BackendEvent::RemoteScreenShareStarted {
                     identity: identity.clone(),
                 });
+            }
+        }
+    }
+}
+
+/// Hands the voices already playing to the app's own output.
+pub(super) fn attach_voices(room: &Room, flags: &super::Flags) {
+    for participant in room.remote_participants().into_values() {
+        let identity = String::from(participant.identity());
+        for publication in participant.track_publications().into_values() {
+            if wants_audio(&publication)
+                && let Some(RemoteTrack::Audio(audio)) = publication.track()
+            {
+                flags.attach_voice(&identity, publication.sid().to_string(), audio.rtc_track());
             }
         }
     }

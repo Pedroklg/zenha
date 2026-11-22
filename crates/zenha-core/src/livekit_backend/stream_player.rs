@@ -1,7 +1,6 @@
 //! Dedicated playback of a watched stream's audio.
 
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, Mutex as StdMutex, PoisonError};
 
 use futures_util::StreamExt;
@@ -28,13 +27,12 @@ impl std::fmt::Debug for StreamPlayer {
 }
 
 impl StreamPlayer {
-    /// Needs a Tokio runtime. The engine keeps decoding the track but no longer plays it.
+    /// Needs a Tokio runtime. `gain` gives the factor applied to each `i16` sample.
     pub(super) fn start(
         track: RtcAudioTrack,
         device: Option<String>,
-        attenuation: Arc<AtomicU8>,
+        gain: impl Fn() -> f32 + Send + 'static,
     ) -> Self {
-        track.set_enabled(false);
         let queue: Arc<StdMutex<VecDeque<i16>>> = Arc::new(StdMutex::new(VecDeque::new()));
         let mut frames = NativeAudioStream::new(
             track.clone(),
@@ -56,10 +54,7 @@ impl StreamPlayer {
         });
         let mut primed = false;
         let output = OutputStream::start(device, move |out: &mut [f32]| {
-            let volume =
-                f32::from(100u8.saturating_sub(attenuation.load(Ordering::SeqCst))) / 100.0;
-            // Squared so the slider follows how loudness is heard.
-            let gain = volume * volume / 32768.0;
+            let gain = gain();
             let mut queue = queue.lock().unwrap_or_else(PoisonError::into_inner);
             // A short reserve is built before playing, and again after running dry.
             if !primed && queue.len() >= STREAM_PRIME_SAMPLES {

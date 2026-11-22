@@ -8,8 +8,9 @@ mod room;
 mod stream_player;
 mod video;
 
+use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicI8, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI8, AtomicU8, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex as StdMutex, PoisonError};
 use std::time::Duration;
 
@@ -129,6 +130,37 @@ struct Flags {
     stream_player: StdMutex<Option<StreamPlayer>>,
     /// Per-participant voice gain overrides (`0..=200`, `100` omitted).
     participant_volumes: StdMutex<ParticipantVolumes>,
+    /// Set when the voice engine cannot open the output device: voices then play
+    /// through the app's own output, keyed by track sid.
+    own_voice_output: AtomicBool,
+    voice_players: StdMutex<HashMap<String, VoicePlayer>>,
+}
+
+#[derive(Debug)]
+struct VoicePlayer {
+    identity: String,
+    /// `f32` bits of the participant's linear gain.
+    gain: Arc<AtomicU32>,
+    player: StreamPlayer,
+}
+
+impl VoicePlayer {
+    fn start(
+        identity: String,
+        gain: Arc<AtomicU32>,
+        track: RtcAudioTrack,
+        device: Option<String>,
+    ) -> Self {
+        let level = gain.clone();
+        let player = StreamPlayer::start(track, device, move || {
+            f32::from_bits(level.load(Ordering::Relaxed)) / 32768.0
+        });
+        Self {
+            identity,
+            gain,
+            player,
+        }
+    }
 }
 
 impl Flags {
@@ -141,8 +173,15 @@ impl Flags {
 
     /// Plays `track` through the app's own output so its volume can be set apart from voices.
     fn play_stream(&self, track: RtcAudioTrack) {
-        let player =
-            StreamPlayer::start(track, self.stream_output(), self.stream_attenuation.clone());
+        // The engine keeps decoding the track but no longer plays it.
+        track.set_enabled(false);
+        let attenuation = self.stream_attenuation.clone();
+        let player = StreamPlayer::start(track, self.stream_output(), move || {
+            let volume =
+                f32::from(100u8.saturating_sub(attenuation.load(Ordering::SeqCst))) / 100.0;
+            // Squared so the slider follows how loudness is heard.
+            volume * volume / 32768.0
+        });
         *self
             .stream_player
             .lock()
@@ -164,6 +203,76 @@ impl Flags {
             .unwrap_or_else(PoisonError::into_inner) = device;
         if let Some(track) = self.stop_stream() {
             self.play_stream(track);
+        }
+        let device = self.stream_output();
+        let mut players = self
+            .voice_players
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let moved: Vec<(String, VoicePlayer)> = players.drain().collect();
+        for (sid, voice) in moved {
+            let VoicePlayer {
+                identity,
+                gain,
+                player,
+            } = voice;
+            let track = player.track.clone();
+            drop(player);
+            players.insert(
+                sid,
+                VoicePlayer::start(identity, gain, track, device.clone()),
+            );
+        }
+    }
+
+    /// Volume goes to the engine, or to the app's own output when that one plays the voices.
+    fn attach_voice(&self, identity: &str, sid: String, track: RtcAudioTrack) {
+        if !self.own_voice_output.load(Ordering::SeqCst) {
+            self.apply_participant_volume(identity, &track);
+            return;
+        }
+        let gain = self
+            .participant_volumes
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .gain_for(identity)
+            .unwrap_or(1.0) as f32;
+        let voice = VoicePlayer::start(
+            identity.to_owned(),
+            Arc::new(AtomicU32::new(gain.to_bits())),
+            track,
+            self.stream_output(),
+        );
+        self.voice_players
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(sid, voice);
+    }
+
+    fn detach_voice(&self, sid: &str) {
+        self.voice_players
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(sid);
+    }
+
+    fn stop_voices(&self) {
+        self.own_voice_output.store(false, Ordering::SeqCst);
+        self.voice_players
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clear();
+    }
+
+    fn set_voice_gain(&self, identity: &str, gain: f32) {
+        for voice in self
+            .voice_players
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .values()
+            .filter(|voice| voice.identity == identity)
+        {
+            voice.gain.store(gain.to_bits(), Ordering::Relaxed);
         }
     }
 

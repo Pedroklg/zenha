@@ -165,9 +165,10 @@ fn translate(
                 if stream {
                     flags.play_stream(audio.rtc_track());
                 } else {
-                    flags.apply_participant_volume(
+                    flags.attach_voice(
                         participant.identity().as_str(),
-                        &audio.rtc_track(),
+                        publication.sid().to_string(),
+                        audio.rtc_track(),
                     );
                 }
                 let deafened = flags.output_muted.load(Ordering::SeqCst);
@@ -201,6 +202,8 @@ fn translate(
         } => {
             if is_share_audio(&publication) {
                 flags.stop_stream();
+            } else {
+                flags.detach_voice(&publication.sid().to_string());
             }
             if matches!(track, RemoteTrack::Audio(_)) {
                 tracing::info!(
