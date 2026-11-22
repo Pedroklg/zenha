@@ -85,7 +85,7 @@ impl LiveKitBackend {
     }
 
     /// Swaps the published microphone for one that matches the current selection.
-    async fn republish_microphone(&self) {
+    pub(in crate::livekit_backend) async fn republish_microphone(&self) {
         let selection = self.selection();
         let mut slot = self.connection.lock().await;
         let Some(connection) = slot.as_mut() else {

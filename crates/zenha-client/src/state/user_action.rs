@@ -54,6 +54,7 @@ pub enum UserAction {
     SelectInputDevice(Option<String>),
     SelectOutputDevice(Option<String>),
     SelectNoiseMode(NoiseMode),
+    SetEchoCancellation(bool),
     SelectVoiceMode(VoiceMode),
     /// Applies the volume while the slider moves; `SaveAudioSettings` stores it once it stops.
     SetStreamVolume(u8),

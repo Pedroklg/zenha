@@ -20,13 +20,14 @@ pub enum NoiseMode {
     #[default]
     #[serde(alias = "maximum")]
     Enhanced,
+    Strong,
 }
 
 impl NoiseMode {
-    pub const ALL: [NoiseMode; 3] = [Self::Off, Self::Standard, Self::Enhanced];
+    pub const ALL: [NoiseMode; 4] = [Self::Off, Self::Standard, Self::Enhanced, Self::Strong];
 
     pub fn uses_own_capture(self) -> bool {
-        matches!(self, Self::Enhanced)
+        matches!(self, Self::Enhanced | Self::Strong)
     }
 
     pub fn label(self) -> &'static str {
@@ -34,6 +35,7 @@ impl NoiseMode {
             Self::Off => "Desligada",
             Self::Standard => "Reduzida",
             Self::Enhanced => "Reforçada",
+            Self::Strong => "Intensa",
         }
     }
 }
@@ -75,6 +77,8 @@ pub struct Settings {
     pub participant_volumes: BTreeMap<String, u16>,
     /// Noise gate threshold in dBFS (-70 to -20); absent means off.
     pub noise_gate_db: Option<i8>,
+    /// Echo cancellation of the own capture modes; off by default because headphones need none.
+    pub echo_cancellation: bool,
     /// Global hotkey in the `global-hotkey` format (e.g. "shift+control+KeyM"); absent = none.
     pub mute_hotkey: Option<String>,
     pub deafen_hotkey: Option<String>,
@@ -146,6 +150,7 @@ impl Default for Settings {
             stream_volume: None,
             participant_volumes: BTreeMap::new(),
             noise_gate_db: None,
+            echo_cancellation: false,
             mute_hotkey: None,
             deafen_hotkey: None,
             ptt_hotkey: None,
@@ -321,6 +326,7 @@ mod tests {
                 ("bob-id".to_owned(), 160),
             ]),
             noise_gate_db: Some(-45),
+            echo_cancellation: true,
             mute_hotkey: Some("shift+control+KeyM".to_owned()),
             deafen_hotkey: Some("alt+KeyD".to_owned()),
             ptt_hotkey: Some("F9".to_owned()),
@@ -371,15 +377,25 @@ mod tests {
         assert_eq!(NoiseMode::Off.label(), "Desligada");
         assert_eq!(NoiseMode::Standard.label(), "Reduzida");
         assert_eq!(NoiseMode::Enhanced.label(), "Reforçada");
+        assert_eq!(NoiseMode::Strong.label(), "Intensa");
+        assert_eq!(
+            serde_json::from_str::<NoiseMode>("\"strong\"").unwrap(),
+            NoiseMode::Strong
+        );
         assert_eq!(
             NoiseMode::ALL,
-            [NoiseMode::Off, NoiseMode::Standard, NoiseMode::Enhanced]
+            [
+                NoiseMode::Off,
+                NoiseMode::Standard,
+                NoiseMode::Enhanced,
+                NoiseMode::Strong
+            ]
         );
         let own: Vec<_> = NoiseMode::ALL
             .into_iter()
             .filter(|mode| mode.uses_own_capture())
             .collect();
-        assert_eq!(own, [NoiseMode::Enhanced]);
+        assert_eq!(own, [NoiseMode::Enhanced, NoiseMode::Strong]);
     }
 
     #[test]

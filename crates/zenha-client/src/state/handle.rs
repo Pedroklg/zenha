@@ -155,6 +155,7 @@ impl AppState {
             UserAction::SelectInputDevice(id) => self.select_input(id),
             UserAction::SelectOutputDevice(id) => self.select_output(id),
             UserAction::SelectNoiseMode(mode) => self.select_noise(mode),
+            UserAction::SetEchoCancellation(enabled) => self.set_echo_cancellation(enabled),
             UserAction::SelectVoiceMode(mode) => self.select_voice_mode(mode),
             UserAction::SetStreamVolume(percent) => {
                 let percent = percent.min(FULL_VOLUME);

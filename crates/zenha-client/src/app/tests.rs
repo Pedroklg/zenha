@@ -152,6 +152,7 @@ fn settings_window_opens_without_overlapping_widgets_at_1280x720() {
         Settings {
             noise_suppression: crate::platform::settings::NoiseMode::Enhanced,
             noise_gate_db: Some(-45),
+            echo_cancellation: true,
             ..demo_settings(demo::SELF_NAME)
         },
     );

@@ -101,6 +101,8 @@ pub trait MediaBackend: Send + Sync + 'static {
     async fn set_output_device(&self, id: Option<String>) -> Result<(), SessionError>;
     /// Takes effect at once when in a room, otherwise on the next connection.
     async fn set_noise_suppression(&self, mode: NoiseSuppression) -> Result<(), SessionError>;
+    /// Echo cancellation of the own capture modes; takes effect like `set_noise_suppression`.
+    async fn set_echo_cancellation(&self, enabled: bool) -> Result<(), SessionError>;
     /// Volume, 0 to 100, of the sound of the screen share being watched.
     async fn set_stream_volume(&self, percent: u8) -> Result<(), SessionError>;
     /// Playback gain percentage (0 to 200, 100 = default) for a remote participant's voice tracks.

@@ -22,6 +22,15 @@ impl AppState {
         self.pending_save = Some(self.settings_snapshot());
         vec![UiCommand::SetNoiseSuppression(mode)]
     }
+
+    pub(in crate::state) fn set_echo_cancellation(&mut self, enabled: bool) -> Vec<UiCommand> {
+        if self.audio.echo_cancellation == enabled {
+            return Vec::new();
+        }
+        self.audio.echo_cancellation = enabled;
+        self.pending_save = Some(self.settings_snapshot());
+        vec![UiCommand::SetEchoCancellation(enabled)]
+    }
 }
 
 #[cfg(test)]
@@ -133,5 +142,30 @@ mod tests {
         let mut restored = AppState::new(&saved, Some("segredo".to_owned()));
         let commands = restored.handle_action(UserAction::JoinRoom("geral".to_owned()));
         assert!(commands.contains(&UiCommand::SetNoiseSuppression(NoiseMode::Standard)));
+    }
+
+    #[test]
+    fn echo_cancellation_is_sent_saved_and_restored_on_join() {
+        let mut state = AppState::new(&valid_settings(), None);
+        assert!(!state.audio.echo_cancellation);
+        assert_eq!(
+            state.handle_action(UserAction::SetEchoCancellation(true)),
+            vec![UiCommand::SetEchoCancellation(true)]
+        );
+        assert!(
+            state
+                .handle_action(UserAction::SetEchoCancellation(true))
+                .is_empty()
+        );
+        let saved = state.take_pending_save().unwrap();
+        assert!(saved.echo_cancellation);
+
+        let mut restored = AppState::new(&saved, Some("segredo".to_owned()));
+        let commands = restored.handle_action(UserAction::JoinRoom("geral".to_owned()));
+        assert!(commands.contains(&UiCommand::SetEchoCancellation(true)));
+
+        let mut off = AppState::new(&valid_settings(), Some("segredo".to_owned()));
+        let commands = off.handle_action(UserAction::JoinRoom("geral".to_owned()));
+        assert!(!commands.contains(&UiCommand::SetEchoCancellation(true)));
     }
 }

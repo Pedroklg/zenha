@@ -39,6 +39,7 @@ impl DemoSession {
                 self.noise_gate = threshold;
             }
             UiCommand::SetNoiseSuppression(_)
+            | UiCommand::SetEchoCancellation(_)
             | UiCommand::SetStreamVolume(_)
             | UiCommand::SetParticipantVolume { .. }
             | UiCommand::PlayCue(_) => {}

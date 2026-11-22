@@ -216,6 +216,9 @@ impl AppState {
             if self.audio.noise != NoiseMode::default() {
                 commands.push(UiCommand::SetNoiseSuppression(self.audio.noise));
             }
+            if self.audio.echo_cancellation {
+                commands.push(UiCommand::SetEchoCancellation(true));
+            }
             if let Some(threshold) = self.audio.noise_gate {
                 commands.push(UiCommand::SetNoiseGate(Some(threshold)));
             }

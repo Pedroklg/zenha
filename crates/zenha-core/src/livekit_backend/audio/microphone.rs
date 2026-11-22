@@ -1,7 +1,7 @@
 //! Microphone publishing (platform, enhanced or test tone) and local speech detection.
 
-use std::sync::Arc;
 use std::sync::atomic::Ordering;
+use std::sync::{Arc, Mutex as StdMutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use livekit::options::{self, TrackPublishOptions};
@@ -15,8 +15,12 @@ use tokio::sync::mpsc::{self, UnboundedSender};
 use tokio::time::MissedTickBehavior;
 
 use super::{EnhancedMic, Microphone, Selection};
+use crate::api::NoiseSuppression;
 use crate::audio::mic_capture::{CAPTURE_SAMPLE_RATE, MicCapture};
 use crate::audio::noise::{Denoiser, NoiseGate, RnnoiseDenoiser};
+use crate::audio::share_audio::{
+    AudioScope, SHARE_AUDIO_CHANNELS, SHARE_AUDIO_SAMPLE_RATE, ShareAudioCapture,
+};
 use crate::backend::BackendEvent;
 use crate::backend::options::{TONE_FRAME_SAMPLES, TONE_SAMPLE_RATE, ToneGenerator};
 use crate::backend::support::{
@@ -42,6 +46,7 @@ pub(in crate::livekit_backend) async fn publish_selected_microphone(
         if let Some(mic) = publish_enhanced(
             room,
             selection.input.clone(),
+            selection.noise == NoiseSuppression::Strong,
             LocalSpeaker::new(room, events, flags),
         )
         .await
@@ -149,14 +154,64 @@ fn build_denoiser() -> Box<dyn Denoiser> {
     Box::new(RnnoiseDenoiser::new())
 }
 
+/// Removes from the own capture what this app plays (voices, stream sound, cues),
+/// taken from the loopback of its own process as the echo reference.
+struct EchoCanceller {
+    apm: Arc<StdMutex<AudioProcessingModule>>,
+    _reference: ShareAudioCapture,
+}
+
+impl EchoCanceller {
+    fn start() -> Self {
+        let apm = Arc::new(StdMutex::new(AudioProcessingModule::new(
+            true, false, false, false,
+        )));
+        let render = apm.clone();
+        let reference =
+            ShareAudioCapture::start(AudioScope::Process(std::process::id()), move |frame| {
+                let mut frame = frame.to_vec();
+                let result = render
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .process_reverse_stream(
+                        &mut frame,
+                        SHARE_AUDIO_SAMPLE_RATE as i32,
+                        SHARE_AUDIO_CHANNELS as i32,
+                    );
+                if let Err(err) = result {
+                    tracing::debug!(%err, "echo reference frame rejected");
+                }
+            });
+        tracing::info!("echo cancellation on for the enhanced microphone");
+        Self {
+            apm,
+            _reference: reference,
+        }
+    }
+
+    fn process(&self, frame: &mut [i16]) {
+        let result = self
+            .apm
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .process_stream(frame, CAPTURE_SAMPLE_RATE as i32, 1);
+        if let Err(err) = result {
+            tracing::debug!(%err, "echo cancellation failed for a frame");
+        }
+    }
+}
+
 /// Own capture, gain control and neural noise suppression, pushed as a manual audio source.
+/// `strong` adds the WebRTC suppression after the neural one.
 async fn publish_enhanced(
     room: &Room,
     input: Option<String>,
+    strong: bool,
     mut speaker: LocalSpeaker,
 ) -> Option<EnhancedMic> {
     let events = speaker.events.clone();
     let noise_gate = speaker.flags.noise_gate.clone();
+    let echo = speaker.flags.echo_cancellation.load(Ordering::SeqCst);
     let source = NativeAudioSource::new(
         AudioSourceOptions::default(),
         CAPTURE_SAMPLE_RATE,
@@ -187,7 +242,8 @@ async fn publish_enhanced(
         tracing::info!("enhanced microphone replaced by the diagnostic tone");
     }
     let capture = MicCapture::start(input, move || {
-        let mut apm = AudioProcessingModule::new(false, true, true, false);
+        let mut apm = AudioProcessingModule::new(false, true, true, strong);
+        let canceller = echo.then(EchoCanceller::start);
         let mut denoiser = build_denoiser();
         let mut gate = NoiseGate::new();
         let mut meter = LevelMeter::default();
@@ -195,6 +251,9 @@ async fn publish_enhanced(
             if speaker.silenced() {
                 speaker.report(false);
                 return;
+            }
+            if let Some(canceller) = &canceller {
+                canceller.process(frame);
             }
             let speech = denoiser.process(frame);
             if let Err(err) = apm.process_stream(frame, CAPTURE_SAMPLE_RATE as i32, 1) {
