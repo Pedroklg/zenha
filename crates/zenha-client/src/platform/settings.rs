@@ -261,7 +261,12 @@ pub fn save(path: &Path, settings: &Settings) -> Result<(), SettingsError> {
     std::fs::create_dir_all(parent)?;
     let json = serde_json::to_string_pretty(settings)?;
     let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, json)?;
+    {
+        let mut file = std::fs::File::create(&tmp)?;
+        std::io::Write::write_all(&mut file, json.as_bytes())?;
+        // Flushed before the rename, or a crash can leave an empty settings file behind.
+        file.sync_all()?;
+    }
     std::fs::rename(&tmp, path)?;
     Ok(())
 }
