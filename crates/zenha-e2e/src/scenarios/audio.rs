@@ -247,6 +247,63 @@ pub(super) fn participant_volume(ctx: &mut Ctx<'_>) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// A participant turned down to 20% must stay there whatever happens around the track.
+pub(super) fn volume_sticks(ctx: &mut Ctx<'_>) -> anyhow::Result<()> {
+    const PERCENT: u16 = 20;
+    const SETTLE: Duration = Duration::from_millis(2000);
+    const PAUSE: Duration = Duration::from_millis(1000);
+    const WINDOW: Duration = Duration::from_millis(1000);
+    let AudibleRoom { listener, tone, .. } = audible_room(ctx)?;
+    let room = ctx.room();
+    let measure = |ctx: &mut Ctx<'_>, label: &str| -> anyhow::Result<f64> {
+        std::thread::sleep(SETTLE);
+        let m = ctx.probe.measure_tone(TONE_HZ, WINDOW)?;
+        ctx.rec.number(&format!("{label}_tone_rms"), m.tone_rms, "");
+        Ok(m.tone_rms)
+    };
+    let full = measure(ctx, "full")?;
+    if full < MIN_TONE_RMS {
+        bail!("the tone is not playing (tone_rms {full:.5})");
+    }
+    let check = |ctx: &mut Ctx<'_>, label: &str| -> anyhow::Result<()> {
+        let ratio = measure(ctx, label)? / full;
+        ctx.rec.number(&format!("{label}_ratio"), ratio, "");
+        if !(0.1..=0.35).contains(&ratio) {
+            bail!("after {label} the participant plays at {ratio:.2} of full, expected about 0.2");
+        }
+        Ok(())
+    };
+    listener.send(&BotCommand::SetParticipantVolume {
+        identity: TONE_BOT.to_owned(),
+        percent: PERCENT,
+    })?;
+    check(ctx, "set")?;
+
+    listener.send(&BotCommand::SetDeafened { deafened: true })?;
+    std::thread::sleep(PAUSE);
+    listener.send(&BotCommand::SetDeafened { deafened: false })?;
+    check(ctx, "undeafen")?;
+
+    tone.send(&BotCommand::SetMuted { muted: true })?;
+    std::thread::sleep(PAUSE);
+    tone.send(&BotCommand::SetMuted { muted: false })?;
+    check(ctx, "remote_unmute")?;
+
+    let mark = tone.send(&BotCommand::Leave)?;
+    tone.wait(mark, EVENT_TIMEOUT, "the tone bot to leave", |e| {
+        matches!(e, BotEvent::Left)
+    })?;
+    ctx.join(&tone, &room)?;
+    check(ctx, "rejoin")?;
+
+    let newcomer = ctx.spawn_listener("newcomer")?;
+    newcomer.send(&BotCommand::SetMuted { muted: true })?;
+    newcomer.send(&BotCommand::SetDeafened { deafened: true })?;
+    ctx.join(&newcomer, &room)?;
+    check(ctx, "newcomer")?;
+    Ok(())
+}
+
 pub(super) fn deafen(ctx: &mut Ctx<'_>) -> anyhow::Result<()> {
     let AudibleRoom {
         baseline,
