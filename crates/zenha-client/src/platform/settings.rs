@@ -59,6 +59,9 @@ impl VoiceMode {
     }
 }
 
+/// Default noise gate: cuts what is not voice between words in the own capture modes.
+pub const DEFAULT_NOISE_GATE_DB: i8 = -45;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -75,7 +78,9 @@ pub struct Settings {
     pub stream_volume: Option<u8>,
     /// Individual volume of each remote participant, 0 to 200; absent means 100.
     pub participant_volumes: BTreeMap<String, u16>,
-    /// Noise gate threshold in dBFS (-70 to -20); absent means off.
+    /// Noise gate threshold in dBFS (-70 to -20); absent means off. On by default; the key was
+    /// renamed then, so the off that older versions saved for everyone is not read back.
+    #[serde(rename = "noise_gate_threshold_db")]
     pub noise_gate_db: Option<i8>,
     /// Echo cancellation of the own capture modes; off by default because headphones need none.
     pub echo_cancellation: bool,
@@ -149,7 +154,7 @@ impl Default for Settings {
             voice_mode: VoiceMode::default(),
             stream_volume: None,
             participant_volumes: BTreeMap::new(),
-            noise_gate_db: None,
+            noise_gate_db: Some(DEFAULT_NOISE_GATE_DB),
             echo_cancellation: false,
             mute_hotkey: None,
             deafen_hotkey: None,
@@ -430,6 +435,25 @@ mod tests {
         let path = dir.join(FILE_NAME);
         std::fs::write(&path, "{ not json").unwrap();
         assert_eq!(load(&path), Settings::default());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn noise_gate_is_on_even_where_older_versions_saved_it_off() {
+        assert_eq!(
+            Settings::default().noise_gate_db,
+            Some(DEFAULT_NOISE_GATE_DB)
+        );
+        let dir = temp_dir("gate");
+        let path = dir.join(FILE_NAME);
+        std::fs::write(&path, r#"{"display_name":"Ana","noise_gate_db":null}"#).unwrap();
+        assert_eq!(load(&path).noise_gate_db, Some(DEFAULT_NOISE_GATE_DB));
+        std::fs::write(
+            &path,
+            r#"{"display_name":"Ana","noise_gate_threshold_db":null}"#,
+        )
+        .unwrap();
+        assert_eq!(load(&path).noise_gate_db, None);
         std::fs::remove_dir_all(dir).unwrap();
     }
 
