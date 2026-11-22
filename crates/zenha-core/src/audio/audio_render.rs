@@ -11,6 +11,7 @@ use wasapi::{
     DeviceEnumerator, Direction, SampleType, StreamMode, WaveFormat, deinitialize, initialize_mta,
 };
 
+use crate::audio::default_device::device_or_default;
 use crate::audio::reopen::{DEVICE_BACKOFF, run_reopening};
 
 pub(crate) const RENDER_SAMPLE_RATE: u32 = 48_000;
@@ -226,10 +227,7 @@ fn render(
     fill: &mut impl FnMut(&mut [f32]),
 ) -> Result<(), wasapi::WasapiError> {
     let enumerator = DeviceEnumerator::new()?;
-    let device = match device_id {
-        Some(id) => enumerator.get_device(id)?,
-        None => enumerator.get_default_device(Direction::Render)?,
-    };
+    let device = device_or_default(&enumerator, device_id, Direction::Render)?;
     tracing::info!(
         device = %device.get_friendlyname().unwrap_or_default(),
         "audio output started"

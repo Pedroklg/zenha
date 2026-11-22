@@ -9,6 +9,7 @@ use wasapi::{
     DeviceEnumerator, Direction, SampleType, StreamMode, WaveFormat, deinitialize, initialize_mta,
 };
 
+use crate::audio::default_device::device_or_default;
 use crate::audio::noise::DENOISE_FRAME;
 use crate::audio::reopen::{DEVICE_BACKOFF, run_reopening};
 use crate::backend::support::drain_f32_le_to_i16;
@@ -74,10 +75,7 @@ fn capture(
     sink: &mut impl FnMut(&mut [i16]),
 ) -> Result<(), wasapi::WasapiError> {
     let enumerator = DeviceEnumerator::new()?;
-    let device = match device_id {
-        Some(id) => enumerator.get_device(id)?,
-        None => enumerator.get_default_device(Direction::Capture)?,
-    };
+    let device = device_or_default(&enumerator, device_id, Direction::Capture)?;
     tracing::info!(
         device = %device.get_friendlyname().unwrap_or_default(),
         "microphone capture started"
