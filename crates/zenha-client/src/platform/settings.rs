@@ -194,6 +194,44 @@ pub fn generate_client_id() -> String {
     format!("{a:016x}{b:016x}")
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ClientIdSave {
+    pub settings: bool,
+    pub vault: bool,
+}
+
+/// Picks the active `client_id` from `settings.json` and the credential vault, returning
+/// which stores must be written so both stay synchronized.
+pub fn pick_client_id(settings: &str, stored: Option<&str>) -> (String, ClientIdSave) {
+    let valid_stored = stored.filter(|id| !needs_client_id(id));
+    if !needs_client_id(settings) {
+        return (
+            settings.to_owned(),
+            ClientIdSave {
+                settings: false,
+                vault: valid_stored != Some(settings),
+            },
+        );
+    }
+    if let Some(id) = valid_stored {
+        return (
+            id.to_owned(),
+            ClientIdSave {
+                settings: true,
+                vault: false,
+            },
+        );
+    }
+    (
+        generate_client_id(),
+        ClientIdSave {
+            settings: true,
+            vault: true,
+        },
+    )
+}
+
+#[cfg(test)]
 pub fn ensure_client_id(settings: &mut Settings) -> bool {
     if needs_client_id(&settings.client_id) {
         settings.client_id = generate_client_id();
@@ -537,6 +575,91 @@ mod tests {
         assert!(!is_valid_client_id_hex("short"));
         assert!(!is_valid_client_id_hex("0123456789ABCDEF0123456789abcdef"));
         assert!(!is_valid_client_id_hex("0123456789abcdef0123456789abcdeg"));
+    }
+
+    #[test]
+    fn pick_client_id_covers_all_four_sync_cases() {
+        let a = "0123456789abcdef0123456789abcdef";
+        let b = "fedcba9876543210fedcba9876543210";
+
+        // 1. Valid in settings, empty vault -> keeps settings and writes vault.
+        assert_eq!(
+            pick_client_id(a, None),
+            (
+                a.to_owned(),
+                ClientIdSave {
+                    settings: false,
+                    vault: true,
+                }
+            )
+        );
+        // Invalid vault value counts as empty.
+        assert_eq!(
+            pick_client_id(a, Some("corrupted")),
+            (
+                a.to_owned(),
+                ClientIdSave {
+                    settings: false,
+                    vault: true,
+                }
+            )
+        );
+
+        // 2. Missing/invalid in settings, valid in vault -> restores from vault and writes settings.
+        assert_eq!(
+            pick_client_id("", Some(b)),
+            (
+                b.to_owned(),
+                ClientIdSave {
+                    settings: true,
+                    vault: false,
+                }
+            )
+        );
+        assert_eq!(
+            pick_client_id("invalid", Some(b)),
+            (
+                b.to_owned(),
+                ClientIdSave {
+                    settings: true,
+                    vault: false,
+                }
+            )
+        );
+
+        // 3. Valid in settings, different valid in vault -> settings wins and updates vault.
+        assert_eq!(
+            pick_client_id(a, Some(b)),
+            (
+                a.to_owned(),
+                ClientIdSave {
+                    settings: false,
+                    vault: true,
+                }
+            )
+        );
+        // Matching valid values need no writes.
+        assert_eq!(
+            pick_client_id(a, Some(a)),
+            (
+                a.to_owned(),
+                ClientIdSave {
+                    settings: false,
+                    vault: false,
+                }
+            )
+        );
+
+        // 4. Missing in both -> generates a valid id and writes both.
+        let (generated, save) = pick_client_id("", None);
+        assert!(is_valid_client_id_hex(&generated));
+        assert_eq!(
+            save,
+            ClientIdSave {
+                settings: true,
+                vault: true,
+            }
+        );
     }
 
     #[test]

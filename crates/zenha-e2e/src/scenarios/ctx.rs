@@ -6,6 +6,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, bail};
+use zenha_core::VideoCodec;
 
 use super::{ScenarioDef, room_name, second_room_name};
 use crate::controller::{BotProcess, BotSpec};
@@ -95,6 +96,25 @@ impl<'a> Ctx<'a> {
         second_room_name(self.name)
     }
 
+    pub(super) fn spawn_with(&mut self, spec: BotSpec) -> anyhow::Result<Arc<BotProcess>> {
+        let log = self
+            .setup
+            .out_dir
+            .join(format!("bot-{}-{}.log", self.name, spec.name));
+        let bot = BotProcess::spawn(&self.setup.exe, &spec, &self.setup.work_dir, &log)?;
+        self.bots.push(bot.clone());
+        self.rec.step(format!(
+            "bot {} started ({})",
+            spec.name,
+            if spec.tone.is_some() {
+                "tone"
+            } else {
+                "real audio device"
+            }
+        ));
+        Ok(bot)
+    }
+
     pub(super) fn spawn(
         &mut self,
         name: &str,
@@ -103,29 +123,16 @@ impl<'a> Ctx<'a> {
         invite: &str,
         echo_test: Option<f32>,
     ) -> anyhow::Result<Arc<BotProcess>> {
-        let spec = BotSpec {
+        self.spawn_with(BotSpec {
             name: name.to_owned(),
             token_url: self.setup.token_url(),
             invite: invite.to_owned(),
             tone: tone_hz.map(|hz| (hz, TONE_AMPLITUDE)),
             test_pattern: pattern,
+            test_pattern_size: None,
+            video_codec: VideoCodec::default(),
             echo_test,
-        };
-        let log = self
-            .setup
-            .out_dir
-            .join(format!("bot-{}-{name}.log", self.name));
-        let bot = BotProcess::spawn(&self.setup.exe, &spec, &self.setup.work_dir, &log)?;
-        self.bots.push(bot.clone());
-        self.rec.step(format!(
-            "bot {name} started ({})",
-            if tone_hz.is_some() {
-                "tone"
-            } else {
-                "real audio device"
-            }
-        ));
-        Ok(bot)
+        })
     }
 
     pub(super) fn spawn_tone(

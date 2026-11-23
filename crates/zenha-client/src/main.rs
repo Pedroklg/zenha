@@ -98,11 +98,18 @@ fn run(launch: cli::LaunchArgs) -> anyhow::Result<()> {
         // Keep --demo isolated from the user's real config file and Credential Manager.
         (None, Some(demo::DEMO_PASSWORD.to_owned()))
     } else {
-        if platform::settings::ensure_client_id(&mut settings)
+        let stored_id = platform::credentials::load_identity();
+        let (client_id, save) =
+            platform::settings::pick_client_id(&settings.client_id, stored_id.as_deref());
+        settings.client_id = client_id;
+        if save.settings
             && let Some(path) = raw_settings_path.as_deref()
             && let Err(err) = platform::settings::save(path, &settings)
         {
-            tracing::warn!(%err, "could not save generated client id");
+            tracing::warn!(%err, "could not save client id");
+        }
+        if save.vault {
+            platform::credentials::store_identity(&settings.client_id);
         }
         let server = settings.token_server_url.trim();
         let password = (!server.is_empty())

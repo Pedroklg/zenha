@@ -1,6 +1,8 @@
 //! Test options for the LiveKit backend. Defaults reproduce the client's behavior.
 
 use std::f64::consts::TAU;
+use std::fmt;
+use std::str::FromStr;
 
 use crate::api::SessionError;
 use crate::video::{CaptureKind, CaptureTarget};
@@ -24,11 +26,55 @@ pub enum MicrophoneSource {
     Tone { hz: f64, amplitude: f64 },
 }
 
+/// Video codec used by the CPU screen-share capture path (`publish.rs`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum VideoCodec {
+    #[default]
+    Vp9,
+    H264,
+    Av1,
+}
+
+impl VideoCodec {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Vp9 => "vp9",
+            Self::H264 => "h264",
+            Self::Av1 => "av1",
+        }
+    }
+}
+
+impl fmt::Display for VideoCodec {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for VideoCodec {
+    type Err = SessionError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "vp9" => Ok(Self::Vp9),
+            "h264" | "h.264" => Ok(Self::H264),
+            "av1" => Ok(Self::Av1),
+            other => Err(SessionError::InvalidInput(format!(
+                "unsupported video codec {other:?}; expected vp9, h264 or av1"
+            ))),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct LiveKitBackendOptions {
     pub microphone: MicrophoneSource,
     /// Lists and accepts the "Test pattern" capture target (bars generated in Rust).
     pub test_pattern_target: bool,
+    /// Resolution of the "Test pattern" target; `None` uses [`TEST_PATTERN_SIZE`].
+    pub test_pattern_size: Option<(u32, u32)>,
+    /// Video codec used by the CPU capture path. Defaults to VP9 to match the client.
+    pub video_codec: VideoCodec,
 }
 
 impl LiveKitBackendOptions {
@@ -45,6 +91,13 @@ impl LiveKitBackendOptions {
                     "tone amplitude must be in (0, 1]".to_owned(),
                 ));
             }
+        }
+        if let Some((width, height)) = self.test_pattern_size
+            && (width < 16 || height < 16 || !width.is_multiple_of(2) || !height.is_multiple_of(2))
+        {
+            return Err(SessionError::InvalidInput(format!(
+                "test pattern size {width}x{height} must have even dimensions of at least 16"
+            )));
         }
         Ok(())
     }
@@ -100,6 +153,8 @@ mod tests {
         let options = LiveKitBackendOptions::default();
         assert_eq!(options.microphone, MicrophoneSource::Device);
         assert!(!options.test_pattern_target);
+        assert_eq!(options.test_pattern_size, None);
+        assert_eq!(options.video_codec, VideoCodec::Vp9);
         assert!(!options.is_tone());
         assert!(options.validate().is_ok());
     }
@@ -108,7 +163,7 @@ mod tests {
     fn tone_parameters_are_validated() {
         let tone = |hz, amplitude| LiveKitBackendOptions {
             microphone: MicrophoneSource::Tone { hz, amplitude },
-            test_pattern_target: false,
+            ..LiveKitBackendOptions::default()
         };
         assert!(tone(1290.0, 0.03).validate().is_ok());
         assert!(tone(1290.0, 0.03).is_tone());
@@ -156,5 +211,36 @@ mod tests {
         let target = test_pattern_target();
         assert_eq!(target.id, TEST_PATTERN_TARGET_ID);
         assert_eq!(target.kind, CaptureKind::Screen);
+    }
+
+    #[test]
+    fn video_codec_defaults_to_vp9_and_parses_expected_names() {
+        assert_eq!(VideoCodec::default(), VideoCodec::Vp9);
+        for (raw, expected) in [
+            ("vp9", VideoCodec::Vp9),
+            ("VP9", VideoCodec::Vp9),
+            ("h264", VideoCodec::H264),
+            ("H.264", VideoCodec::H264),
+            ("av1", VideoCodec::Av1),
+            (" AV1 ", VideoCodec::Av1),
+        ] {
+            assert_eq!(raw.parse::<VideoCodec>(), Ok(expected), "{raw}");
+            assert_eq!(expected.to_string().parse::<VideoCodec>(), Ok(expected));
+        }
+        assert!("vp8".parse::<VideoCodec>().is_err());
+        assert!("".parse::<VideoCodec>().is_err());
+    }
+
+    #[test]
+    fn test_pattern_size_is_validated() {
+        let with_size = |size| LiveKitBackendOptions {
+            test_pattern_size: Some(size),
+            ..LiveKitBackendOptions::default()
+        };
+        assert!(with_size((1920, 1080)).validate().is_ok());
+        assert!(with_size((16, 16)).validate().is_ok());
+        for bad in [(0, 1080), (1920, 0), (14, 16), (1921, 1080), (1920, 1081)] {
+            assert!(with_size(bad).validate().is_err(), "{bad:?}");
+        }
     }
 }

@@ -10,6 +10,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, anyhow, bail};
+use zenha_core::VideoCodec;
 
 use crate::protocol::{BotCommand, BotEvent, Stamped, decode_event};
 use crate::scenario::tail_lines;
@@ -78,6 +79,8 @@ pub struct BotSpec {
     pub invite: String,
     pub tone: Option<(f64, f64)>,
     pub test_pattern: bool,
+    pub test_pattern_size: Option<(u32, u32)>,
+    pub video_codec: VideoCodec,
     /// Replaces the enhanced microphone with the bot's own sound times this gain.
     pub echo_test: Option<f32>,
 }
@@ -129,6 +132,10 @@ impl BotProcess {
         if spec.test_pattern {
             command.arg("--test-pattern");
         }
+        if let Some((width, height)) = spec.test_pattern_size {
+            command.args(["--test-pattern-size", &format!("{width}x{height}")]);
+        }
+        command.args(["--video-codec", spec.video_codec.as_str()]);
         if cfg!(not(windows)) {
             command.arg("--allow-non-windows");
         }
@@ -185,6 +192,10 @@ impl BotProcess {
 
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    pub fn pid(&self) -> Option<u32> {
+        lock(&self.child).as_ref().map(Child::id)
     }
 
     /// Position in the event history; events from here on are "new".

@@ -61,7 +61,10 @@ fn every_command_round_trips() {
         },
         BotCommand::SetInputDevice { id: None },
         BotCommand::RefreshDevices,
-        BotCommand::StartShare,
+        BotCommand::StartShare { preset: None },
+        BotCommand::StartShare {
+            preset: Some(SharePresetKind::P1080f60),
+        },
         BotCommand::StopShare,
         BotCommand::Watch {
             identity: "t".into(),
@@ -114,9 +117,32 @@ fn session_commands_map_and_local_ones_do_not() {
     }
     assert_eq!(BotCommand::PlayCue { cue: "nope".into() }.to_core(), None);
     assert!(matches!(
-        BotCommand::StartShare.to_core(),
-        Some(Command::StartScreenShare { target_id, .. }) if target_id == TEST_PATTERN_TARGET_ID
+        BotCommand::StartShare { preset: None }.to_core(),
+        Some(Command::StartScreenShare {
+            target_id,
+            preset: zenha_core::SharePreset::P720F30
+        }) if target_id == TEST_PATTERN_TARGET_ID
     ));
+    assert!(matches!(
+        BotCommand::StartShare {
+            preset: Some(SharePresetKind::P1080f60),
+        }
+        .to_core(),
+        Some(Command::StartScreenShare {
+            target_id,
+            preset: zenha_core::SharePreset::P1080F60
+        }) if target_id == TEST_PATTERN_TARGET_ID
+    ));
+    assert_eq!(
+        parse_command(r#"{"cmd":"start_share"}"#),
+        Ok(BotCommand::StartShare { preset: None })
+    );
+    assert_eq!(
+        parse_command(r#"{"cmd":"start_share","preset":"1080p30"}"#),
+        Ok(BotCommand::StartShare {
+            preset: Some(SharePresetKind::P1080f30),
+        })
+    );
     assert_eq!(
         BotCommand::CancelCaptureTargets.to_core(),
         Some(Command::CancelCaptureTargets)

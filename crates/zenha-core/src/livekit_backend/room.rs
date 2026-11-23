@@ -277,7 +277,8 @@ impl LiveKitBackend {
         max_side: u32,
         timeout: Duration,
     ) -> Result<VideoFrame, SessionError> {
-        let (mut capture, capture_target) = capture_for(target.clone())?;
+        let (mut capture, capture_target) =
+            capture_for(target.clone(), self.options.test_pattern_size)?;
         blocking(move || capture.capture_thumbnail(&capture_target, max_side, timeout)).await?
     }
 
@@ -296,13 +297,17 @@ impl LiveKitBackend {
             return Err(SessionError::ShareActive);
         }
         let target = self.resolve_target(target_id).await?;
-        let (capture, capture_target) = capture_for(target.clone())?;
+        let (capture, capture_target) =
+            capture_for(target.clone(), self.options.test_pattern_size)?;
         let share = video::publish_share(
             room.clone(),
             events,
             capture,
             &capture_target,
-            preset,
+            video::ShareOptions {
+                preset,
+                video_codec: self.options.video_codec,
+            },
             preview,
             Arc::clone(&self.flags.ui_visible.0),
         )
@@ -373,11 +378,12 @@ impl LiveKitBackend {
 
 fn capture_for(
     target: CaptureTarget,
+    test_pattern_size: Option<(u32, u32)>,
 ) -> Result<(Box<dyn FrameSource>, CaptureTarget), SessionError> {
     if target.id != TEST_PATTERN_TARGET_ID {
         return Ok((Box::new(DesktopCaptureSource::new()), target));
     }
-    let (width, height) = TEST_PATTERN_SIZE;
+    let (width, height) = test_pattern_size.unwrap_or(TEST_PATTERN_SIZE);
     let mut source = TestPatternSource::new(width, height);
     let inner = source
         .list_targets()?

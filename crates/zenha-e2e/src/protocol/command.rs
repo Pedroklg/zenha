@@ -13,6 +13,26 @@ pub enum NoiseKind {
     Enhanced,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SharePresetKind {
+    #[serde(rename = "720p30")]
+    P720f30,
+    #[serde(rename = "1080p30")]
+    P1080f30,
+    #[serde(rename = "1080p60")]
+    P1080f60,
+}
+
+impl SharePresetKind {
+    pub fn to_core(self) -> SharePreset {
+        match self {
+            Self::P720f30 => SharePreset::P720F30,
+            Self::P1080f30 => SharePreset::P1080F30,
+            Self::P1080f60 => SharePreset::P1080F60,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "cmd", rename_all = "snake_case")]
 pub enum BotCommand {
@@ -64,7 +84,10 @@ pub enum BotCommand {
     #[serde(alias = "refresh-devices")]
     RefreshDevices,
     #[serde(alias = "start-share")]
-    StartShare,
+    StartShare {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        preset: Option<SharePresetKind>,
+    },
     #[serde(alias = "stop-share")]
     StopShare,
     Watch {
@@ -181,9 +204,9 @@ impl BotCommand {
             },
             Self::SetNoiseGate { db } => Command::SetNoiseGate(*db),
             Self::RefreshDevices => Command::RefreshAudioDevices,
-            Self::StartShare => Command::StartScreenShare {
+            Self::StartShare { preset } => Command::StartScreenShare {
                 target_id: TEST_PATTERN_TARGET_ID.to_owned(),
-                preset: SharePreset::P720F30,
+                preset: preset.map_or(SharePreset::P720F30, SharePresetKind::to_core),
             },
             Self::StopShare => Command::StopScreenShare,
             Self::Watch { identity } => Command::WatchScreenShare {
