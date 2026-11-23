@@ -4,6 +4,7 @@ mod audio;
 mod data;
 mod events;
 mod files;
+mod p2p_signal;
 mod room;
 mod stream_player;
 mod video;
@@ -18,6 +19,7 @@ use async_trait::async_trait;
 use livekit::prelude::TrackSid;
 use livekit::webrtc::audio_track::RtcAudioTrack;
 use tokio::sync::Mutex;
+use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio::task::JoinHandle;
 
 use crate::api::{AudioDevices, FileTransfer, NoiseSuppression, SessionError};
@@ -32,6 +34,7 @@ use crate::livekit_backend::video::{LocalShare, Watch};
 use crate::video::{CaptureTarget, FrameSlot, SharePreset, VideoFrame};
 
 use self::audio::{Selection, ShareAudio};
+use self::events::IncomingP2pSignal;
 use self::room::Connection;
 use self::stream_player::StreamPlayer;
 
@@ -136,6 +139,8 @@ struct Flags {
     /// through the app's own output, keyed by track sid.
     own_voice_output: AtomicBool,
     voice_players: StdMutex<HashMap<String, VoicePlayer>>,
+    /// Internal sink for validated P2P signaling packets intercepted from the room.
+    p2p_signals: StdMutex<Option<UnboundedSender<IncomingP2pSignal>>>,
 }
 
 #[derive(Debug)]
@@ -294,6 +299,28 @@ impl Flags {
         if let Some(gain) = gain {
             track.set_volume(gain);
         }
+    }
+
+    fn forward_p2p_signal(&self, incoming: IncomingP2pSignal) {
+        let mut slot = self
+            .p2p_signals
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if let Some(tx) = slot.as_ref()
+            && tx.send(incoming).is_err()
+        {
+            *slot = None;
+        }
+    }
+
+    #[expect(dead_code, reason = "wired by the P2P coordinator in the next phase")]
+    fn subscribe_p2p_signals(&self) -> UnboundedReceiver<IncomingP2pSignal> {
+        let (tx, rx) = mpsc::unbounded_channel();
+        *self
+            .p2p_signals
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(tx);
+        rx
     }
 }
 

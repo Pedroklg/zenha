@@ -6,9 +6,11 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
+mod p2p;
 mod report;
 mod webhook;
 
+pub use p2p::*;
 pub use report::*;
 pub use webhook::*;
 

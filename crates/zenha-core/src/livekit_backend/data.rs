@@ -2,13 +2,26 @@
 
 use std::path::PathBuf;
 
-use livekit::prelude::{DataPacket, Room};
-use zenha_protocol::{AVATAR_ATTR, DEAFENED_ATTR, deafened_attribute};
+use super::p2p_signal::encode_p2p_signal;
+use livekit::prelude::{DataPacket, ParticipantIdentity, Room};
+use zenha_protocol::{AVATAR_ATTR, DEAFENED_ATTR, P2P_SIGNAL_TOPIC, P2pSignal, deafened_attribute};
 
 use crate::api::{FileTransfer, SessionError};
 use crate::livekit_backend::files;
 
 use super::LiveKitBackend;
+
+fn build_data_packet(topic: &str, payload: Vec<u8>, destinations: Vec<String>) -> DataPacket {
+    DataPacket {
+        payload,
+        topic: Some(topic.to_owned()),
+        reliable: true,
+        destination_identities: destinations
+            .into_iter()
+            .map(ParticipantIdentity::from)
+            .collect(),
+    }
+}
 
 impl LiveKitBackend {
     pub(super) async fn publish_data(
@@ -16,13 +29,17 @@ impl LiveKitBackend {
         topic: &str,
         payload: Vec<u8>,
     ) -> Result<(), SessionError> {
+        self.publish_data_to(topic, payload, Vec::new()).await
+    }
+
+    pub(super) async fn publish_data_to(
+        &self,
+        topic: &str,
+        payload: Vec<u8>,
+        destinations: Vec<String>,
+    ) -> Result<(), SessionError> {
         let room = self.current_room().await.ok_or(SessionError::NotInRoom)?;
-        let packet = DataPacket {
-            payload,
-            topic: Some(topic.to_owned()),
-            reliable: true,
-            destination_identities: Vec::new(),
-        };
+        let packet = build_data_packet(topic, payload, destinations);
         room.local_participant()
             .publish_data(packet)
             .await
@@ -30,6 +47,18 @@ impl LiveKitBackend {
                 tracing::warn!(%err, "publishing data failed");
                 SessionError::Connection("could not send data".to_owned())
             })
+    }
+
+    #[expect(dead_code, reason = "wired by the P2P coordinator in the next phase")]
+    pub(super) async fn send_p2p_signal(
+        &self,
+        destination: &str,
+        signal: &P2pSignal,
+    ) -> Result<(), SessionError> {
+        let payload =
+            encode_p2p_signal(signal).map_err(|err| SessionError::InvalidInput(err.to_string()))?;
+        self.publish_data_to(P2P_SIGNAL_TOPIC, payload, vec![destination.to_owned()])
+            .await
     }
 
     pub(super) async fn publish_name(&self, name: &str) -> Result<(), SessionError> {
@@ -87,5 +116,32 @@ impl LiveKitBackend {
             .ok_or(SessionError::NotInRoom)?;
         files::start_send(room, events, transfer, path);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn build_data_packet_sets_topic_reliability_and_destinations() {
+        let broadcast = build_data_packet("chat", b"hi".to_vec(), Vec::new());
+        assert_eq!(broadcast.topic.as_deref(), Some("chat"));
+        assert!(broadcast.reliable);
+        assert!(broadcast.destination_identities.is_empty());
+
+        let targeted = build_data_packet(
+            P2P_SIGNAL_TOPIC,
+            b"{}".to_vec(),
+            vec!["peer-b".to_owned(), "peer-c".to_owned()],
+        );
+        assert_eq!(targeted.topic.as_deref(), Some(P2P_SIGNAL_TOPIC));
+        assert!(targeted.reliable);
+        let identities: Vec<&str> = targeted
+            .destination_identities
+            .iter()
+            .map(ParticipantIdentity::as_str)
+            .collect();
+        assert_eq!(identities, vec!["peer-b", "peer-c"]);
     }
 }
