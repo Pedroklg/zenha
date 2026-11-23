@@ -50,6 +50,12 @@ impl App {
         }
     }
 
+    pub(super) fn pump_personal_hook(&mut self) {
+        while let Ok((id, result)) = self.personal_hook_rx.try_recv() {
+            self.state.apply_personal_hook_result(id, result);
+        }
+    }
+
     pub(super) fn pump_update_download(&mut self, ctx: &egui::Context) {
         let mut events = Vec::new();
         while let Ok(event) = self.update_download_rx.try_recv() {

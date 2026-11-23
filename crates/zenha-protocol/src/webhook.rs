@@ -225,6 +225,36 @@ pub struct WebhooksResponse {
     pub webhooks: Vec<AdminWebhook>,
 }
 
+/// Request to `POST /personal-hook` asking for the caller's personal Gamers Club webhook path.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PersonalHookRequest {
+    pub invite_code: String,
+    pub client_id: String,
+}
+
+impl fmt::Debug for PersonalHookRequest {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("PersonalHookRequest")
+            .field("client_id", &self.client_id)
+            .field("invite_code", &"<redacted>")
+            .finish()
+    }
+}
+
+/// Response to `POST /personal-hook`: path `/hooks/u/{identity}/{sig}` joined with the server URL.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PersonalHookResponse {
+    pub path: String,
+}
+
+impl fmt::Debug for PersonalHookResponse {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("PersonalHookResponse")
+            .field("path", &"<redacted>")
+            .finish()
+    }
+}
+
 /// Webhook name: 1 to 32 characters after trimming, no control characters.
 pub fn validate_webhook_name(name: &str) -> Result<(), ValidationError> {
     let trimmed = name.trim();
@@ -360,5 +390,31 @@ mod tests {
         assert!(validate_webhook_name("").is_err());
         assert!(validate_webhook_id("abc-1").is_err());
         assert_eq!(validate_webhook_id("abc1"), Ok(()));
+    }
+
+    #[test]
+    fn personal_hook_types_round_trip_and_redact_secrets() {
+        let req = PersonalHookRequest {
+            invite_code: "super-secret-invite".to_owned(),
+            client_id: "client-pedro".to_owned(),
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        assert_eq!(
+            serde_json::from_str::<PersonalHookRequest>(&json).unwrap(),
+            req
+        );
+        let req_dbg = format!("{req:?}");
+        assert!(!req_dbg.contains("super-secret-invite"));
+        assert!(req_dbg.contains("client-pedro"));
+
+        let res = PersonalHookResponse {
+            path: "/hooks/u/client-pedro/0123456789abcdef0123456789abcdef".to_owned(),
+        };
+        let json = serde_json::to_string(&res).unwrap();
+        assert_eq!(
+            serde_json::from_str::<PersonalHookResponse>(&json).unwrap(),
+            res
+        );
+        assert!(!format!("{res:?}").contains("0123456789abcdef"));
     }
 }

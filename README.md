@@ -21,7 +21,7 @@ Zenha is a Windows desktop app for voice rooms, text chat, file sharing and scre
 - **Hotkeys**: global mute, deafen and push-to-talk, with audio cues.
 - **Screen sharing**: a monitor or window at 720p30, 1080p30 or 1080p60, captured and H.264-encoded on the GPU, with per-app or system audio and a viewer volume slider.
 - **Chat and files**: room chat with unread badge, image thumbnails and viewer, saved messages and file transfers up to 50 MB.
-- **Gamers Club integration**: a webhook posts lobby links and match cards to a room's chat, with buttons to copy the connect command or join the server through Steam.
+- **Gamers Club integration**: each user gets a personal webhook URL in Settings that posts lobby links and match cards to whichever room they are currently in (admins can also create room webhooks), with buttons to copy the connect command or join the server through Steam.
 - **Invites and tray**: `zenha://` invite links, passwords in Windows Credential Manager, minimize to tray without leaving the call.
 - **Admin** (optional): manage rooms, mute, stop shares, kick and rotate the invite code.
 

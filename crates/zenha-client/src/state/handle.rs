@@ -108,6 +108,8 @@ impl AppState {
                 self.audio.open = true;
                 self.name_draft.clone_from(&self.form.display_name);
                 self.invite_copied = false;
+                self.personal_hook.copied = false;
+                self.request_personal_hook(false);
                 self.admin.notice = None;
                 let mut commands = vec![UiCommand::RefreshAudioDevices];
                 commands.extend(self.request_webhooks());
@@ -118,6 +120,7 @@ impl AppState {
                 self.hotkeys.capturing = None;
                 self.hotkeys.capture_error = None;
                 self.invite_copied = false;
+                self.personal_hook.copied = false;
                 self.admin.error = None;
                 self.admin.notice = None;
                 self.admin.webhooks.close_session();
@@ -304,6 +307,14 @@ impl AppState {
             }
             UserAction::DismissCreatedWebhook => {
                 self.admin.webhooks.created = None;
+                Vec::new()
+            }
+            UserAction::CopyPersonalHook => {
+                self.copy_personal_hook();
+                Vec::new()
+            }
+            UserAction::RetryPersonalHook => {
+                self.request_personal_hook(true);
                 Vec::new()
             }
             UserAction::DismissAdminNotice => {

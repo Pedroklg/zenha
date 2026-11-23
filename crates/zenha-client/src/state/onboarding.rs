@@ -298,6 +298,7 @@ impl AppState {
         self.rooms.clear();
         self.audio.open = false;
         self.admin.reset();
+        self.personal_hook.reset();
         self.invite_copied = false;
         self.audio_configured = false;
         self.session_mic_sent = false;
@@ -331,6 +332,7 @@ impl AppState {
         self.pending_move_notice = None;
         self.rooms.clear();
         self.admin.reset();
+        self.personal_hook.reset();
         self.onboarding.password_rejected = false;
         self.onboarding.link_open = false;
         self.onboarding.link_input.clear();
@@ -362,6 +364,7 @@ impl AppState {
         self.lobby_notice = None;
         self.pending_move_notice = None;
         self.admin.reset();
+        self.personal_hook.reset();
         self.pending_password_save = None;
         self.saved_credential = None;
         self.active_password.clear();

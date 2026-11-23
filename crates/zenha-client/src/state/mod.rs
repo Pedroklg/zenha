@@ -6,6 +6,7 @@ mod chat;
 mod events;
 mod handle;
 mod onboarding;
+mod personal_hook;
 mod room;
 mod room_lock;
 mod share;
@@ -29,6 +30,7 @@ pub use audio::{
 };
 pub use chat::{ChatEntry, ChatState, ImageViewer, PendingPastedImage};
 pub use onboarding::{CredentialOp, LoginForm, OnboardingState, display_name_error};
+pub use personal_hook::{PersonalHookFetch, PersonalHookPhase, PersonalHookState};
 pub use room::{ConnectionStatus, RoomState, room_display_title};
 pub use room_lock::{RoomPasswordDialog, SecretText, sidebar_order};
 pub use share::{LocalShare, SharePicker, ShareState, WatchState, aspect_fit};
@@ -66,6 +68,7 @@ pub struct AppState {
     pub close_to_tray: bool,
     pub room_sounds: bool,
     pub picker: SharePicker,
+    pub personal_hook: PersonalHookState,
     pub admin: AdminState,
     pub avatar_version: Option<String>,
     pub avatar_notice: Option<String>,
@@ -80,6 +83,7 @@ pub struct AppState {
     pending_credential_ops: Vec<CredentialOp>,
     pending_commands: Vec<UiCommand>,
     pending_paste_deletes: Vec<PathBuf>,
+    pending_personal_hook_fetch: Option<PersonalHookFetch>,
     audio_configured: bool,
     session_mic_sent: bool,
     session_deafened: bool,
@@ -133,6 +137,7 @@ impl AppState {
             close_to_tray: settings.close_to_tray,
             room_sounds: settings.room_sounds,
             picker: SharePicker::default(),
+            personal_hook: PersonalHookState::default(),
             admin: AdminState::default(),
             avatar_version: settings.avatar_version.clone(),
             avatar_notice: None,
@@ -147,6 +152,7 @@ impl AppState {
             pending_credential_ops: Vec::new(),
             pending_commands,
             pending_paste_deletes: Vec::new(),
+            pending_personal_hook_fetch: None,
             audio_configured: false,
             session_mic_sent: false,
             session_deafened: false,

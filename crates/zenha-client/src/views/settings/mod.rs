@@ -7,17 +7,20 @@ use crate::platform::settings::{NoiseMode, VoiceMode};
 use zenha_protocol::RoomSummary;
 
 use crate::state::{
-    AdminState, AudioState, DEFAULT_DEVICE_LABEL, HotkeyState, MicLevelView, UserAction,
+    AdminState, AudioState, DEFAULT_DEVICE_LABEL, HotkeyState, MicLevelView, PersonalHookState,
+    UserAction,
 };
 use crate::theme;
 use crate::ui_model::AudioDeviceView;
 
 mod admin;
+mod gamers_club;
 mod hotkeys;
 mod mic;
 mod webhooks;
 
 use admin::admin_section;
+use gamers_club::gamers_club_section;
 use hotkeys::hotkeys_section;
 use mic::noise_gate;
 
@@ -60,6 +63,7 @@ pub struct SettingsView<'a> {
     pub muted_on_join: bool,
     pub invite_copied: bool,
     pub can_admin: bool,
+    pub personal_hook: &'a PersonalHookState,
     pub admin: &'a mut AdminState,
     pub rooms: &'a [RoomSummary],
     pub avatar_identity: &'a str,
@@ -277,6 +281,7 @@ fn content(ui: &mut egui::Ui, view: &mut SettingsView<'_>, actions: &mut Vec<Use
         ui.small(RichText::new("Link copiado.").color(theme::ACCENT_TEXT));
     }
 
+    gamers_club_section(ui, view.can_admin, view.personal_hook, actions);
     admin_section(ui, view.can_admin, view.admin, view.rooms, actions);
 }
 

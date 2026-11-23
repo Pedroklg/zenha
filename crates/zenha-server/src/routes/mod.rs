@@ -122,6 +122,7 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health))
         .route("/token", post(token::issue_token))
+        .route("/personal-hook", post(hooks::issue_personal_hook))
         .route("/rooms", get(rooms::list_rooms))
         .route("/rooms/{room}/unlock", post(rooms::unlock_room))
         .route(
@@ -176,6 +177,13 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/hooks/{id}/{token}",
             post(hooks::post_hook)
+                .options(hooks::hook_preflight)
+                .layer(DefaultBodyLimit::max(MAX_WEBHOOK_BODY_BYTES))
+                .layer(axum::middleware::map_response(hooks::allow_any_origin)),
+        )
+        .route(
+            "/hooks/u/{identity}/{sig}",
+            post(hooks::post_personal_hook)
                 .options(hooks::hook_preflight)
                 .layer(DefaultBodyLimit::max(MAX_WEBHOOK_BODY_BYTES))
                 .layer(axum::middleware::map_response(hooks::allow_any_origin)),

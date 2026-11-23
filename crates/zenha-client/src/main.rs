@@ -10,6 +10,7 @@ mod dialogs;
 mod format;
 mod icons;
 mod invite;
+mod personal_hook;
 mod platform;
 mod state;
 mod theme;
