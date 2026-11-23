@@ -5,7 +5,7 @@ mod event;
 #[cfg(test)]
 mod tests;
 
-pub use command::{BotCommand, NoiseKind, parse_command};
+pub use command::{BotCommand, NoiseKind, SharePresetKind, parse_command};
 pub use event::{
     BotEvent, DeviceInfo, ErrorInfo, ParticipantInfo, RoomInfo, Stamped, TargetInfo, decode_event,
     encode_event, error_kind,

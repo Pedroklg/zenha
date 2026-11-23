@@ -23,6 +23,8 @@ pub fn options_for(args: &BotArgs) -> LiveKitBackendOptions {
             None => MicrophoneSource::Device,
         },
         test_pattern_target: args.test_pattern,
+        test_pattern_size: args.test_pattern_size,
+        video_codec: args.video_codec,
     }
 }
 
@@ -89,6 +91,8 @@ pub fn bot_main(args: &BotArgs) -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use zenha_core::VideoCodec;
+
     use super::*;
 
     fn args(tone: Option<f64>, pattern: bool) -> BotArgs {
@@ -99,6 +103,8 @@ mod tests {
             tone_hz: tone,
             amplitude: 0.03,
             test_pattern: pattern,
+            test_pattern_size: None,
+            video_codec: VideoCodec::default(),
             allow_non_windows: false,
         }
     }
@@ -107,7 +113,10 @@ mod tests {
     fn options_follow_the_arguments() {
         let device = options_for(&args(None, false));
         assert_eq!(device, LiveKitBackendOptions::default());
-        let tone = options_for(&args(Some(1290.0), true));
+        let mut custom = args(Some(1290.0), true);
+        custom.test_pattern_size = Some((1920, 1080));
+        custom.video_codec = VideoCodec::Av1;
+        let tone = options_for(&custom);
         assert_eq!(
             tone.microphone,
             MicrophoneSource::Tone {
@@ -116,6 +125,8 @@ mod tests {
             }
         );
         assert!(tone.test_pattern_target);
+        assert_eq!(tone.test_pattern_size, Some((1920, 1080)));
+        assert_eq!(tone.video_codec, VideoCodec::Av1);
         assert_eq!(describe(&tone), "tone 1290 Hz at 0.03");
     }
 

@@ -3,6 +3,7 @@
 use std::fs::File;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::num::NonZeroUsize;
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::thread;
@@ -147,6 +148,95 @@ pub fn require_status(response: &HttpResponse, expected: u16, what: &str) -> any
     Ok(())
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct CpuSample {
+    pub cpu: Duration,
+    pub wall: Instant,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CpuUsage {
+    pub cpu_secs: f64,
+    pub wall_secs: f64,
+    /// CPU seconds per wall second (1.0 = one logical core saturated).
+    pub cores_used: f64,
+    /// CPU time divided by wall time and by logical core count, as a percentage (0..100).
+    pub per_core_pct: f64,
+    pub logical_cores: usize,
+}
+
+pub fn logical_cores() -> usize {
+    std::thread::available_parallelism()
+        .map(NonZeroUsize::get)
+        .unwrap_or(1)
+}
+
+pub fn parse_process_cpu_ticks(stdout: &str) -> anyhow::Result<u64> {
+    let trimmed = stdout.trim();
+    if trimmed.is_empty() {
+        bail!("empty CPU time output");
+    }
+    trimmed
+        .parse::<u64>()
+        .with_context(|| format!("invalid CPU ticks output {trimmed:?}"))
+}
+
+pub fn compute_cpu_usage(
+    start: CpuSample,
+    end: CpuSample,
+    logical_cores: usize,
+) -> anyhow::Result<CpuUsage> {
+    let wall_secs = end.wall.saturating_duration_since(start.wall).as_secs_f64();
+    if wall_secs <= 0.0 {
+        bail!("wall duration must be positive to compute CPU usage");
+    }
+    let cpu_secs = end.cpu.saturating_sub(start.cpu).as_secs_f64();
+    let cores = logical_cores.max(1);
+    let cores_used = cpu_secs / wall_secs;
+    let per_core_pct = (cores_used / cores as f64) * 100.0;
+    Ok(CpuUsage {
+        cpu_secs,
+        wall_secs,
+        cores_used,
+        per_core_pct,
+        logical_cores: cores,
+    })
+}
+
+#[cfg(windows)]
+pub fn sample_process_cpu(pid: u32) -> anyhow::Result<CpuSample> {
+    let before = Instant::now();
+    let output = Command::new("powershell.exe")
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            &format!("(Get-Process -Id {pid}).TotalProcessorTime.Ticks"),
+        ])
+        .output()
+        .with_context(|| format!("running powershell to sample CPU of pid {pid}"))?;
+    let after = Instant::now();
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!(
+            "powershell CPU query failed for pid {pid} ({}): {}",
+            output.status,
+            stderr.trim()
+        );
+    }
+    let ticks = parse_process_cpu_ticks(&String::from_utf8_lossy(&output.stdout))?;
+    let wall = before + after.saturating_duration_since(before) / 2;
+    Ok(CpuSample {
+        cpu: Duration::from_nanos(ticks.saturating_mul(100)),
+        wall,
+    })
+}
+
+#[cfg(not(windows))]
+pub fn sample_process_cpu(_pid: u32) -> anyhow::Result<CpuSample> {
+    bail!("process CPU sampling is only supported on Windows")
+}
+
 #[cfg(test)]
 mod tests {
     use std::io::{BufRead, BufReader};
@@ -229,5 +319,52 @@ mod tests {
             Duration::from_millis(5),
             || false
         ));
+    }
+
+    #[test]
+    fn process_cpu_ticks_parsing_accepts_integers_and_rejects_garbage() {
+        assert_eq!(parse_process_cpu_ticks("12345678\r\n").unwrap(), 12_345_678);
+        assert_eq!(parse_process_cpu_ticks("0").unwrap(), 0);
+        assert!(parse_process_cpu_ticks("").is_err());
+        assert!(parse_process_cpu_ticks("  \n").is_err());
+        assert!(parse_process_cpu_ticks("-5").is_err());
+        assert!(parse_process_cpu_ticks("abc").is_err());
+    }
+
+    #[test]
+    fn cpu_usage_computes_cores_used_and_per_core_percentage() {
+        let t0 = Instant::now();
+        let start = CpuSample {
+            cpu: Duration::from_secs(10),
+            wall: t0,
+        };
+        let end = CpuSample {
+            cpu: Duration::from_secs(25),
+            wall: t0 + Duration::from_secs(30),
+        };
+        let usage = compute_cpu_usage(start, end, 10).unwrap();
+        assert!((usage.cpu_secs - 15.0).abs() < 1e-9);
+        assert!((usage.wall_secs - 30.0).abs() < 1e-9);
+        assert!((usage.cores_used - 0.5).abs() < 1e-9);
+        assert!((usage.per_core_pct - 5.0).abs() < 1e-9);
+        assert_eq!(usage.logical_cores, 10);
+
+        // Saturating CPU delta and zero wall duration guard.
+        assert!(compute_cpu_usage(end, start, 10).is_err());
+        assert!(compute_cpu_usage(start, start, 10).is_err());
+        let zero_cpu = compute_cpu_usage(
+            CpuSample {
+                cpu: Duration::from_secs(20),
+                wall: t0,
+            },
+            CpuSample {
+                cpu: Duration::from_secs(10),
+                wall: t0 + Duration::from_secs(10),
+            },
+            0,
+        )
+        .unwrap();
+        assert_eq!(zero_cpu.cpu_secs, 0.0);
+        assert_eq!(zero_cpu.logical_cores, 1);
     }
 }

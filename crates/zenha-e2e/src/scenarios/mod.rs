@@ -118,6 +118,12 @@ pub const ALL: &[ScenarioDef] = &[
         needs_media: true,
         run: audio::cue,
     },
+    ScenarioDef {
+        name: "av1-decode",
+        title: "Custo de CPU para decodificar AV1 1080p comparado a H.264 e VP9",
+        needs_media: true,
+        run: share::av1_decode,
+    },
 ];
 
 pub fn room_name(scenario: &str) -> String {
@@ -179,6 +185,7 @@ mod tests {
                 "volume-sticks",
                 "room-switch",
                 "cue",
+                "av1-decode",
             ]
         );
         assert!(!ALL[0].needs_media);

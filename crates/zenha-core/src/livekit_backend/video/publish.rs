@@ -128,15 +128,33 @@ impl LocalShare {
     }
 }
 
+#[derive(Clone, Copy)]
+pub(crate) struct ShareOptions {
+    pub(crate) preset: SharePreset,
+    pub(crate) video_codec: crate::backend::options::VideoCodec,
+}
+
+fn livekit_video_codec(codec: crate::backend::options::VideoCodec) -> VideoCodec {
+    match codec {
+        crate::backend::options::VideoCodec::Vp9 => VideoCodec::VP9,
+        crate::backend::options::VideoCodec::H264 => VideoCodec::H264,
+        crate::backend::options::VideoCodec::Av1 => VideoCodec::AV1,
+    }
+}
+
 pub(crate) async fn publish_share(
     room: Arc<Room>,
     events: UnboundedSender<BackendEvent>,
     mut capture: Box<dyn FrameSource>,
     target: &CaptureTarget,
-    preset: SharePreset,
+    share_options: ShareOptions,
     preview: FrameSlot,
     ui_visible: Arc<std::sync::atomic::AtomicBool>,
 ) -> Result<LocalShare, SessionError> {
+    let ShareOptions {
+        preset,
+        video_codec,
+    } = share_options;
     if gpu_share::enabled()
         && let Some(gpu_target) = parse_target_id(&target.id)
             .and_then(|(kind, source_id)| gpu_share::GpuTarget::new(kind, source_id))
@@ -193,7 +211,7 @@ pub(crate) async fn publish_share(
         LocalVideoTrack::create_video_track(SHARE_TRACK_NAME, RtcVideoSource::Native(native));
     let options = TrackPublishOptions {
         source: TrackSource::Screenshare,
-        video_codec: VideoCodec::VP9,
+        video_codec: livekit_video_codec(video_codec),
         video_encoding: Some(VideoEncoding {
             max_bitrate: preset.max_bitrate_bps(),
             max_framerate: f64::from(preset.fps()),

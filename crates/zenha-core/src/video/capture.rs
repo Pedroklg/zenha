@@ -147,30 +147,60 @@ impl TestPatternSource {
 
     /// BGRA pixels of frame number `index`, tightly packed.
     pub fn render(width: u32, height: u32, index: u64) -> Vec<u8> {
+        let mut out = Vec::new();
+        Self::render_into(width, height, index, &mut out);
+        out
+    }
+
+    /// Writes tightly packed BGRA pixels of frame number `index` into `out`, reusing capacity.
+    pub fn render_into(width: u32, height: u32, index: u64, out: &mut Vec<u8>) {
         let (w, h) = (width as usize, height as usize);
+        let row_bytes = w * 4;
+        out.resize(row_bytes * h, 255);
+        if w == 0 || h == 0 {
+            return;
+        }
         let scroll = usize::try_from(index)
             .unwrap_or(0)
             .wrapping_mul(SCROLL_PIXELS_PER_FRAME);
         let band_top = h - h / 6;
-        let marker = scroll % w.max(1);
-        let mut out = vec![255u8; w * h * 4];
-        for y in 0..h {
-            for x in 0..w {
+        let marker = scroll % w;
+        let marker_half = h / 12 + 1;
+
+        if band_top > 0 {
+            for (x, pixel) in out[..row_bytes].chunks_exact_mut(4).enumerate() {
                 let bar = ((x + scroll) % w) * BARS.len() / w;
-                let [r, g, b] = if y >= band_top && x.abs_diff(marker) < h / 12 + 1 {
-                    [255, 255, 255]
-                } else if y >= band_top {
-                    [0, 0, 0]
-                } else {
-                    BARS[bar]
-                };
-                let at = (y * w + x) * 4;
-                out[at] = b;
-                out[at + 1] = g;
-                out[at + 2] = r;
+                let [r, g, b] = BARS[bar];
+                pixel[0] = b;
+                pixel[1] = g;
+                pixel[2] = r;
+                pixel[3] = 255;
+            }
+            for y in 1..band_top {
+                out.copy_within(0..row_bytes, y * row_bytes);
             }
         }
-        out
+
+        if band_top < h {
+            let band_start = band_top * row_bytes;
+            for (x, pixel) in out[band_start..band_start + row_bytes]
+                .chunks_exact_mut(4)
+                .enumerate()
+            {
+                let [r, g, b] = if x.abs_diff(marker) < marker_half {
+                    [255, 255, 255]
+                } else {
+                    [0, 0, 0]
+                };
+                pixel[0] = b;
+                pixel[1] = g;
+                pixel[2] = r;
+                pixel[3] = 255;
+            }
+            for y in (band_top + 1)..h {
+                out.copy_within(band_start..band_start + row_bytes, y * row_bytes);
+            }
+        }
     }
 }
 
@@ -219,12 +249,13 @@ impl FrameSource for TestPatternSource {
             .spawn(move || {
                 let mut pacer = Pacer::new(fps, Instant::now());
                 let mut index = 0u64;
+                let mut pixels = Vec::with_capacity(width as usize * height as usize * 4);
                 while !flag.load(Ordering::SeqCst) {
                     std::thread::sleep(pacer.until_next(Instant::now()));
                     if flag.load(Ordering::SeqCst) {
                         break;
                     }
-                    let pixels = Self::render(width, height, index);
+                    Self::render_into(width, height, index, &mut pixels);
                     index += 1;
                     sink.frame(BgraFrame {
                         width,
@@ -405,6 +436,36 @@ mod tests {
         assert_eq!(&a[0..4], &[255, 255, 255, 255]);
         let yellow = TestPatternSource::render(80, 40, 0)[(10 * 4)..(10 * 4 + 4)].to_vec();
         assert_eq!(yellow, vec![0, 255, 255, 255]);
+    }
+
+    #[test]
+    fn render_into_reuses_buffer_and_matches_pixel_formula() {
+        let mut buf = Vec::new();
+        for (w, h, idx) in [(64, 36, 0), (160, 90, 17), (73, 41, 9)] {
+            TestPatternSource::render_into(w, h, idx, &mut buf);
+            let (wu, hu) = (w as usize, h as usize);
+            let scroll = (idx as usize).wrapping_mul(SCROLL_PIXELS_PER_FRAME);
+            let band_top = hu - hu / 6;
+            let marker = scroll % wu;
+            let mut expected = vec![255u8; wu * hu * 4];
+            for y in 0..hu {
+                for x in 0..wu {
+                    let bar = ((x + scroll) % wu) * BARS.len() / wu;
+                    let [r, g, b] = if y >= band_top && x.abs_diff(marker) < hu / 12 + 1 {
+                        [255, 255, 255]
+                    } else if y >= band_top {
+                        [0, 0, 0]
+                    } else {
+                        BARS[bar]
+                    };
+                    let at = (y * wu + x) * 4;
+                    expected[at] = b;
+                    expected[at + 1] = g;
+                    expected[at + 2] = r;
+                }
+            }
+            assert_eq!(buf, expected, "mismatch for {w}x{h} frame {idx}");
+        }
     }
 
     #[test]

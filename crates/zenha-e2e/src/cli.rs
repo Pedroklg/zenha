@@ -2,9 +2,11 @@
 
 use std::path::PathBuf;
 
+use zenha_core::VideoCodec;
+
 pub const USAGE: &str = "uso:
   zenha-e2e run [--filter nome[,nome...]] [--list] [--repo-root CAMINHO]
-  zenha-e2e bot --name NOME --token-url URL --invite CODIGO [--tone HZ] [--amplitude A] [--test-pattern]";
+  zenha-e2e bot --name NOME --token-url URL --invite CODIGO [--tone HZ] [--amplitude A] [--test-pattern] [--test-pattern-size LxA] [--video-codec vp9|h264|av1]";
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct RunArgs {
@@ -22,6 +24,8 @@ pub struct BotArgs {
     pub tone_hz: Option<f64>,
     pub amplitude: f64,
     pub test_pattern: bool,
+    pub test_pattern_size: Option<(u32, u32)>,
+    pub video_codec: VideoCodec,
     pub allow_non_windows: bool,
 }
 
@@ -93,6 +97,19 @@ fn parse_run<'a>(mut iter: impl Iterator<Item = &'a String>) -> Result<Cli, Stri
     Ok(Cli::Run(run))
 }
 
+fn parse_size(text: &str) -> Result<(u32, u32), String> {
+    let (w, h) = text
+        .split_once(['x', 'X'])
+        .ok_or_else(|| format!("--test-pattern-size: {text:?} must be WxH"))?;
+    let width = w
+        .parse()
+        .map_err(|_| format!("--test-pattern-size: invalid width {w:?}"))?;
+    let height = h
+        .parse()
+        .map_err(|_| format!("--test-pattern-size: invalid height {h:?}"))?;
+    Ok((width, height))
+}
+
 fn parse_bot<'a>(mut iter: impl Iterator<Item = &'a String>) -> Result<Cli, String> {
     let (mut name, mut token_url, mut invite) = (None, None, None);
     let mut bot = BotArgs {
@@ -102,6 +119,8 @@ fn parse_bot<'a>(mut iter: impl Iterator<Item = &'a String>) -> Result<Cli, Stri
         tone_hz: None,
         amplitude: crate::detect::TONE_AMPLITUDE,
         test_pattern: false,
+        test_pattern_size: None,
+        video_codec: VideoCodec::default(),
         allow_non_windows: false,
     };
     while let Some(flag) = iter.next() {
@@ -114,6 +133,14 @@ fn parse_bot<'a>(mut iter: impl Iterator<Item = &'a String>) -> Result<Cli, Stri
                 bot.amplitude = number(&value(&mut iter, "--amplitude")?, "--amplitude")?;
             }
             "--test-pattern" => bot.test_pattern = true,
+            "--test-pattern-size" => {
+                bot.test_pattern_size =
+                    Some(parse_size(&value(&mut iter, "--test-pattern-size")?)?);
+            }
+            "--video-codec" => {
+                let raw = value(&mut iter, "--video-codec")?;
+                bot.video_codec = raw.parse().map_err(|err| format!("--video-codec: {err}"))?;
+            }
             "--allow-non-windows" => bot.allow_non_windows = true,
             other => return Err(format!("unknown option {other:?} for bot")),
         }
@@ -189,6 +216,59 @@ mod tests {
                 "c",
                 "--tone",
                 "x"
+            ]))
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn bot_parses_video_codec_and_test_pattern_size() {
+        let ok = parse(&args(&[
+            "bot",
+            "--name",
+            "t",
+            "--token-url",
+            "http://x",
+            "--invite",
+            "c",
+            "--test-pattern",
+            "--test-pattern-size",
+            "1920x1080",
+            "--video-codec",
+            "av1",
+        ]));
+        match ok {
+            Ok(Cli::Bot(bot)) => {
+                assert_eq!(bot.test_pattern_size, Some((1920, 1080)));
+                assert_eq!(bot.video_codec, VideoCodec::Av1);
+            }
+            other => panic!("{other:?}"),
+        }
+        assert!(
+            parse(&args(&[
+                "bot",
+                "--name",
+                "t",
+                "--token-url",
+                "http://x",
+                "--invite",
+                "c",
+                "--video-codec",
+                "vp8"
+            ]))
+            .is_err()
+        );
+        assert!(
+            parse(&args(&[
+                "bot",
+                "--name",
+                "t",
+                "--token-url",
+                "http://x",
+                "--invite",
+                "c",
+                "--test-pattern-size",
+                "1920"
             ]))
             .is_err()
         );

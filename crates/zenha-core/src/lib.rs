@@ -30,7 +30,7 @@ pub use audio::noise::{DENOISE_FRAME, Denoiser, GateReading, NoiseGate, RnnoiseD
 pub use backend::no_media::NoMediaBackend;
 pub use backend::options::{
     LiveKitBackendOptions, MicrophoneSource, TEST_PATTERN_SIZE, TEST_PATTERN_TARGET_ID,
-    TEST_PATTERN_TARGET_NAME, TONE_FRAME_SAMPLES, TONE_SAMPLE_RATE, ToneGenerator,
+    TEST_PATTERN_TARGET_NAME, TONE_FRAME_SAMPLES, TONE_SAMPLE_RATE, ToneGenerator, VideoCodec,
     test_pattern_target,
 };
 pub use backend::{BackendEvent, ConnectedRoom, MediaBackend};
