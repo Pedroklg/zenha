@@ -28,9 +28,9 @@ Plano e tasks: `docs/plan.md`. Arquitetura: `docs/architecture.md`. Decisões: `
 - Segredos nunca em log: `Config` tem `Debug` manual que os omite.
 - Dependências em `[workspace.dependencies]`; `livekit`, `livekit-api` e `libwebrtc` com versão exata.
 
-## Versões de referência (crates.io, 2026-11-17)
+## Versões de referência (crates.io, 2026-11-23)
 
-`livekit` 0.11.0, `livekit-api` 0.10.2, `libwebrtc` 0.4.1, `eframe` 0.37.0, `wasapi` 0.27.0, `global-hotkey` 0.10.0, `windows-capture` 2.0.1.
+`livekit` 0.12.0, `livekit-api` 0.11.0, `libwebrtc` 0.4.2, `eframe` 0.37.0, `wasapi` 0.27.0, `global-hotkey` 0.10.0, `windows-capture` 2.0.1.
 
 O SDK do LiveKit muda a API quase toda semana. Antes de usar uma função dele, confira a assinatura no código da versão fixada (`~/.cargo/registry/src/`) ou nos exemplos do repositório `livekit/rust-sdks`; não confie na memória.
 
