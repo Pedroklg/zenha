@@ -167,6 +167,7 @@ impl LiveKitBackend {
         };
         let mut room_options = RoomOptions::default();
         room_options.auto_subscribe = false;
+        room_options.dynacast = true;
         let (room, room_events) = Room::connect(url, token, room_options)
             .await
             .map_err(|err| {
