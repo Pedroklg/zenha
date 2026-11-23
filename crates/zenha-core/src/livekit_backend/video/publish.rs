@@ -120,11 +120,20 @@ pub(crate) struct LocalShare {
     room: Arc<Room>,
     sid: Arc<std::sync::Mutex<TrackSid>>,
     capture: Box<dyn FrameSource>,
+    fan_out: Option<Arc<gpu_share::VideoFanOut>>,
 }
 
 impl LocalShare {
     pub(crate) fn sid_handle(&self) -> Arc<std::sync::Mutex<TrackSid>> {
         Arc::clone(&self.sid)
+    }
+
+    #[expect(
+        dead_code,
+        reason = "exposed for upcoming P2P sink registration (T105.2)"
+    )]
+    pub(crate) fn fan_out(&self) -> Option<Arc<gpu_share::VideoFanOut>> {
+        self.fan_out.clone()
     }
 }
 
@@ -159,8 +168,9 @@ pub(crate) async fn publish_share(
         && let Some(gpu_target) = parse_target_id(&target.id)
             .and_then(|(kind, source_id)| gpu_share::GpuTarget::new(kind, source_id))
     {
+        let fan_out = Arc::new(gpu_share::VideoFanOut::default());
         let output = gpu_share::ShareOutput {
-            source: Arc::new(OnceLock::new()),
+            fan_out: Arc::clone(&fan_out),
             preview: preview.clone(),
             ui_visible: Arc::clone(&ui_visible),
             on_end: Box::new({
@@ -255,6 +265,7 @@ pub(crate) async fn publish_share(
         room,
         sid: Arc::new(std::sync::Mutex::new(publication.sid())),
         capture,
+        fan_out: None,
     })
 }
 
@@ -265,7 +276,7 @@ async fn publish_gpu_share(
     gpu_target: gpu_share::GpuTarget,
     output: gpu_share::ShareOutput,
 ) -> Result<LocalShare, SessionError> {
-    let slot = Arc::clone(&output.source);
+    let fan_out = Arc::clone(&output.fan_out);
     let (size_tx, size_rx) = oneshot::channel();
     let config = gpu_share::GpuShareConfig {
         target: gpu_target,
@@ -289,7 +300,7 @@ async fn publish_gpu_share(
         }
     };
     let native = NativeVideoSource::new_encoded(VideoResolution { width, height });
-    let _ = slot.set(native.clone());
+    fan_out.add(gpu_share::SFU_SINK_ID, native.clone());
     let track =
         LocalVideoTrack::create_video_track(SHARE_TRACK_NAME, RtcVideoSource::Native(native));
     let options = TrackPublishOptions {
@@ -312,12 +323,14 @@ async fn publish_gpu_share(
     let publication = match published {
         Ok(Ok(publication)) => publication,
         Ok(Err(err)) => {
+            fan_out.remove(gpu_share::SFU_SINK_ID);
             stop_capture(capture).await;
             return Err(SessionError::Video(format!(
                 "could not publish the GPU screen share: {err}"
             )));
         }
         Err(_) => {
+            fan_out.remove(gpu_share::SFU_SINK_ID);
             stop_capture(capture).await;
             return Err(SessionError::Video(
                 "publishing the GPU screen share timed out".to_owned(),
@@ -337,6 +350,7 @@ async fn publish_gpu_share(
         room,
         sid: Arc::new(std::sync::Mutex::new(publication.sid())),
         capture,
+        fan_out: Some(fan_out),
     })
 }
 
@@ -350,7 +364,15 @@ async fn stop_capture(mut capture: Box<dyn FrameSource>) {
 }
 
 pub(crate) async fn stop_share(share: LocalShare) {
-    let LocalShare { room, sid, capture } = share;
+    let LocalShare {
+        room,
+        sid,
+        capture,
+        fan_out,
+    } = share;
+    if let Some(fan_out) = fan_out {
+        fan_out.remove(gpu_share::SFU_SINK_ID);
+    }
     let sid = sid
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)

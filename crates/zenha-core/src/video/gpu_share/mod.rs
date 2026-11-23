@@ -8,16 +8,16 @@
 mod capture;
 mod convert;
 mod encode;
+mod fan_out;
 
 use std::collections::VecDeque;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, OnceLock};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use livekit::webrtc::video_frame::{EncodedFrameType, EncodedVideoCodec, EncodedVideoFrame};
 use livekit::webrtc::video_source::VideoResolution;
-use livekit::webrtc::video_source::native::NativeVideoSource;
 use tokio::sync::oneshot;
 use windows::Win32::Foundation::{CloseHandle, HANDLE, HMODULE};
 use windows::Win32::Graphics::Direct3D::{
@@ -44,6 +44,8 @@ use crate::video::{
     CaptureKind, CaptureTarget, FrameSlot, PreviewGate, SHARE_PREVIEW_INTERVAL,
     SHARE_PREVIEW_MAX_SIDE, VideoFrame, fit_within,
 };
+
+pub(crate) use fan_out::{SFU_SINK_ID, VideoFanOut};
 
 const MF_VERSION: u32 = 0x0002_0070;
 const KEEPALIVE: Duration = Duration::from_secs(1);
@@ -155,9 +157,9 @@ pub(crate) struct GpuShareConfig {
     pub bitrate_bps: u64,
 }
 
-/// Where the share thread delivers its work besides the encoded frames.
+/// Where the share thread delivers its encoded frames and local preview.
 pub(crate) struct ShareOutput {
-    pub source: Arc<OnceLock<NativeVideoSource>>,
+    pub fan_out: Arc<VideoFanOut>,
     pub preview: FrameSlot,
     pub ui_visible: Arc<AtomicBool>,
     pub on_end: Box<dyn FnOnce(CaptureEnd) + Send>,
@@ -616,21 +618,18 @@ fn run(
     if size_tx.send(Ok(pipeline.out_size)).is_err() {
         return;
     }
-    let source = loop {
+    while !output.fan_out.has_active_sinks() {
         if stop.load(Ordering::SeqCst) {
             return;
         }
-        if let Some(source) = output.source.get() {
-            break source.clone();
-        }
         std::thread::sleep(SOURCE_WAIT_STEP);
-    };
+    }
     let mut share = Share {
         config,
         device,
         context,
         pipeline: Some(pipeline),
-        source,
+        fan_out: output.fan_out,
         preview: output.preview,
         preview_gate: PreviewGate::new(SHARE_PREVIEW_INTERVAL),
         ui_visible: output.ui_visible,
@@ -651,7 +650,7 @@ struct Share {
     device: ID3D11Device,
     context: ID3D11DeviceContext,
     pipeline: Option<Pipeline>,
-    source: NativeVideoSource,
+    fan_out: Arc<VideoFanOut>,
     preview: FrameSlot,
     preview_gate: PreviewGate,
     ui_visible: Arc<AtomicBool>,
@@ -677,11 +676,10 @@ impl Share {
             if pipeline.capture.closed() {
                 return Ok(Some(CaptureEnd::TargetClosed));
             }
-            force_key |= self.source.take_keyframe_request();
-            if let Some(rate) = self.source.take_rate_control_request() {
-                pipeline
-                    .encoder
-                    .set_bitrate(rate.target_bitrate_bps.min(self.config.bitrate_bps));
+            let controls = self.fan_out.poll_controls(self.config.bitrate_bps);
+            force_key |= controls.force_keyframe;
+            if let Some(target_bps) = controls.target_bitrate_bps {
+                pipeline.encoder.set_bitrate(target_bps);
             }
             let captured = pipeline
                 .capture
@@ -741,7 +739,7 @@ impl Share {
                 }
                 stats.keyframes += u64::from(output.keyframe);
                 stats.bytes += output.data.len() as u64;
-                self.source.capture_encoded_frame(&EncodedVideoFrame {
+                self.fan_out.send_frame(&EncodedVideoFrame {
                     codec: EncodedVideoCodec::H264,
                     payload: &output.data,
                     timestamp_us: output.time_us,
