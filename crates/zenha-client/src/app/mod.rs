@@ -66,6 +66,8 @@ pub struct App {
     open_sender: Sender<Result<(), ()>>,
     paste_results: Receiver<Result<SavedPastedImage, PasteImageError>>,
     paste_sender: Sender<Result<SavedPastedImage, PasteImageError>>,
+    personal_hook_tx: Sender<(u64, Result<String, String>)>,
+    personal_hook_rx: Receiver<(u64, Result<String, String>)>,
     update_rx: Option<Receiver<AvailableUpdate>>,
     update_download_tx: Sender<UpdateDownloadEvent>,
     update_download_rx: Receiver<UpdateDownloadEvent>,
@@ -118,6 +120,7 @@ impl App {
         let (save_sender, save_results) = channel();
         let (open_sender, open_results) = channel();
         let (paste_sender, paste_results) = channel();
+        let (personal_hook_tx, personal_hook_rx) = channel();
         let (update_download_tx, update_download_rx) = channel();
         let update_rx = if demo_flag {
             state.set_can_auto_update(true);
@@ -154,6 +157,8 @@ impl App {
             open_sender,
             paste_results,
             paste_sender,
+            personal_hook_tx,
+            personal_hook_rx,
             update_rx,
             update_download_tx,
             update_download_rx,

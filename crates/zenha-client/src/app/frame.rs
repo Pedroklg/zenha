@@ -26,6 +26,7 @@ impl eframe::App for App {
         self.pump_update();
         self.pump_update_download(ctx);
         self.pump_demo_update(ctx);
+        self.pump_personal_hook();
         #[cfg(windows)]
         self.pump_forwarded_links(ctx);
         let now = Instant::now();
@@ -123,6 +124,7 @@ impl eframe::App for App {
             muted_on_join,
             invite_copied,
             picker,
+            personal_hook,
             admin,
             avatar_version,
             avatar_notice,
@@ -186,6 +188,7 @@ impl eframe::App for App {
                 muted_on_join: *muted_on_join,
                 invite_copied: *invite_copied,
                 can_admin,
+                personal_hook,
                 admin,
                 rooms,
                 avatar_identity: &client_id,

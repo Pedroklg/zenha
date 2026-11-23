@@ -9,6 +9,9 @@ use zenha_protocol::{
 use super::messages::now_unix_ms;
 use super::{ChatStore, ChatStoreError};
 
+/// Window during which duplicate links in the same room are ignored for personal webhooks.
+pub const PERSONAL_WEBHOOK_DEDUP_WINDOW_MS: u64 = 10 * 60 * 1000;
+
 /// Stored webhook; `token_hash` is the hex SHA-256 of the secret, never the secret itself.
 pub struct WebhookRecord {
     pub room: String,
@@ -133,6 +136,57 @@ impl ChatStore {
         .await
     }
 
+    /// Keeps a delivered personal-hook post for the room history.
+    /// Returns `false`, storing nothing, when any sender already posted the same link to `room`
+    /// within the last 10 minutes.
+    pub async fn save_personal_webhook_post(
+        &self,
+        room: String,
+        webhook_id: String,
+        post: WebhookPost,
+        post_json: String,
+    ) -> Result<bool, ChatStoreError> {
+        self.with_conn(move |conn| {
+            let cutoff = post.sent_at_unix_ms.saturating_sub(WEBHOOK_POST_TTL_MS);
+            conn.execute(
+                "DELETE FROM webhook_posts WHERE created_at_unix_ms < ?1",
+                params![to_sql_ms(cutoff)],
+            )?;
+            if let Some(key) = webhook_post_dedup_key(&post) {
+                let window_start = post
+                    .sent_at_unix_ms
+                    .saturating_sub(PERSONAL_WEBHOOK_DEDUP_WINDOW_MS);
+                let mut stmt = conn.prepare(
+                    "SELECT post_json FROM webhook_posts
+                     WHERE room = ?1 AND created_at_unix_ms > ?2",
+                )?;
+                let rows = stmt.query_map(params![room, to_sql_ms(window_start)], |row| {
+                    row.get::<_, String>(0)
+                })?;
+                for raw in rows {
+                    if let Ok(existing) = serde_json::from_str::<WebhookPost>(&raw?)
+                        && webhook_post_dedup_key(&existing).as_deref() == Some(key.as_str())
+                    {
+                        return Ok(false);
+                    }
+                }
+            }
+            conn.execute(
+                "INSERT OR IGNORE INTO webhook_posts (id, room, webhook_id, post_json, created_at_unix_ms)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![
+                    post.id,
+                    room,
+                    webhook_id,
+                    post_json,
+                    to_sql_ms(post.sent_at_unix_ms)
+                ],
+            )?;
+            Ok(true)
+        })
+        .await
+    }
+
     /// Posts of the room younger than 12 hours at `now_unix_ms`, oldest first.
     pub async fn list_webhook_posts(
         &self,
@@ -208,4 +262,47 @@ pub(super) fn delete_room_webhooks(conn: &Connection, room: &str) -> Result<(), 
     conn.execute("DELETE FROM webhooks WHERE room = ?1", params![room])?;
     conn.execute("DELETE FROM webhook_posts WHERE room = ?1", params![room])?;
     Ok(())
+}
+
+/// Key used to suppress duplicate posts sent to the same room:
+/// `embeds[0].url` when present, else a Gamers Club match URL inside an embed field.
+pub fn webhook_post_dedup_key(post: &WebhookPost) -> Option<String> {
+    let embed = post.embeds.first()?;
+    if let Some(url) = &embed.url {
+        return Some(url.clone());
+    }
+    embed
+        .fields
+        .iter()
+        .find_map(|field| extract_gc_match_url(&field.value))
+}
+
+fn extract_gc_match_url(text: &str) -> Option<String> {
+    let mut rest = text;
+    while let Some(at) = rest.find("https://") {
+        let candidate = &rest[at..];
+        let end = candidate
+            .find(|c: char| c.is_whitespace() || matches!(c, ')' | ']' | '>' | '"' | '\''))
+            .unwrap_or(candidate.len());
+        let url = &candidate[..end];
+        if let Some(after_scheme) = url.strip_prefix("https://")
+            && let Some((host, path)) = after_scheme.split_once('/')
+            && is_gamersclub_host(host)
+            && path
+                .strip_prefix("lobby/partida/")
+                .is_some_and(|id| !id.is_empty())
+        {
+            return Some(url.to_owned());
+        }
+        rest = &candidate["https://".len()..];
+    }
+    None
+}
+
+fn is_gamersclub_host(host: &str) -> bool {
+    let lower = host.to_ascii_lowercase();
+    lower == "gamersclub.com.br"
+        || lower.ends_with(".gamersclub.com.br")
+        || lower == "gamersclub.gg"
+        || lower.ends_with(".gamersclub.gg")
 }

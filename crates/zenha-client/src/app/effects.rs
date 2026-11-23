@@ -96,6 +96,18 @@ impl App {
         }
         let pending = self.state.take_pending_commands();
         self.send_commands(pending);
+        if let Some(fetch) = self.state.take_personal_hook_fetch() {
+            if self.is_demo {
+                self.state
+                    .apply_personal_hook_result(fetch.id, Ok(crate::personal_hook::demo_url()));
+            } else {
+                crate::personal_hook::spawn_fetch(
+                    ctx.clone(),
+                    fetch,
+                    self.personal_hook_tx.clone(),
+                );
+            }
+        }
         for path in self.state.take_pending_paste_deletes() {
             clipboard_image::delete_in_background(path);
         }
@@ -272,6 +284,11 @@ impl App {
         }
         if actions.contains(&UserAction::CopyInviteLink) {
             ctx.copy_text(self.state.invite_link());
+        }
+        if actions.contains(&UserAction::CopyPersonalHook)
+            && let Some(url) = self.state.personal_hook_url()
+        {
+            ctx.copy_text(url.to_owned());
         }
         let commands: Vec<UiCommand> = actions
             .into_iter()

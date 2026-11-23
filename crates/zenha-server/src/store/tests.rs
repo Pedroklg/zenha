@@ -915,3 +915,112 @@ async fn webhook_posts_go_away_with_their_webhook() {
     assert!(store.delete_webhook("w1".to_owned()).await.unwrap());
     assert_eq!(post_ids(&store, "geral", 1_000).await, vec!["b"]);
 }
+
+async fn save_personal(
+    store: &ChatStore,
+    room: &str,
+    identity: &str,
+    id: &str,
+    at: u64,
+    url: Option<&str>,
+    match_link: Option<&str>,
+) -> bool {
+    let (mut post, _) = stored_post(id, at);
+    let mut fields = Vec::new();
+    if let Some(link) = match_link {
+        fields.push(zenha_protocol::WebhookField {
+            name: "Link da partida".to_owned(),
+            value: link.to_owned(),
+        });
+    }
+    post.embeds = vec![WebhookEmbed {
+        url: url.map(str::to_owned),
+        fields,
+        ..WebhookEmbed::default()
+    }];
+    let json = serde_json::to_string(&post).unwrap();
+    store
+        .save_personal_webhook_post(room.to_owned(), format!("personal:{identity}"), post, json)
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn personal_webhook_deduplicates_links_per_room_across_senders_for_ten_minutes() {
+    let store = ChatStore::open_in_memory().unwrap();
+    let lobby = Some("https://gamersclub.com.br/j/123/abc");
+    let match_url = Some("https://gamersclub.com.br/lobby/partida/99999");
+
+    assert!(save_personal(&store, "geral", "ana", "p1", 10_000, lobby, None).await);
+    // Same link from another sender in the same room within 10 minutes is skipped.
+    assert!(
+        !save_personal(
+            &store,
+            "geral",
+            "bia",
+            "p2",
+            10_000 + PERSONAL_WEBHOOK_DEDUP_WINDOW_MS - 1,
+            lobby,
+            None,
+        )
+        .await
+    );
+    // Same link in another room passes.
+    assert!(save_personal(&store, "jogos", "bia", "p3", 12_000, lobby, None).await);
+    // Same link in the first room passes once 10 minutes have elapsed.
+    assert!(
+        save_personal(
+            &store,
+            "geral",
+            "bia",
+            "p4",
+            10_000 + PERSONAL_WEBHOOK_DEDUP_WINDOW_MS,
+            lobby,
+            None,
+        )
+        .await
+    );
+
+    // Match cards without embeds[0].url deduplicate on the Gamers Club match URL.
+    assert!(save_personal(&store, "geral", "ana", "m1", 20_000, None, match_url).await);
+    assert!(!save_personal(&store, "geral", "bia", "m2", 25_000, None, match_url).await);
+    assert!(save_personal(&store, "jogos", "bia", "m3", 25_000, None, match_url).await);
+
+    // Posts with neither embeds[0].url nor a GC match URL (e.g. test posts) are never skipped.
+    assert!(save_personal(&store, "geral", "ana", "t1", 30_000, None, None).await);
+    assert!(save_personal(&store, "geral", "bia", "t2", 31_000, None, None).await);
+
+    assert_eq!(
+        post_ids(&store, "geral", 10_000 + PERSONAL_WEBHOOK_DEDUP_WINDOW_MS).await,
+        vec!["p1", "m1", "t1", "t2", "p4"]
+    );
+    assert_eq!(post_ids(&store, "jogos", 31_000).await, vec!["p3", "m3"]);
+}
+
+#[test]
+fn webhook_post_dedup_key_prefers_embed_url_then_gc_match_link() {
+    let (mut post, _) = stored_post("id1", 1);
+    assert_eq!(webhook_post_dedup_key(&post), None);
+
+    post.embeds = vec![WebhookEmbed {
+        url: None,
+        fields: vec![zenha_protocol::WebhookField {
+            name: "Link".to_owned(),
+            value: "Abrir: https://gamersclub.com.br/lobby/partida/28333771".to_owned(),
+        }],
+        ..WebhookEmbed::default()
+    }];
+    assert_eq!(
+        webhook_post_dedup_key(&post).as_deref(),
+        Some("https://gamersclub.com.br/lobby/partida/28333771")
+    );
+
+    post.embeds[0].fields[0].value = "https://evil.example/lobby/partida/1".to_owned();
+    assert_eq!(webhook_post_dedup_key(&post), None);
+
+    post.embeds[0].url = Some("https://gamersclub.com.br/j/1/a".to_owned());
+    assert_eq!(
+        webhook_post_dedup_key(&post).as_deref(),
+        Some("https://gamersclub.com.br/j/1/a")
+    );
+}

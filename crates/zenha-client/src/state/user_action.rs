@@ -120,4 +120,6 @@ pub enum UserAction {
     CreateWebhook,
     OpenRevokeWebhook(String),
     DismissCreatedWebhook,
+    CopyPersonalHook,
+    RetryPersonalHook,
 }

@@ -561,3 +561,326 @@ async fn deleting_a_room_removes_its_webhooks() {
     assert_eq!(left.len(), 1);
     assert_eq!(left[0].room, "geral");
 }
+
+const MATCH_WITH_LINK: &str = r#"{"embeds":[{"color":"2391737","fields":[{"name":"IP da partida:","value":"connect 1.2.3.4:27015;password xyz"},{"name":"Link da partida","value":"https://gamersclub.com.br/lobby/partida/28333771"}]}]}"#;
+
+fn personal_hook_issue_req(invite: &str, client_id: &str) -> Request<Body> {
+    let body = serde_json::to_string(&zenha_protocol::PersonalHookRequest {
+        invite_code: invite.to_owned(),
+        client_id: client_id.to_owned(),
+    })
+    .unwrap();
+    Request::builder()
+        .method("POST")
+        .uri("/personal-hook")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(body))
+        .unwrap()
+}
+
+fn personal_hook_post(path: &str, body: &str) -> Request<Body> {
+    Request::builder()
+        .method("POST")
+        .uri(path)
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(body.to_owned()))
+        .unwrap()
+}
+
+async fn fetch_personal_path(app: &Router, client_id: &str) -> String {
+    let response = app
+        .clone()
+        .oneshot(personal_hook_issue_req(
+            super::super::test_support::INVITE,
+            client_id,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let parsed: zenha_protocol::PersonalHookResponse =
+        serde_json::from_slice(&body_bytes(response).await).unwrap();
+    parsed.path
+}
+
+async fn room_history_for(app: &Router, room: &str) -> ChatHistoryResponse {
+    let auth = format!(
+        "Bearer {}",
+        mint_room_jwt("client-pedro", "Pedro", room, true)
+    );
+    let response = app
+        .clone()
+        .oneshot(get_chat_req(&format!("/rooms/{room}/chat"), Some(&auth)))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    serde_json::from_slice(&body_bytes(response).await).unwrap()
+}
+
+#[tokio::test]
+async fn personal_hook_endpoint_requires_valid_invite_and_client_id() {
+    let f = empty_fixture();
+    let wrong = f
+        .app
+        .clone()
+        .oneshot(personal_hook_issue_req("wrong", "client-ana"))
+        .await
+        .unwrap();
+    assert_eq!(wrong.status(), StatusCode::UNAUTHORIZED);
+
+    let bad_id = f
+        .app
+        .clone()
+        .oneshot(personal_hook_issue_req(
+            super::super::test_support::INVITE,
+            "Bad_Id",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(bad_id.status(), StatusCode::BAD_REQUEST);
+
+    let path = fetch_personal_path(&f.app, "client-ana").await;
+    let sig = path.strip_prefix("/hooks/u/client-ana/").unwrap();
+    assert_eq!(sig.len(), 32);
+    assert!(sig.chars().all(|c| c.is_ascii_hexdigit()));
+}
+
+#[tokio::test]
+async fn personal_hook_valid_signature_delivers_and_stores_in_current_room() {
+    let f = fixture_without_webhook(
+        FakeDirectory::default()
+            .with_participants("geral", &["client-ana"])
+            .with_participants("jogos", &["client-bia"]),
+    );
+    let path = fetch_personal_path(&f.app, "client-ana").await;
+
+    let response = f
+        .app
+        .clone()
+        .oneshot(personal_hook_post(&path, LOBBY))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    assert_eq!(allow_origin(&response), Some("*"));
+
+    let calls = f.dir.calls();
+    let [
+        ModerationCall::SendData {
+            room,
+            topic,
+            payload,
+            destination_identities,
+        },
+    ] = calls.as_slice()
+    else {
+        panic!("expected one send_data call, got {calls:?}");
+    };
+    assert_eq!((room.as_str(), topic.as_str()), ("geral", WEBHOOK_TOPIC));
+    assert!(destination_identities.is_empty());
+    let post: WebhookPost = serde_json::from_slice(payload).unwrap();
+    assert_eq!(post.name, "Gamers Club");
+    assert_eq!(post.validate(), Ok(()));
+
+    let geral_history = room_history_for(&f.app, "geral").await;
+    assert_eq!(geral_history.webhook_posts.len(), 1);
+    let jogos_history = room_history_for(&f.app, "jogos").await;
+    assert!(jogos_history.webhook_posts.is_empty());
+
+    // Moving to another room delivers the next post there.
+    f.dir.set_participants("geral", &[]);
+    f.dir
+        .set_participants("jogos", &["client-ana", "client-bia"]);
+    let moved = f
+        .app
+        .clone()
+        .oneshot(personal_hook_post(&path, TEST))
+        .await
+        .unwrap();
+    assert_eq!(moved.status(), StatusCode::NO_CONTENT);
+    let calls = f.dir.calls();
+    assert_eq!(calls.len(), 2);
+    assert!(matches!(
+        &calls[1],
+        ModerationCall::SendData { room, .. } if room == "jogos"
+    ));
+}
+
+#[tokio::test]
+async fn personal_hook_invalid_signature_or_identity_returns_same_not_found() {
+    let f = fixture().await;
+    let fixed_not_found = f
+        .app
+        .clone()
+        .oneshot(hook_request(WEBHOOK_ID, "wrong", TEST))
+        .await
+        .unwrap();
+    assert_eq!(fixed_not_found.status(), StatusCode::NOT_FOUND);
+    let expected_msg = error_message(fixed_not_found).await;
+
+    for uri in [
+        "/hooks/u/ana/00000000000000000000000000000000",
+        "/hooks/u/Bad_Id/00000000000000000000000000000000",
+    ] {
+        let res = f
+            .app
+            .clone()
+            .oneshot(personal_hook_post(uri, TEST))
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::NOT_FOUND, "{uri}");
+        assert_eq!(allow_origin(&res), Some("*"));
+        assert_eq!(error_message(res).await, expected_msg);
+    }
+    assert!(f.dir.calls().is_empty());
+}
+
+#[tokio::test]
+async fn personal_hook_when_not_in_any_room_skips_delivery_and_storage() {
+    let f = fixture_without_webhook(FakeDirectory::default().with_participants("geral", &["bia"]));
+    let path = fetch_personal_path(&f.app, "client-ana").await;
+
+    let response = f
+        .app
+        .clone()
+        .oneshot(personal_hook_post(&path, LOBBY))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    assert_eq!(allow_origin(&response), Some("*"));
+    assert!(f.dir.calls().is_empty());
+    for room in ["geral", "jogos", "afk"] {
+        assert!(
+            room_history_for(&f.app, room)
+                .await
+                .webhook_posts
+                .is_empty()
+        );
+    }
+}
+
+#[tokio::test]
+async fn personal_hook_deduplicates_same_room_but_allows_another_room() {
+    let f = fixture_without_webhook(
+        FakeDirectory::default()
+            .with_participants("geral", &["client-ana", "client-bia"])
+            .with_participants("jogos", &["client-caio"]),
+    );
+    let ana_path = fetch_personal_path(&f.app, "client-ana").await;
+    let bia_path = fetch_personal_path(&f.app, "client-bia").await;
+    let caio_path = fetch_personal_path(&f.app, "client-caio").await;
+
+    for (path, body) in [
+        (&ana_path, LOBBY),
+        (&bia_path, LOBBY),
+        (&caio_path, LOBBY),
+        (&ana_path, MATCH_WITH_LINK),
+        (&bia_path, MATCH_WITH_LINK),
+        (&caio_path, MATCH_WITH_LINK),
+    ] {
+        let res = f
+            .app
+            .clone()
+            .oneshot(personal_hook_post(path, body))
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::NO_CONTENT);
+    }
+
+    let delivered_rooms: Vec<String> = f
+        .dir
+        .calls()
+        .into_iter()
+        .filter_map(|call| match call {
+            ModerationCall::SendData { room, .. } => Some(room),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(delivered_rooms, vec!["geral", "jogos", "geral", "jogos"]);
+    assert_eq!(
+        room_history_for(&f.app, "geral").await.webhook_posts.len(),
+        2
+    );
+    assert_eq!(
+        room_history_for(&f.app, "jogos").await.webhook_posts.len(),
+        2
+    );
+}
+
+#[tokio::test]
+async fn personal_hook_preflight_rate_limit_and_body_limit() {
+    let f = fixture_without_webhook(
+        FakeDirectory::default().with_participants("geral", &["client-ana"]),
+    );
+    let path = fetch_personal_path(&f.app, "client-ana").await;
+
+    let preflight = Request::builder()
+        .method("OPTIONS")
+        .uri(&path)
+        .header(header::ORIGIN, "https://gamersclub.com.br")
+        .header(header::ACCESS_CONTROL_REQUEST_METHOD, "POST")
+        .body(Body::empty())
+        .unwrap();
+    let res = f.app.clone().oneshot(preflight).await.unwrap();
+    assert_eq!(res.status(), StatusCode::NO_CONTENT);
+    assert_eq!(allow_origin(&res), Some("*"));
+
+    let big = format!(r#"{{"content":"{}"}}"#, "a".repeat(MAX_WEBHOOK_BODY_BYTES));
+    let too_big = f
+        .app
+        .clone()
+        .oneshot(personal_hook_post(&path, &big))
+        .await
+        .unwrap();
+    assert_eq!(too_big.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    assert_eq!(allow_origin(&too_big), Some("*"));
+
+    for _ in 0..10 {
+        let ok = f
+            .app
+            .clone()
+            .oneshot(personal_hook_post(&path, TEST))
+            .await
+            .unwrap();
+        assert_eq!(ok.status(), StatusCode::NO_CONTENT);
+    }
+    let limited = f
+        .app
+        .clone()
+        .oneshot(personal_hook_post(&path, TEST))
+        .await
+        .unwrap();
+    assert_eq!(limited.status(), StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(allow_origin(&limited), Some("*"));
+}
+
+#[tokio::test]
+async fn personal_hook_uses_occupants_cache_hint_and_falls_back_when_participant_moved() {
+    let config = test_admin_config();
+    let store = seeded_store(&config.rooms);
+    let dir = Arc::new(FakeDirectory::default().with_participants("jogos", &["client-ana"]));
+    let cache = Arc::new(crate::directory::OccupantsCache::default());
+    cache.update_room(
+        "geral".to_owned(),
+        vec![crate::directory::Occupant {
+            identity: "client-ana".to_owned(),
+            name: "Ana".to_owned(),
+            voice: zenha_protocol::VoiceState::default(),
+        }],
+    );
+    let mut state = state_with(config, dir.clone(), Some(store), Duration::ZERO);
+    state.occupants_cache = Some(cache);
+    let app = router(state);
+    let path = fetch_personal_path(&app, "client-ana").await;
+
+    let res = app
+        .clone()
+        .oneshot(personal_hook_post(&path, TEST))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::NO_CONTENT);
+    let calls = dir.calls();
+    assert_eq!(calls.len(), 1);
+    assert!(matches!(
+        &calls[0],
+        ModerationCall::SendData { room, .. } if room == "jogos"
+    ));
+}

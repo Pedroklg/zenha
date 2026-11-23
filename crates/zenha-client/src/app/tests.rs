@@ -565,3 +565,29 @@ fn settings_mic_meter_messages_for_lobby_waiting_and_muted_states() {
     assert!(harness.query_by_label("Nível do microfone").is_some());
     assert!(harness.query_by_label("-38 dB").is_some());
 }
+
+#[test]
+fn demo_settings_shows_gamers_club_personal_url_and_copy_copies_it() {
+    let mut harness = demo_harness(egui::Vec2::new(1280.0, 1500.0), demo::SELF_NAME);
+
+    harness.run_steps(2);
+    harness.get_by_label("Configurações").click();
+    harness.run_steps(3);
+
+    let expected_url = crate::personal_hook::demo_url();
+    assert_eq!(
+        harness.state().state.personal_hook_url(),
+        Some(expected_url.as_str())
+    );
+    harness.get_by_label("Gamers Club");
+    harness.get_by_label("Copiar").click();
+    harness.step();
+    let copied = harness
+        .output()
+        .platform_output
+        .commands
+        .iter()
+        .any(|c| matches!(c, egui::OutputCommand::CopyText(text) if text == &expected_url));
+    assert!(copied);
+    assert!(harness.state().state.personal_hook.copied);
+}

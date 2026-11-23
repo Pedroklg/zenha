@@ -21,6 +21,8 @@ pub use self::rooms::{
     UpdateRoomOutcome,
 };
 pub use self::webhooks::token_hash;
+#[cfg(test)]
+pub use self::webhooks::{PERSONAL_WEBHOOK_DEDUP_WINDOW_MS, webhook_post_dedup_key};
 
 const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 const INVITE_HASH_SETTING_KEY: &str = "invite_code_hash";

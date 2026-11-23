@@ -21,6 +21,7 @@ pub const TRACK_SOURCE_SCREEN_SHARE_AUDIO: i32 = 4;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Occupant {
+    pub identity: String,
     pub name: String,
     pub voice: VoiceState,
 }
@@ -123,6 +124,15 @@ impl OccupantsCache {
     pub fn clear_room(&self, room: &str) {
         let mut guard = self.lock_inner();
         guard.rooms.remove(room);
+    }
+
+    pub fn room_of(&self, identity: &str) -> Option<String> {
+        let guard = self.lock_inner();
+        guard
+            .rooms
+            .iter()
+            .find(|(_, occupants)| occupants.iter().any(|o| o.identity == identity))
+            .map(|(room, _)| room.clone())
     }
 }
 
@@ -295,7 +305,13 @@ fn parse_twirp_error(status: reqwest::StatusCode, body: &[u8]) -> TwirpError {
 }
 
 fn participant_to_occupant(p: TwirpParticipant) -> Occupant {
+    let name = if p.name.is_empty() {
+        p.identity.clone()
+    } else {
+        p.name
+    };
     Occupant {
+        identity: p.identity,
         voice: VoiceState {
             muted: p
                 .tracks
@@ -306,11 +322,7 @@ fn participant_to_occupant(p: TwirpParticipant) -> Occupant {
                 .get(DEAFENED_ATTR)
                 .is_some_and(|raw| parse_deafened_attribute(raw)),
         },
-        name: if p.name.is_empty() {
-            p.identity
-        } else {
-            p.name
-        },
+        name,
     }
 }
 
@@ -713,6 +725,7 @@ mod fake {
                         .get(&(room.to_owned(), name.clone()))
                         .copied()
                         .unwrap_or_default(),
+                    identity: name.clone(),
                     name,
                 })
                 .collect())
@@ -919,6 +932,7 @@ mod tests {
             occupants,
             vec![
                 Occupant {
+                    identity: "id-ana".to_owned(),
                     name: "Ana".to_owned(),
                     voice: VoiceState {
                         muted: true,
@@ -926,10 +940,12 @@ mod tests {
                     },
                 },
                 Occupant {
+                    identity: "id-bia".to_owned(),
                     name: "id-bia".to_owned(),
                     voice: VoiceState::default(),
                 },
                 Occupant {
+                    identity: "id-caio".to_owned(),
                     name: "Caio".to_owned(),
                     voice: VoiceState {
                         muted: true,
@@ -970,31 +986,38 @@ mod tests {
         assert!(cache.get_if_fresh(&rooms, t0).is_none());
 
         let ana = Occupant {
+            identity: "id-ana".to_owned(),
             name: "ana".to_owned(),
             voice: VoiceState::default(),
         };
         let bia = Occupant {
+            identity: "id-bia".to_owned(),
             name: "bia".to_owned(),
             voice: VoiceState::default(),
         };
         cache.replace_all(HashMap::from([("geral".to_owned(), vec![ana.clone()])]), t0);
+        assert_eq!(cache.room_of("id-ana").as_deref(), Some("geral"));
+        assert_eq!(cache.room_of("id-bia"), None);
         assert_eq!(
             cache.get_if_fresh(&rooms, t0 + Duration::from_secs(10)),
             Some(vec![vec![ana.clone()], vec![]])
         );
 
         cache.update_room("jogos".to_owned(), vec![bia.clone()]);
+        assert_eq!(cache.room_of("id-bia").as_deref(), Some("jogos"));
         assert_eq!(
             cache.get_if_fresh(&rooms, t0 + Duration::from_secs(20)),
             Some(vec![vec![ana], vec![bia]])
         );
 
         cache.clear_room("geral");
+        assert_eq!(cache.room_of("id-ana"), None);
         assert_eq!(
             cache.get_if_fresh(&rooms, t0 + Duration::from_secs(30)),
             Some(vec![
                 vec![],
                 vec![Occupant {
+                    identity: "id-bia".to_owned(),
                     name: "bia".to_owned(),
                     voice: VoiceState::default()
                 }]
