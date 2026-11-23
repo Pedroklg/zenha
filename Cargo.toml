@@ -26,7 +26,7 @@ egui_kittest = { version = "0.37", features = ["eframe"] }
 futures-util = { version = "0.3", default-features = false }
 http-body-util = "0.1"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp"] }
-livekit = { version = "=0.11.0", default-features = false, features = ["native", "rustls-tls-webpki-roots"] }
+livekit = { version = "=0.12.0", default-features = false, features = ["native", "rustls-tls-webpki-roots"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -111,6 +111,6 @@ codegen-units = 1
 strip = "debuginfo"
 
 [patch.crates-io]
-webrtc-sys = { git = "https://github.com/Pedroklg/rust-sdks", rev = "ba6c4d35e41968cedd370f64a2d18142a6956243" }
-libwebrtc = { git = "https://github.com/Pedroklg/rust-sdks", rev = "ba6c4d35e41968cedd370f64a2d18142a6956243" }
-livekit = { git = "https://github.com/Pedroklg/rust-sdks", rev = "ba6c4d35e41968cedd370f64a2d18142a6956243" }
+webrtc-sys = { git = "https://github.com/Pedroklg/rust-sdks", rev = "e13808e33ba0b3909ddde7393fb61989c46db25e" }
+libwebrtc = { git = "https://github.com/Pedroklg/rust-sdks", rev = "e13808e33ba0b3909ddde7393fb61989c46db25e" }
+livekit = { git = "https://github.com/Pedroklg/rust-sdks", rev = "e13808e33ba0b3909ddde7393fb61989c46db25e" }
