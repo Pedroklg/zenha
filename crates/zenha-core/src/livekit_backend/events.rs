@@ -4,6 +4,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
+use super::p2p_signal::decode_p2p_signal;
 use livekit::prelude::{
     DataPacketKind, DisconnectReason, LocalTrack, Participant as SdkParticipant, RemoteTrack, Room,
     RoomEvent, TrackPublication, TrackSource,
@@ -11,7 +12,8 @@ use livekit::prelude::{
 use livekit::webrtc::audio_stream::native::NativeAudioStream;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use zenha_protocol::{
-    AVATAR_ATTR, DEAFENED_ATTR, parse_avatar_attribute, parse_deafened_attribute,
+    AVATAR_ATTR, DEAFENED_ATTR, P2P_SIGNAL_TOPIC, P2pSignal, parse_avatar_attribute,
+    parse_deafened_attribute,
 };
 
 use crate::api::RemovalReason;
@@ -27,6 +29,51 @@ use super::audio::audio_tap;
 use super::room::{
     is_screen_share, is_share_audio, remote_view, set_screen_share_subscribed, wants_audio,
 };
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct IncomingP2pSignal {
+    pub(super) sender: String,
+    pub(super) signal: P2pSignal,
+}
+
+enum DataRoute {
+    Ignore,
+    Backend(BackendEvent),
+    P2pSignal(IncomingP2pSignal),
+}
+
+fn route_data_packet(
+    kind: DataPacketKind,
+    topic: Option<String>,
+    sender: Option<String>,
+    payload: Vec<u8>,
+) -> DataRoute {
+    if topic.as_deref() == Some(P2P_SIGNAL_TOPIC) {
+        if kind != DataPacketKind::Reliable {
+            tracing::debug!("dropping lossy p2p signal packet");
+            return DataRoute::Ignore;
+        }
+        let Some(sender) = sender else {
+            tracing::warn!("ignoring anonymous p2p signal packet");
+            return DataRoute::Ignore;
+        };
+        return match decode_p2p_signal(&payload) {
+            Ok(signal) => DataRoute::P2pSignal(IncomingP2pSignal { sender, signal }),
+            Err(err) => {
+                tracing::warn!(%sender, %err, "dropping invalid p2p signal packet");
+                DataRoute::Ignore
+            }
+        };
+    }
+    match (kind, topic) {
+        (DataPacketKind::Reliable, Some(topic)) => DataRoute::Backend(BackendEvent::DataReceived {
+            sender,
+            topic,
+            payload,
+        }),
+        _ => DataRoute::Ignore,
+    }
+}
 
 fn mute_event(
     participant: &SdkParticipant,
@@ -283,14 +330,29 @@ fn translate(
             topic,
             kind,
             participant,
-        } => match (kind, topic) {
-            (DataPacketKind::Reliable, Some(topic)) => vec![BackendEvent::DataReceived {
-                sender: participant.map(|sender| String::from(sender.identity())),
-                topic,
-                payload: Arc::unwrap_or_clone(payload),
-            }],
-            _ => Vec::new(),
-        },
+        } => {
+            let sender = participant.and_then(|sender| {
+                let identity = sender.identity();
+                if topic.as_deref() == Some(P2P_SIGNAL_TOPIC)
+                    && !room.remote_participants().contains_key(&identity)
+                {
+                    tracing::warn!(
+                        sender = %String::from(identity),
+                        "ignoring p2p signal from participant outside room"
+                    );
+                    return None;
+                }
+                Some(String::from(identity))
+            });
+            match route_data_packet(kind, topic, sender, Arc::unwrap_or_clone(payload)) {
+                DataRoute::Backend(event) => vec![event],
+                DataRoute::P2pSignal(signal) => {
+                    flags.forward_p2p_signal(signal);
+                    Vec::new()
+                }
+                DataRoute::Ignore => Vec::new(),
+            }
+        }
         RoomEvent::ByteStreamOpened {
             reader,
             topic,
@@ -363,5 +425,81 @@ mod tests {
                 reason: "ServerShutdown".to_owned()
             }
         );
+    }
+
+    #[test]
+    fn p2p_signal_topic_is_intercepted_and_never_forwarded_to_session() {
+        let signal = P2pSignal::Request {
+            share_epoch: 3,
+            session_id: "sess-1".to_owned(),
+        };
+        let payload = super::super::p2p_signal::encode_p2p_signal(&signal).unwrap();
+
+        match route_data_packet(
+            DataPacketKind::Reliable,
+            Some(P2P_SIGNAL_TOPIC.to_owned()),
+            Some("peer-a".to_owned()),
+            payload.clone(),
+        ) {
+            DataRoute::P2pSignal(incoming) => {
+                assert_eq!(incoming.sender, "peer-a");
+                assert_eq!(incoming.signal, signal);
+            }
+            _ => panic!("expected p2p signal to be intercepted"),
+        }
+
+        // Anonymous packets on the P2P topic must be rejected.
+        assert!(matches!(
+            route_data_packet(
+                DataPacketKind::Reliable,
+                Some(P2P_SIGNAL_TOPIC.to_owned()),
+                None,
+                payload.clone(),
+            ),
+            DataRoute::Ignore
+        ));
+
+        // Lossy packets on the P2P topic must be ignored.
+        assert!(matches!(
+            route_data_packet(
+                DataPacketKind::Lossy,
+                Some(P2P_SIGNAL_TOPIC.to_owned()),
+                Some("peer-a".to_owned()),
+                payload,
+            ),
+            DataRoute::Ignore
+        ));
+
+        // Malformed or oversized P2P packets must be dropped instead of reaching chat.
+        assert!(matches!(
+            route_data_packet(
+                DataPacketKind::Reliable,
+                Some(P2P_SIGNAL_TOPIC.to_owned()),
+                Some("peer-a".to_owned()),
+                b"not json".to_vec(),
+            ),
+            DataRoute::Ignore
+        ));
+    }
+
+    #[test]
+    fn non_p2p_topics_still_reach_session_as_backend_events() {
+        match route_data_packet(
+            DataPacketKind::Reliable,
+            Some("chat".to_owned()),
+            Some("peer-a".to_owned()),
+            b"hello".to_vec(),
+        ) {
+            DataRoute::Backend(BackendEvent::DataReceived {
+                sender,
+                topic,
+                payload,
+            }) => {
+                assert_eq!(sender.as_deref(), Some("peer-a"));
+                assert_eq!(topic, "chat");
+                assert_eq!(payload, b"hello");
+            }
+            _ => panic!("expected regular topic to forward to session"),
+        }
     }
 }
