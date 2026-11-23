@@ -4,6 +4,8 @@ mod audio;
 mod data;
 mod events;
 mod files;
+#[cfg(windows)]
+mod p2p;
 mod p2p_signal;
 mod room;
 mod stream_player;
