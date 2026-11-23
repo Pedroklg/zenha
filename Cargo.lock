@@ -1121,7 +1121,7 @@ checksum = "4583a4551df46e2792f82ceeac45e850d2e2d5debba0b91f102385cda5b11f06"
 [[package]]
 name = "device-info"
 version = "0.1.1"
-source = "git+https://github.com/Pedroklg/rust-sdks?rev=e13808e33ba0b3909ddde7393fb61989c46db25e#e13808e33ba0b3909ddde7393fb61989c46db25e"
+source = "git+https://github.com/Pedroklg/rust-sdks?rev=0b0dd0c0a7d39c7b9ff62aea1e36d7eaee054cc1#0b0dd0c0a7d39c7b9ff62aea1e36d7eaee054cc1"
 dependencies = [
  "core-foundation 0.10.1",
  "jni 0.21.1",
@@ -2561,7 +2561,7 @@ dependencies = [
 [[package]]
 name = "libwebrtc"
 version = "0.4.2"
-source = "git+https://github.com/Pedroklg/rust-sdks?rev=e13808e33ba0b3909ddde7393fb61989c46db25e#e13808e33ba0b3909ddde7393fb61989c46db25e"
+source = "git+https://github.com/Pedroklg/rust-sdks?rev=0b0dd0c0a7d39c7b9ff62aea1e36d7eaee054cc1#0b0dd0c0a7d39c7b9ff62aea1e36d7eaee054cc1"
 dependencies = [
  "cxx",
  "jni 0.21.1",
@@ -2623,7 +2623,7 @@ checksum = "4744e383959f0db86ede514b809b1c53251889093803c05267acc7d4e7030d70"
 [[package]]
 name = "livekit"
 version = "0.12.0"
-source = "git+https://github.com/Pedroklg/rust-sdks?rev=e13808e33ba0b3909ddde7393fb61989c46db25e#e13808e33ba0b3909ddde7393fb61989c46db25e"
+source = "git+https://github.com/Pedroklg/rust-sdks?rev=0b0dd0c0a7d39c7b9ff62aea1e36d7eaee054cc1#0b0dd0c0a7d39c7b9ff62aea1e36d7eaee054cc1"
 dependencies = [
  "bmrng",
  "bytes",
@@ -2651,7 +2651,7 @@ dependencies = [
 [[package]]
 name = "livekit-common"
 version = "0.2.0"
-source = "git+https://github.com/Pedroklg/rust-sdks?rev=e13808e33ba0b3909ddde7393fb61989c46db25e#e13808e33ba0b3909ddde7393fb61989c46db25e"
+source = "git+https://github.com/Pedroklg/rust-sdks?rev=0b0dd0c0a7d39c7b9ff62aea1e36d7eaee054cc1#0b0dd0c0a7d39c7b9ff62aea1e36d7eaee054cc1"
 dependencies = [
  "livekit-protocol",
 ]
@@ -2659,7 +2659,7 @@ dependencies = [
 [[package]]
 name = "livekit-data-stream"
 version = "0.3.0"
-source = "git+https://github.com/Pedroklg/rust-sdks?rev=e13808e33ba0b3909ddde7393fb61989c46db25e#e13808e33ba0b3909ddde7393fb61989c46db25e"
+source = "git+https://github.com/Pedroklg/rust-sdks?rev=0b0dd0c0a7d39c7b9ff62aea1e36d7eaee054cc1#0b0dd0c0a7d39c7b9ff62aea1e36d7eaee054cc1"
 dependencies = [
  "async-compression",
  "bmrng",
@@ -2682,7 +2682,7 @@ dependencies = [
 [[package]]
 name = "livekit-datatrack"
 version = "0.3.0"
-source = "git+https://github.com/Pedroklg/rust-sdks?rev=e13808e33ba0b3909ddde7393fb61989c46db25e#e13808e33ba0b3909ddde7393fb61989c46db25e"
+source = "git+https://github.com/Pedroklg/rust-sdks?rev=0b0dd0c0a7d39c7b9ff62aea1e36d7eaee054cc1#0b0dd0c0a7d39c7b9ff62aea1e36d7eaee054cc1"
 dependencies = [
  "anyhow",
  "bytes",
@@ -2700,7 +2700,7 @@ dependencies = [
 [[package]]
 name = "livekit-net"
 version = "0.2.0"
-source = "git+https://github.com/Pedroklg/rust-sdks?rev=e13808e33ba0b3909ddde7393fb61989c46db25e#e13808e33ba0b3909ddde7393fb61989c46db25e"
+source = "git+https://github.com/Pedroklg/rust-sdks?rev=0b0dd0c0a7d39c7b9ff62aea1e36d7eaee054cc1#0b0dd0c0a7d39c7b9ff62aea1e36d7eaee054cc1"
 dependencies = [
  "async-trait",
  "base64 0.21.7",
@@ -2718,7 +2718,7 @@ dependencies = [
 [[package]]
 name = "livekit-protocol"
 version = "0.9.0"
-source = "git+https://github.com/Pedroklg/rust-sdks?rev=e13808e33ba0b3909ddde7393fb61989c46db25e#e13808e33ba0b3909ddde7393fb61989c46db25e"
+source = "git+https://github.com/Pedroklg/rust-sdks?rev=0b0dd0c0a7d39c7b9ff62aea1e36d7eaee054cc1#0b0dd0c0a7d39c7b9ff62aea1e36d7eaee054cc1"
 dependencies = [
  "pbjson",
  "pbjson-types",
@@ -2729,7 +2729,7 @@ dependencies = [
 [[package]]
 name = "livekit-region"
 version = "0.1.1"
-source = "git+https://github.com/Pedroklg/rust-sdks?rev=e13808e33ba0b3909ddde7393fb61989c46db25e#e13808e33ba0b3909ddde7393fb61989c46db25e"
+source = "git+https://github.com/Pedroklg/rust-sdks?rev=0b0dd0c0a7d39c7b9ff62aea1e36d7eaee054cc1#0b0dd0c0a7d39c7b9ff62aea1e36d7eaee054cc1"
 dependencies = [
  "serde",
 ]
@@ -2737,7 +2737,7 @@ dependencies = [
 [[package]]
 name = "livekit-rpc"
 version = "0.4.0"
-source = "git+https://github.com/Pedroklg/rust-sdks?rev=e13808e33ba0b3909ddde7393fb61989c46db25e#e13808e33ba0b3909ddde7393fb61989c46db25e"
+source = "git+https://github.com/Pedroklg/rust-sdks?rev=0b0dd0c0a7d39c7b9ff62aea1e36d7eaee054cc1#0b0dd0c0a7d39c7b9ff62aea1e36d7eaee054cc1"
 dependencies = [
  "livekit-common",
  "livekit-data-stream",
@@ -2753,7 +2753,7 @@ dependencies = [
 [[package]]
 name = "livekit-signaling"
 version = "0.3.0"
-source = "git+https://github.com/Pedroklg/rust-sdks?rev=e13808e33ba0b3909ddde7393fb61989c46db25e#e13808e33ba0b3909ddde7393fb61989c46db25e"
+source = "git+https://github.com/Pedroklg/rust-sdks?rev=0b0dd0c0a7d39c7b9ff62aea1e36d7eaee054cc1#0b0dd0c0a7d39c7b9ff62aea1e36d7eaee054cc1"
 dependencies = [
  "base64 0.21.7",
  "device-info",
@@ -5808,7 +5808,7 @@ dependencies = [
 [[package]]
 name = "webrtc-sys"
 version = "0.3.55"
-source = "git+https://github.com/Pedroklg/rust-sdks?rev=e13808e33ba0b3909ddde7393fb61989c46db25e#e13808e33ba0b3909ddde7393fb61989c46db25e"
+source = "git+https://github.com/Pedroklg/rust-sdks?rev=0b0dd0c0a7d39c7b9ff62aea1e36d7eaee054cc1#0b0dd0c0a7d39c7b9ff62aea1e36d7eaee054cc1"
 dependencies = [
  "cc",
  "cxx",
@@ -5822,7 +5822,7 @@ dependencies = [
 [[package]]
 name = "webrtc-sys-build"
 version = "0.3.21"
-source = "git+https://github.com/Pedroklg/rust-sdks?rev=e13808e33ba0b3909ddde7393fb61989c46db25e#e13808e33ba0b3909ddde7393fb61989c46db25e"
+source = "git+https://github.com/Pedroklg/rust-sdks?rev=0b0dd0c0a7d39c7b9ff62aea1e36d7eaee054cc1#0b0dd0c0a7d39c7b9ff62aea1e36d7eaee054cc1"
 dependencies = [
  "anyhow",
  "fs2",

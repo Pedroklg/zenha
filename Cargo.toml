@@ -111,6 +111,6 @@ codegen-units = 1
 strip = "debuginfo"
 
 [patch.crates-io]
-webrtc-sys = { git = "https://github.com/Pedroklg/rust-sdks", rev = "e13808e33ba0b3909ddde7393fb61989c46db25e" }
-libwebrtc = { git = "https://github.com/Pedroklg/rust-sdks", rev = "e13808e33ba0b3909ddde7393fb61989c46db25e" }
-livekit = { git = "https://github.com/Pedroklg/rust-sdks", rev = "e13808e33ba0b3909ddde7393fb61989c46db25e" }
+webrtc-sys = { git = "https://github.com/Pedroklg/rust-sdks", rev = "0b0dd0c0a7d39c7b9ff62aea1e36d7eaee054cc1" }
+libwebrtc = { git = "https://github.com/Pedroklg/rust-sdks", rev = "0b0dd0c0a7d39c7b9ff62aea1e36d7eaee054cc1" }
+livekit = { git = "https://github.com/Pedroklg/rust-sdks", rev = "0b0dd0c0a7d39c7b9ff62aea1e36d7eaee054cc1" }
