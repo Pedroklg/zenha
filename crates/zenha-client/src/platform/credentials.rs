@@ -2,6 +2,10 @@
 
 #[cfg(windows)]
 const SERVICE: &str = "zenha";
+#[cfg(windows)]
+const IDENTITY_SERVICE: &str = "zenha-identity";
+#[cfg(windows)]
+const IDENTITY_USER: &str = "client_id";
 
 /// Loads the saved password for `server` from Windows Credential Manager.
 /// Returns `None` if there is no saved entry, if `server` is empty, or on
@@ -74,6 +78,41 @@ pub fn forget_in_background(server: String) {
     std::thread::spawn(move || forget(&server));
 }
 
+/// Loads the saved `client_id` from Windows Credential Manager.
+#[cfg(windows)]
+pub fn load_identity() -> Option<String> {
+    match zenha_core::win_platform::credentials::read_password(IDENTITY_SERVICE, IDENTITY_USER) {
+        Ok(Some(id)) if !id.is_empty() => Some(id),
+        Ok(_) => None,
+        Err(err) => {
+            tracing::warn!(%err, "failed to load client id");
+            None
+        }
+    }
+}
+
+#[cfg(not(windows))]
+pub fn load_identity() -> Option<String> {
+    None
+}
+
+/// Saves the `client_id` in Windows Credential Manager synchronously.
+#[cfg(windows)]
+pub fn store_identity(client_id: &str) {
+    let id = client_id.trim();
+    if id.is_empty() {
+        return;
+    }
+    if let Err(err) =
+        zenha_core::win_platform::credentials::write_password(IDENTITY_SERVICE, IDENTITY_USER, id)
+    {
+        tracing::warn!(%err, "failed to save client id");
+    }
+}
+
+#[cfg(not(windows))]
+pub fn store_identity(_client_id: &str) {}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -87,5 +126,7 @@ mod tests {
         store("https://voz.exemplo", "");
         forget("");
         forget("   ");
+        store_identity("");
+        store_identity("   ");
     }
 }
