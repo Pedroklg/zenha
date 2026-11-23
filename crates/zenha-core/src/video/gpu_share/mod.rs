@@ -9,6 +9,7 @@ mod capture;
 mod convert;
 mod encode;
 
+use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::thread::JoinHandle;
@@ -51,6 +52,8 @@ const SOURCE_WAIT_STEP: Duration = Duration::from_millis(10);
 const RESIZE_SETTLE: Duration = Duration::from_millis(250);
 const MIN_SIDE: u32 = 64;
 const ENCODER_RING: usize = 4;
+const LATENCY_CAPACITY: usize = 320;
+const MAX_IN_FLIGHT_TIMESTAMPS: usize = 16;
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum GpuError {
@@ -76,6 +79,55 @@ impl<T> Step<T> for windows::core::Result<T> {
 /// On unless `ZENHA_GPU_SHARE=0`.
 pub(crate) fn enabled() -> bool {
     std::env::var_os("ZENHA_GPU_SHARE").is_none_or(|value| value != "0")
+}
+
+/// GPU encoder backend requested via `ZENHA_GPU_ENCODER`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum GpuEncoderPreference {
+    #[default]
+    Auto,
+    Mft,
+    Amf,
+    Nvenc,
+}
+
+impl GpuEncoderPreference {
+    /// Parses a `ZENHA_GPU_ENCODER` value (trimmed, ASCII case-insensitive).
+    /// Empty strings select `Auto`; unknown values return `None`.
+    pub(crate) fn parse(raw: &str) -> Option<Self> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "" | "auto" => Some(Self::Auto),
+            "mft" | "mf" => Some(Self::Mft),
+            "amf" => Some(Self::Amf),
+            "nvenc" => Some(Self::Nvenc),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn from_env() -> Self {
+        let Ok(raw) = std::env::var("ZENHA_GPU_ENCODER") else {
+            return Self::Auto;
+        };
+        match Self::parse(&raw) {
+            Some(choice) => choice,
+            None => {
+                tracing::warn!(
+                    value = %raw,
+                    "unknown ZENHA_GPU_ENCODER value, falling back to auto"
+                );
+                Self::Auto
+            }
+        }
+    }
+
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Mft => "mft",
+            Self::Amf => "amf",
+            Self::Nvenc => "nvenc",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -343,6 +395,16 @@ impl Pipeline {
         context: &ID3D11DeviceContext,
         config: &GpuShareConfig,
     ) -> Result<Self, GpuError> {
+        let requested_encoder = GpuEncoderPreference::from_env();
+        if matches!(
+            requested_encoder,
+            GpuEncoderPreference::Amf | GpuEncoderPreference::Nvenc
+        ) {
+            tracing::warn!(
+                requested = requested_encoder.as_str(),
+                "requested GPU encoder backend is not available yet, using Media Foundation MFT"
+            );
+        }
         let capture = capture::ScreenCapture::new(device, config.target, config.fps)?;
         let source = capture.size();
         let input = convert::texture(
@@ -374,6 +436,8 @@ impl Pipeline {
             published_width = out_size.0,
             published_height = out_size.1,
             encoder = %encoder.name(),
+            codec = encoder.codec_label(),
+            requested_encoder = requested_encoder.as_str(),
             "gpu share pipeline ready"
         );
         Ok(Self {
@@ -384,6 +448,91 @@ impl Pipeline {
             preview,
             out_size,
         })
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct LatencyPercentiles {
+    p50_ms: f64,
+    p95_ms: f64,
+    p99_ms: f64,
+}
+
+/// Reusable sample buffer for nearest-rank latency percentiles across a stats window.
+struct LatencyRecorder {
+    samples_us: Vec<u64>,
+}
+
+impl Default for LatencyRecorder {
+    fn default() -> Self {
+        Self {
+            samples_us: Vec::with_capacity(LATENCY_CAPACITY),
+        }
+    }
+}
+
+impl LatencyRecorder {
+    fn record(&mut self, duration: Duration) {
+        self.samples_us
+            .push(u64::try_from(duration.as_micros()).unwrap_or(u64::MAX));
+    }
+
+    fn percentiles(&mut self) -> LatencyPercentiles {
+        if self.samples_us.is_empty() {
+            return LatencyPercentiles {
+                p50_ms: 0.0,
+                p95_ms: 0.0,
+                p99_ms: 0.0,
+            };
+        }
+        self.samples_us.sort_unstable();
+        LatencyPercentiles {
+            p50_ms: self.rank_ms(50),
+            p95_ms: self.rank_ms(95),
+            p99_ms: self.rank_ms(99),
+        }
+    }
+
+    fn rank_ms(&self, pct: usize) -> f64 {
+        let len = self.samples_us.len();
+        let idx = (len.saturating_mul(pct))
+            .div_ceil(100)
+            .saturating_sub(1)
+            .min(len - 1);
+        self.samples_us[idx] as f64 / 1000.0
+    }
+
+    fn clear(&mut self) {
+        self.samples_us.clear();
+    }
+}
+
+/// Correlates submitted frame timestamps with completed encoded outputs to measure real encode time.
+#[derive(Default)]
+struct InFlightTimestamps {
+    entries: VecDeque<(i64, Instant)>,
+}
+
+impl InFlightTimestamps {
+    fn push(&mut self, time_us: i64, submitted_at: Instant) {
+        if self.entries.len() >= MAX_IN_FLIGHT_TIMESTAMPS {
+            self.entries.pop_front();
+        }
+        self.entries.push_back((time_us, submitted_at));
+    }
+
+    fn take(&mut self, output_time_us: i64) -> Option<Instant> {
+        if let Some(pos) = self.entries.iter().position(|&(t, _)| t == output_time_us) {
+            for _ in 0..pos {
+                self.entries.pop_front();
+            }
+            return self.entries.pop_front().map(|(_, at)| at);
+        }
+        self.entries.pop_front().map(|(_, at)| at)
+    }
+
+    fn clear(&mut self) {
+        self.entries.clear();
     }
 }
 
@@ -398,13 +547,17 @@ struct Stats {
     busy: Duration,
     last_output: Option<Instant>,
     max_gap: Duration,
+    encode_latency: LatencyRecorder,
 }
 
 impl Stats {
-    fn log(&mut self, window: Duration) {
+    fn log(&mut self, window: Duration, encoder: &str, codec: &str) {
         let secs = window.as_secs_f64().max(0.001);
         let busy_ms = self.busy.as_secs_f64() * 1000.0 / self.submitted.max(1) as f64;
+        let pct = self.encode_latency.percentiles();
         tracing::info!(
+            encoder,
+            codec,
             captured = self.captured,
             submitted = self.submitted,
             skipped = self.skipped,
@@ -412,11 +565,27 @@ impl Stats {
             keyframes = self.keyframes,
             kbps = (self.bytes as f64 * 8.0 / secs / 1000.0).round(),
             avg_submit_ms = format_args!("{busy_ms:.2}"),
+            encode_p50_ms = format_args!("{:.2}", pct.p50_ms),
+            encode_p95_ms = format_args!("{:.2}", pct.p95_ms),
+            encode_p99_ms = format_args!("{:.2}", pct.p99_ms),
             max_gap_ms = self.max_gap.as_millis(),
             window_secs = format_args!("{secs:.1}"),
             "gpu share stats"
         );
-        *self = Self::default();
+        self.reset();
+    }
+
+    fn reset(&mut self) {
+        self.captured = 0;
+        self.submitted = 0;
+        self.skipped = 0;
+        self.encoded = 0;
+        self.keyframes = 0;
+        self.bytes = 0;
+        self.busy = Duration::ZERO;
+        self.last_output = None;
+        self.max_gap = Duration::ZERO;
+        self.encode_latency.clear();
     }
 }
 
@@ -495,6 +664,7 @@ impl Share {
         let mut pacer = Pacer::new(self.config.fps, start);
         let timer = HighResTimer::new();
         let mut stats = Stats::default();
+        let mut in_flight = InFlightTimestamps::default();
         let mut window_start = start;
         let mut last_submit: Option<Instant> = None;
         let mut force_key = true;
@@ -526,6 +696,7 @@ impl Share {
                 self.pipeline = Some(Pipeline::new(&self.device, &self.context, &self.config)?);
                 force_key = true;
                 last_submit = None;
+                in_flight.clear();
                 continue;
             }
             let fresh = captured.is_some();
@@ -540,9 +711,11 @@ impl Share {
             let outputs = if fresh || force_key || due {
                 let texture = pipeline.converter.convert()?;
                 let timestamp = i64::try_from(start.elapsed().as_nanos() / 100).unwrap_or(i64::MAX);
+                let encode_start = Instant::now();
                 let (outputs, accepted) =
                     pipeline.encoder.encode(&texture, timestamp, force_key)?;
                 if accepted {
+                    in_flight.push(timestamp / 10, encode_start);
                     stats.submitted += 1;
                     stats.busy += began.elapsed();
                     force_key = false;
@@ -558,6 +731,11 @@ impl Share {
             for output in outputs {
                 stats.encoded += 1;
                 let sent = Instant::now();
+                if let Some(submitted_at) = in_flight.take(output.time_us) {
+                    stats
+                        .encode_latency
+                        .record(sent.saturating_duration_since(submitted_at));
+                }
                 if let Some(previous) = stats.last_output.replace(sent) {
                     stats.max_gap = stats.max_gap.max(sent - previous);
                 }
@@ -579,7 +757,11 @@ impl Share {
             let now = Instant::now();
             pacer.finish_slot(now);
             if now.duration_since(window_start) >= STATS_WINDOW {
-                stats.log(now.duration_since(window_start));
+                stats.log(
+                    now.duration_since(window_start),
+                    pipeline.encoder.name(),
+                    pipeline.encoder.codec_label(),
+                );
                 window_start = now;
             }
         }
@@ -654,5 +836,112 @@ mod tests {
             Some(GpuTarget::Window(0x1234))
         );
         assert_eq!(GpuTarget::new(CaptureKind::Screen, u64::MAX), None);
+    }
+
+    #[test]
+    fn gpu_encoder_preference_parses_known_values_and_rejects_unknown() {
+        assert_eq!(
+            GpuEncoderPreference::parse(""),
+            Some(GpuEncoderPreference::Auto)
+        );
+        assert_eq!(
+            GpuEncoderPreference::parse("   "),
+            Some(GpuEncoderPreference::Auto)
+        );
+        assert_eq!(
+            GpuEncoderPreference::parse("auto"),
+            Some(GpuEncoderPreference::Auto)
+        );
+        assert_eq!(
+            GpuEncoderPreference::parse(" AUTO "),
+            Some(GpuEncoderPreference::Auto)
+        );
+        assert_eq!(
+            GpuEncoderPreference::parse("mft"),
+            Some(GpuEncoderPreference::Mft)
+        );
+        assert_eq!(
+            GpuEncoderPreference::parse("MF"),
+            Some(GpuEncoderPreference::Mft)
+        );
+        assert_eq!(
+            GpuEncoderPreference::parse("Amf"),
+            Some(GpuEncoderPreference::Amf)
+        );
+        assert_eq!(
+            GpuEncoderPreference::parse("nvenc"),
+            Some(GpuEncoderPreference::Nvenc)
+        );
+        assert_eq!(GpuEncoderPreference::parse("qsv"), None);
+        assert_eq!(GpuEncoderPreference::parse("bogus"), None);
+    }
+
+    #[test]
+    fn latency_recorder_computes_percentiles_and_reuses_buffer() {
+        let mut recorder = LatencyRecorder::default();
+        assert_eq!(
+            recorder.percentiles(),
+            LatencyPercentiles {
+                p50_ms: 0.0,
+                p95_ms: 0.0,
+                p99_ms: 0.0,
+            }
+        );
+
+        recorder.record(Duration::from_micros(2_500));
+        assert_eq!(
+            recorder.percentiles(),
+            LatencyPercentiles {
+                p50_ms: 2.5,
+                p95_ms: 2.5,
+                p99_ms: 2.5,
+            }
+        );
+
+        recorder.clear();
+        // Record 100 samples (1.0 ms..=100.0 ms) in reverse order to verify sorting.
+        for ms in (1..=100u64).rev() {
+            recorder.record(Duration::from_millis(ms));
+        }
+        assert_eq!(
+            recorder.percentiles(),
+            LatencyPercentiles {
+                p50_ms: 50.0,
+                p95_ms: 95.0,
+                p99_ms: 99.0,
+            }
+        );
+
+        let capacity_before = recorder.samples_us.capacity();
+        recorder.clear();
+        assert!(recorder.samples_us.is_empty());
+        assert_eq!(recorder.samples_us.capacity(), capacity_before);
+    }
+
+    #[test]
+    fn in_flight_timestamps_match_ordered_pipelined_and_dropped_frames() {
+        let t0 = Instant::now();
+        let t1 = t0 + Duration::from_millis(16);
+        let t2 = t0 + Duration::from_millis(32);
+        let mut in_flight = InFlightTimestamps::default();
+
+        // Pipelined 1-frame delay: frame 1 submitted before frame 0 output arrives.
+        in_flight.push(1000, t0);
+        in_flight.push(2000, t1);
+        assert_eq!(in_flight.take(1000), Some(t0));
+        assert_eq!(in_flight.take(2000), Some(t1));
+        assert_eq!(in_flight.take(3000), None);
+
+        // Dropped frame 0: output for frame 1 evicts stale frame 0.
+        in_flight.push(3000, t0);
+        in_flight.push(4000, t1);
+        assert_eq!(in_flight.take(4000), Some(t1));
+        assert_eq!(in_flight.take(4000), None);
+
+        // MFT that rewrites timestamps still pops oldest entry in FIFO order.
+        in_flight.push(5000, t1);
+        in_flight.push(6000, t2);
+        assert_eq!(in_flight.take(0), Some(t1));
+        assert_eq!(in_flight.take(0), Some(t2));
     }
 }
