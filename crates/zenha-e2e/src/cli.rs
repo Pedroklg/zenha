@@ -6,7 +6,7 @@ use zenha_core::VideoCodec;
 
 pub const USAGE: &str = "uso:
   zenha-e2e run [--filter nome[,nome...]] [--list] [--repo-root CAMINHO]
-  zenha-e2e bot --name NOME --token-url URL --invite CODIGO [--tone HZ] [--amplitude A] [--test-pattern] [--test-pattern-size LxA] [--video-codec vp9|h264|av1]";
+  zenha-e2e bot --name NOME --token-url URL --invite CODIGO [--tone HZ] [--amplitude A] [--test-pattern] [--test-pattern-size LxA] [--video-codec vp9|h264|av1] [--p2p on|off]";
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct RunArgs {
@@ -26,6 +26,8 @@ pub struct BotArgs {
     pub test_pattern: bool,
     pub test_pattern_size: Option<(u32, u32)>,
     pub video_codec: VideoCodec,
+    /// `None` leaves the P2P share to `ZENHA_P2P`, like the client.
+    pub p2p: Option<bool>,
     pub allow_non_windows: bool,
 }
 
@@ -121,6 +123,7 @@ fn parse_bot<'a>(mut iter: impl Iterator<Item = &'a String>) -> Result<Cli, Stri
         test_pattern: false,
         test_pattern_size: None,
         video_codec: VideoCodec::default(),
+        p2p: None,
         allow_non_windows: false,
     };
     while let Some(flag) = iter.next() {
@@ -140,6 +143,13 @@ fn parse_bot<'a>(mut iter: impl Iterator<Item = &'a String>) -> Result<Cli, Stri
             "--video-codec" => {
                 let raw = value(&mut iter, "--video-codec")?;
                 bot.video_codec = raw.parse().map_err(|err| format!("--video-codec: {err}"))?;
+            }
+            "--p2p" => {
+                bot.p2p = match value(&mut iter, "--p2p")?.as_str() {
+                    "on" => Some(true),
+                    "off" => Some(false),
+                    other => return Err(format!("--p2p: {other:?} must be on or off")),
+                };
             }
             "--allow-non-windows" => bot.allow_non_windows = true,
             other => return Err(format!("unknown option {other:?} for bot")),
@@ -236,11 +246,14 @@ mod tests {
             "1920x1080",
             "--video-codec",
             "av1",
+            "--p2p",
+            "off",
         ]));
         match ok {
             Ok(Cli::Bot(bot)) => {
                 assert_eq!(bot.test_pattern_size, Some((1920, 1080)));
                 assert_eq!(bot.video_codec, VideoCodec::Av1);
+                assert_eq!(bot.p2p, Some(false));
             }
             other => panic!("{other:?}"),
         }
@@ -255,6 +268,20 @@ mod tests {
                 "c",
                 "--video-codec",
                 "vp8"
+            ]))
+            .is_err()
+        );
+        assert!(
+            parse(&args(&[
+                "bot",
+                "--name",
+                "t",
+                "--token-url",
+                "http://x",
+                "--invite",
+                "c",
+                "--p2p",
+                "maybe"
             ]))
             .is_err()
         );

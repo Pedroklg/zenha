@@ -35,6 +35,10 @@ use super::audio::{
     stop_share_audio,
 };
 use super::events::pump_events;
+use super::p2p::{
+    P2pConfig, P2pCoordinatorHandle, P2pShareSource, P2pVideoSource, share_epoch_from_sid,
+    spawn_p2p_coordinator,
+};
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 const CLOSE_TIMEOUT: Duration = Duration::from_secs(5);
@@ -45,12 +49,15 @@ pub(super) struct Connection {
     // Held so the platform audio device stays alive until the room is closed.
     pub(super) audio: Option<PlatformAudio>,
     pub(super) events: JoinHandle<()>,
+    pub(super) p2p: P2pCoordinatorHandle,
+    pub(super) p2p_task: JoinHandle<()>,
     pub(super) mic: Microphone,
 }
 
 impl Drop for Connection {
     fn drop(&mut self) {
         self.events.abort();
+        self.p2p_task.abort();
     }
 }
 
@@ -101,7 +108,18 @@ impl LiveKitBackend {
             .map(|connection| (connection.room.clone(), connection.events_tx.clone()))
     }
 
+    pub(super) async fn current_p2p(&self) -> Option<P2pCoordinatorHandle> {
+        self.connection
+            .lock()
+            .await
+            .as_ref()
+            .map(|connection| connection.p2p.clone())
+    }
+
     pub(super) async fn stop_local_share(&self) {
+        if let Some(p2p) = self.current_p2p().await {
+            p2p.share_stopped();
+        }
         let audio = self.local_share_audio.lock().await.take();
         if let Some(audio) = audio {
             stop_share_audio(audio).await;
@@ -148,6 +166,7 @@ impl LiveKitBackend {
             return;
         };
         connection.events.abort();
+        connection.p2p_task.abort();
         match timeout(CLOSE_TIMEOUT, connection.room.close()).await {
             Ok(Ok(())) | Ok(Err(RoomError::AlreadyClosed)) => {}
             Ok(Err(err)) => tracing::warn!(%err, "closing the room failed"),
@@ -238,6 +257,13 @@ impl LiveKitBackend {
         );
 
         sweep_publications(&room, &tx, &self.flags);
+        let (p2p, p2p_task) = spawn_p2p_coordinator(
+            room.clone(),
+            tx.clone(),
+            self.flags.clone(),
+            self.watch.clone(),
+            P2pConfig::from_env(&self.options),
+        );
         let mut slot = self.connection.lock().await;
         let events = tokio::spawn(pump_events(
             room_events,
@@ -246,12 +272,15 @@ impl LiveKitBackend {
             self.flags.clone(),
             self.watch.clone(),
             self.files.clone(),
+            p2p.clone(),
         ));
         *slot = Some(Connection {
             room: room.clone(),
             events_tx: tx,
             audio,
             events,
+            p2p,
+            p2p_task,
             mic,
         });
         guard.disarm();
@@ -298,6 +327,7 @@ impl LiveKitBackend {
             return Err(SessionError::ShareActive);
         }
         let target = self.resolve_target(target_id).await?;
+        let is_test_pattern = target.id == TEST_PATTERN_TARGET_ID;
         let (capture, capture_target) =
             capture_for(target.clone(), self.options.test_pattern_size)?;
         let share = video::publish_share(
@@ -308,13 +338,32 @@ impl LiveKitBackend {
             video::ShareOptions {
                 preset,
                 video_codec: self.options.video_codec,
+                p2p_raw_test_source: is_test_pattern,
             },
             preview,
             Arc::clone(&self.flags.ui_visible.0),
         )
         .await?;
-        self.flags.share_sids.set_video(&share.sid_handle());
+        let sid_handle = share.sid_handle();
+        let share_epoch = {
+            let sid = sid_handle.lock().unwrap_or_else(PoisonError::into_inner);
+            share_epoch_from_sid(sid.as_str())
+        };
+        let p2p_source = share
+            .fan_out()
+            .map(P2pVideoSource::Encoded)
+            .or_else(|| share.raw_fan_out().map(P2pVideoSource::Raw))
+            .map(|video| P2pShareSource {
+                video,
+                preset: share.preset(),
+                resolution: share.resolution(),
+            });
+        self.flags.share_sids.set_video(&sid_handle);
         *slot = Some(share);
+        drop(slot);
+        if let Some(p2p) = self.current_p2p().await {
+            p2p.share_started(share_epoch, p2p_source);
+        }
         // The picture is what was asked for; the sound is best effort.
         if let Some(scope) = AudioScope::for_target(&target) {
             let audio = publish_share_audio(room, scope).await;
@@ -344,6 +393,7 @@ impl LiveKitBackend {
             .ok_or_else(|| {
                 SessionError::Video("the participant is not sharing their screen".to_owned())
             })?;
+        let share_epoch = share_epoch_from_sid(publication.sid().as_str());
         let previous = self.watch.replace(identity, &publication.sid(), frames);
         if let Some(previous) = previous.filter(|previous| previous != identity) {
             set_screen_share_subscribed(&room, &previous, false);
@@ -363,10 +413,16 @@ impl LiveKitBackend {
                 Arc::clone(&self.flags.ui_visible.0),
             );
         }
+        if let Some(p2p) = self.current_p2p().await {
+            p2p.watch_started(identity.to_owned(), share_epoch);
+        }
         Ok(())
     }
 
     pub(super) async fn stop_watching_share(&self) -> Result<(), SessionError> {
+        if let Some(p2p) = self.current_p2p().await {
+            p2p.watch_stopped();
+        }
         self.flags.stop_stream();
         if let Some(identity) = self.watch.clear()
             && let Some(room) = self.current_room().await

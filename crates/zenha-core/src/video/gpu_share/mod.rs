@@ -546,6 +546,8 @@ struct Stats {
     encoded: u64,
     keyframes: u64,
     bytes: u64,
+    target_bitrate_bps: u64,
+    active_sinks: usize,
     busy: Duration,
     last_output: Option<Instant>,
     max_gap: Duration,
@@ -566,6 +568,8 @@ impl Stats {
             encoded = self.encoded,
             keyframes = self.keyframes,
             kbps = (self.bytes as f64 * 8.0 / secs / 1000.0).round(),
+            target_kbps = (self.target_bitrate_bps as f64 / 1000.0).round(),
+            active_sinks = self.active_sinks,
             avg_submit_ms = format_args!("{busy_ms:.2}"),
             encode_p50_ms = format_args!("{:.2}", pct.p50_ms),
             encode_p95_ms = format_args!("{:.2}", pct.p95_ms),
@@ -662,7 +666,10 @@ impl Share {
         let start = Instant::now();
         let mut pacer = Pacer::new(self.config.fps, start);
         let timer = HighResTimer::new();
-        let mut stats = Stats::default();
+        let mut stats = Stats {
+            target_bitrate_bps: self.config.bitrate_bps,
+            ..Stats::default()
+        };
         let mut in_flight = InFlightTimestamps::default();
         let mut window_start = start;
         let mut last_submit: Option<Instant> = None;
@@ -678,7 +685,9 @@ impl Share {
             }
             let controls = self.fan_out.poll_controls(self.config.bitrate_bps);
             force_key |= controls.force_keyframe;
+            stats.active_sinks = controls.active_sinks;
             if let Some(target_bps) = controls.target_bitrate_bps {
+                stats.target_bitrate_bps = target_bps;
                 pipeline.encoder.set_bitrate(target_bps);
             }
             let captured = pipeline

@@ -23,6 +23,23 @@ fn build_data_packet(topic: &str, payload: Vec<u8>, destinations: Vec<String>) -
     }
 }
 
+pub(super) async fn send_p2p_signal(
+    room: &Room,
+    destination: &str,
+    signal: &P2pSignal,
+) -> Result<(), SessionError> {
+    let payload =
+        encode_p2p_signal(signal).map_err(|err| SessionError::InvalidInput(err.to_string()))?;
+    let packet = build_data_packet(P2P_SIGNAL_TOPIC, payload, vec![destination.to_owned()]);
+    room.local_participant()
+        .publish_data(packet)
+        .await
+        .map_err(|err| {
+            tracing::warn!(%err, destination, "publishing p2p signal failed");
+            SessionError::Connection("could not send p2p signal".to_owned())
+        })
+}
+
 impl LiveKitBackend {
     pub(super) async fn publish_data(
         &self,
@@ -47,18 +64,6 @@ impl LiveKitBackend {
                 tracing::warn!(%err, "publishing data failed");
                 SessionError::Connection("could not send data".to_owned())
             })
-    }
-
-    #[expect(dead_code, reason = "wired by the P2P coordinator in the next phase")]
-    pub(super) async fn send_p2p_signal(
-        &self,
-        destination: &str,
-        signal: &P2pSignal,
-    ) -> Result<(), SessionError> {
-        let payload =
-            encode_p2p_signal(signal).map_err(|err| SessionError::InvalidInput(err.to_string()))?;
-        self.publish_data_to(P2P_SIGNAL_TOPIC, payload, vec![destination.to_owned()])
-            .await
     }
 
     pub(super) async fn publish_name(&self, name: &str) -> Result<(), SessionError> {
