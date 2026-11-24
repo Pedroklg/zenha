@@ -27,6 +27,7 @@ const SHARE_TRACK_NAME: &str = "screen";
 const FIRST_FRAME_TIMEOUT: Duration = Duration::from_secs(5);
 const PUBLISH_TIMEOUT: Duration = Duration::from_secs(15);
 const UNPUBLISH_TIMEOUT: Duration = Duration::from_secs(5);
+const DYNACAST_POLL: Duration = Duration::from_millis(250);
 
 /// Copies the e2e test-pattern frames to the P2P senders, which encode them in `libwebrtc`.
 #[derive(Default)]
@@ -359,6 +360,7 @@ async fn publish_gpu_share(
     fan_out.add(gpu_share::SFU_SINK_ID, native.clone());
     let track =
         LocalVideoTrack::create_video_track(SHARE_TRACK_NAME, RtcVideoSource::Native(native));
+    let dynacast_track = track.clone();
     let options = TrackPublishOptions {
         source: TrackSource::Screenshare,
         video_codec: VideoCodec::H264,
@@ -402,6 +404,7 @@ async fn publish_gpu_share(
         codec = publication.publish_options().video_codec.as_str(),
         "gpu screen share started"
     );
+    follow_dynacast(dynacast_track, Arc::clone(&fan_out));
     Ok(LocalShare {
         room,
         sid: Arc::new(std::sync::Mutex::new(publication.sid())),
@@ -411,6 +414,27 @@ async fn publish_gpu_share(
         preset,
         resolution: (width, height),
     })
+}
+
+/// The pass-through encoder never sees frames while dynacast pauses the layer, so it cannot
+/// report the pause; mirror the sender's layer state into the SFU sink instead.
+fn follow_dynacast(track: LocalVideoTrack, fan_out: Arc<gpu_share::VideoFanOut>) {
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(DYNACAST_POLL);
+        let mut last = true;
+        loop {
+            tick.tick().await;
+            let layers = track.publishing_layers();
+            let active = layers.is_empty() || layers.iter().any(|layer| layer.active);
+            if !fan_out.set_active(gpu_share::SFU_SINK_ID, active) {
+                break;
+            }
+            if active != last {
+                tracing::debug!(active, "sfu screen share layer changed");
+                last = active;
+            }
+        }
+    });
 }
 
 async fn stop_capture(mut capture: Box<dyn FrameSource>) {
