@@ -1,16 +1,15 @@
 use std::mem::ManuallyDrop;
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
-use windows::Win32::Foundation::{E_NOINTERFACE, E_POINTER, LUID, S_OK};
+use windows::Win32::Foundation::LUID;
 use windows::Win32::Graphics::Direct3D11::{ID3D11Device, ID3D11Texture2D};
 use windows::Win32::Graphics::Dxgi::{DXGI_ADAPTER_DESC, IDXGIDevice};
 use windows::Win32::Media::MediaFoundation::{
     CODECAPI_AVEncCommonMeanBitRate, CODECAPI_AVEncCommonRateControlMode,
     CODECAPI_AVEncH264CABACEnable, CODECAPI_AVEncMPVDefaultBPictureCount, CODECAPI_AVEncMPVGOPSize,
     CODECAPI_AVEncVideoForceKeyFrame, CODECAPI_AVLowLatencyMode, ICodecAPI, IMF2DBuffer,
-    IMFActivate, IMFAsyncCallback, IMFAsyncCallback_Vtbl, IMFAsyncResult, IMFAttributes,
+    IMFActivate, IMFAsyncCallback, IMFAsyncCallback_Impl, IMFAsyncResult, IMFAttributes,
     IMFDXGIDeviceManager, IMFMediaEventGenerator, IMFMediaType, IMFSample, IMFShutdown,
     IMFTransform, METransformHaveOutput, METransformNeedInput, MF_E_SHUTDOWN,
     MF_E_TRANSFORM_NEED_MORE_INPUT, MF_E_TRANSFORM_STREAM_CHANGE, MF_LOW_LATENCY,
@@ -29,9 +28,9 @@ use windows::Win32::Media::MediaFoundation::{
     MFVideoInterlace_Progressive, eAVEncCommonRateControlMode_CBR, eAVEncH264VProfile_Base,
     eAVEncH264VProfile_Main,
 };
-use windows::Win32::System::Com::{CoTaskMemFree, IAgileObject};
+use windows::Win32::System::Com::CoTaskMemFree;
 use windows::Win32::System::Variant::VARIANT;
-use windows::core::{GUID, HRESULT, IUnknown, IUnknown_Vtbl, Interface, PWSTR};
+use windows::core::{GUID, IUnknown, IUnknownImpl, Interface, PWSTR, Ref, implement};
 
 use super::{GpuError, Step};
 
@@ -474,146 +473,54 @@ impl EventInbox {
     }
 }
 
-/// Minimal COM implementation of `IMFAsyncCallback` that forwards Media Foundation events
-/// to [`EventInbox`] without requiring `windows-core` as a direct crate dependency.
-#[repr(C)]
-struct EventCallbackObj {
-    vtbl: &'static IMFAsyncCallback_Vtbl,
-    refs: AtomicU32,
+/// Forwards Media Foundation events to [`EventInbox`] and re-arms `BeginGetEvent`.
+#[implement(IMFAsyncCallback)]
+struct EventCallback {
     inbox: Arc<EventInbox>,
 }
 
-impl EventCallbackObj {
-    const VTABLE: IMFAsyncCallback_Vtbl = IMFAsyncCallback_Vtbl {
-        base__: IUnknown_Vtbl {
-            QueryInterface: Self::query_interface,
-            AddRef: Self::add_ref,
-            Release: Self::release,
-        },
-        GetParameters: Self::get_parameters,
-        Invoke: Self::invoke,
-    };
-
+impl EventCallback {
     fn into_interface(inbox: Arc<EventInbox>) -> IMFAsyncCallback {
-        let raw = Box::into_raw(Box::new(Self {
-            vtbl: &Self::VTABLE,
-            refs: AtomicU32::new(1),
-            inbox,
-        }));
-        // SAFETY: `raw` points to a valid COM object whose first field is `&IMFAsyncCallback_Vtbl`
-        // with initial refcount 1; ownership transfers to the returned `IMFAsyncCallback`.
-        unsafe { IMFAsyncCallback::from_raw(raw.cast()) }
+        Self { inbox }.into()
     }
+}
 
-    unsafe extern "system" fn query_interface(
-        this: *mut core::ffi::c_void,
-        iid: *const GUID,
-        out: *mut *mut core::ffi::c_void,
-    ) -> HRESULT {
-        if out.is_null() {
-            return E_POINTER;
-        }
-        if this.is_null() || iid.is_null() {
-            // SAFETY: `out` was verified non-null above.
-            unsafe { *out = std::ptr::null_mut() };
-            return E_NOINTERFACE;
-        }
-        // SAFETY: `iid` is non-null and supplied by the COM caller.
-        let requested = unsafe { *iid };
-        if requested == IUnknown::IID
-            || requested == IMFAsyncCallback::IID
-            || requested == IAgileObject::IID
-        {
-            // SAFETY: `this` is a live `EventCallbackObj` and `out` is non-null.
-            unsafe {
-                Self::add_ref(this);
-                *out = this;
-            }
-            S_OK
-        } else {
-            // SAFETY: `out` was verified non-null above.
-            unsafe { *out = std::ptr::null_mut() };
-            E_NOINTERFACE
-        }
-    }
-
-    unsafe extern "system" fn add_ref(this: *mut core::ffi::c_void) -> u32 {
-        // SAFETY: `this` points to a live `EventCallbackObj` allocated via `Box::into_raw`.
-        let obj = unsafe { &*(this as *const Self) };
-        obj.refs.fetch_add(1, Ordering::Relaxed).saturating_add(1)
-    }
-
-    unsafe extern "system" fn release(this: *mut core::ffi::c_void) -> u32 {
-        // SAFETY: `this` points to a live `EventCallbackObj` allocated via `Box::into_raw`.
-        let prev = unsafe { &*(this as *const Self) }
-            .refs
-            .fetch_sub(1, Ordering::Release);
-        if prev == 1 {
-            std::sync::atomic::fence(Ordering::Acquire);
-            // SAFETY: refcount dropped to 0 after acquire fence; this was the last owner.
-            unsafe { drop(Box::from_raw(this as *mut Self)) };
-        }
-        prev.saturating_sub(1)
-    }
-
-    unsafe extern "system" fn get_parameters(
-        _this: *mut core::ffi::c_void,
-        flags: *mut u32,
-        queue: *mut u32,
-    ) -> HRESULT {
-        // SAFETY: Media Foundation supplies valid out pointers when non-null.
+impl IMFAsyncCallback_Impl for EventCallback_Impl {
+    fn GetParameters(&self, flags: *mut u32, queue: *mut u32) -> windows::core::Result<()> {
+        // SAFETY: Media Foundation passes valid out pointers; null ones are skipped.
         unsafe {
-            if !flags.is_null() {
+            if let Some(flags) = flags.as_mut() {
                 *flags = MFASYNC_FAST_IO_PROCESSING_CALLBACK;
             }
-            if !queue.is_null() {
+            if let Some(queue) = queue.as_mut() {
                 *queue = MFASYNC_CALLBACK_QUEUE_MULTITHREADED;
             }
         }
-        S_OK
+        Ok(())
     }
 
-    unsafe extern "system" fn invoke(
-        this: *mut core::ffi::c_void,
-        raw_result: *mut core::ffi::c_void,
-    ) -> HRESULT {
-        if this.is_null() || raw_result.is_null() {
-            return S_OK;
-        }
-        // SAFETY: `this` is kept alive by the caller for the duration of `Invoke`.
-        let obj = unsafe { &*(this as *const Self) };
-        // SAFETY: `raw_result` is borrowed from the caller; `ManuallyDrop` avoids releasing it.
-        let result = ManuallyDrop::new(unsafe { IMFAsyncResult::from_raw(raw_result) });
-        // SAFETY: `BeginGetEvent` passes the event generator as `punkState`.
-        let Ok(state_unknown) = (unsafe { result.GetState() }) else {
-            return S_OK;
-        };
-        let Ok(events) = state_unknown.cast::<IMFMediaEventGenerator>() else {
-            return S_OK;
-        };
+    fn Invoke(&self, result: Ref<IMFAsyncResult>) -> windows::core::Result<()> {
+        let result = result.ok()?;
+        // SAFETY: `BeginGetEvent` passes the event generator as the state object.
+        let state = unsafe { result.GetState() }?;
+        let events: IMFMediaEventGenerator = state.cast()?;
         // SAFETY: completes the pending `BeginGetEvent` for `result`.
-        let event = unsafe { events.EndGetEvent(&*result) };
-        let should_rearm = match event {
-            Ok(event) => {
-                // SAFETY: plain query on the live event returned by `EndGetEvent`.
-                let kind = unsafe { event.GetType() };
-                obj.inbox.record_event(kind)
-            }
+        let rearm = match unsafe { events.EndGetEvent(result) } {
+            // SAFETY: plain query on the event returned by `EndGetEvent`.
+            Ok(event) => self.inbox.record_event(unsafe { event.GetType() }),
             Err(err) => {
-                obj.inbox.record_error(err);
+                self.inbox.record_error(err);
                 false
             }
         };
-        if should_rearm {
-            // SAFETY: borrows `this` without consuming the caller's reference; `BeginGetEvent`
-            // calls `AddRef` internally if it retains the callback.
-            let callback = ManuallyDrop::new(unsafe { IMFAsyncCallback::from_raw(this) });
-            // SAFETY: re-arms the next async event on the live generator with no mutex held.
-            if let Err(err) = unsafe { events.BeginGetEvent(&*callback, &state_unknown) } {
-                obj.inbox.record_error(err);
+        if rearm {
+            let callback: IMFAsyncCallback = self.to_interface();
+            // SAFETY: re-arms the next event on the live generator with no lock held.
+            if let Err(err) = unsafe { events.BeginGetEvent(&callback, &state) } {
+                self.inbox.record_error(err);
             }
         }
-        S_OK
+        Ok(())
     }
 }
 
@@ -773,7 +680,7 @@ impl Encoder {
     }
 
     fn start_events(&self) -> Result<(), GpuError> {
-        let callback = EventCallbackObj::into_interface(Arc::clone(&self.inbox));
+        let callback = EventCallback::into_interface(Arc::clone(&self.inbox));
         let state: IUnknown = self.events.clone().into();
         // SAFETY: starts async event delivery; the callback stops re-arming once `Drop` closes `inbox`.
         unsafe { self.events.BeginGetEvent(&callback, &state) }.step("BeginGetEvent")?;
@@ -1110,9 +1017,9 @@ mod tests {
     }
 
     #[test]
-    fn event_callback_com_object_implements_qi_refcount_and_parameters() {
+    fn event_callback_reports_parameters_and_releases_the_inbox() {
         let inbox = Arc::new(EventInbox::default());
-        let callback = EventCallbackObj::into_interface(Arc::clone(&inbox));
+        let callback = EventCallback::into_interface(Arc::clone(&inbox));
         assert_eq!(Arc::strong_count(&inbox), 2);
 
         let mut flags = 0u32;
@@ -1123,7 +1030,7 @@ mod tests {
         assert_eq!(queue, MFASYNC_CALLBACK_QUEUE_MULTITHREADED);
 
         let unknown: IUnknown = callback.cast().unwrap();
-        let agile: IAgileObject = unknown.cast().unwrap();
+        let agile: windows::Win32::System::Com::IAgileObject = unknown.cast().unwrap();
         assert!(callback.cast::<IMFTransform>().is_err());
 
         let cloned = callback.clone();
