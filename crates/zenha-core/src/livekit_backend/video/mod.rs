@@ -6,5 +6,5 @@ mod publish;
 mod watch;
 
 pub(crate) use capture::DesktopCaptureSource;
-pub(crate) use publish::{LocalShare, ShareOptions, publish_share, stop_share};
-pub(crate) use watch::Watch;
+pub(crate) use publish::{LocalShare, RawVideoFanOut, ShareOptions, publish_share, stop_share};
+pub(crate) use watch::{Watch, WatchMode};

@@ -1,10 +1,12 @@
 //! Wrapper `P2pPeer` sobre `PeerConnection` da `libwebrtc` para envio e recepção P2P.
 
+#[cfg(test)]
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex as StdMutex, PoisonError};
 use std::time::Duration;
 
+#[cfg(test)]
 use futures_util::StreamExt;
 use livekit::rtc_engine::lk_runtime::LkRuntime;
 use livekit::webrtc::ice_candidate::IceCandidate;
@@ -19,16 +21,21 @@ use livekit::webrtc::rtp_transceiver::{
     RtpTransceiver, RtpTransceiverDirection, RtpTransceiverInit,
 };
 use livekit::webrtc::session_description::{SdpParseError, SdpType, SessionDescription};
+#[cfg(test)]
 use livekit::webrtc::video_frame::{EncodedVideoFrame, VideoBufferType, VideoFormatType};
+#[cfg(test)]
 use livekit::webrtc::video_source::EncodedRateControl;
 use livekit::webrtc::video_source::native::NativeVideoSource;
+#[cfg(test)]
 use livekit::webrtc::video_stream::native::NativeVideoStream;
+#[cfg(test)]
 use livekit::webrtc::video_track::RtcVideoTrack;
 use livekit::webrtc::{MediaType, RtcError};
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio::task::JoinHandle;
 use zenha_protocol::P2pSignal;
 
+#[cfg(test)]
 use crate::video::FrameSlot;
 
 use super::{
@@ -41,10 +48,6 @@ const P2P_VIDEO_TRACK_LABEL: &str = "p2p-screen";
 const P2P_VIDEO_STREAM_ID: &str = "p2p-screen-stream";
 
 #[derive(Debug, thiserror::Error)]
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "wired by the P2P coordinator in the next phase")
-)]
 pub(crate) enum P2pPeerError {
     #[error("webrtc error: {0}")]
     Rtc(#[from] RtcError),
@@ -62,15 +65,12 @@ pub(crate) enum P2pPeerError {
 ///
 /// Field drop order matters: background tasks, tracks and the `PeerConnection` drop before
 /// `_lk_runtime`, and `Drop` explicitly closes the connection (`CORE-07`).
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "wired by the P2P coordinator in the next phase")
-)]
 pub(crate) struct P2pPeer {
     role: P2pRole,
     session_id: String,
     closed: Arc<AtomicBool>,
     stats_task: StdMutex<Option<JoinHandle<()>>>,
+    #[cfg(test)]
     receive_task: StdMutex<Option<JoinHandle<()>>>,
     ice_buffer: StdMutex<IceCandidateBuffer>,
     video_source: Option<NativeVideoSource>,
@@ -79,19 +79,22 @@ pub(crate) struct P2pPeer {
     _lk_runtime: Arc<LkRuntime>,
 }
 
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "wired by the P2P coordinator in the next phase")
-)]
 impl P2pPeer {
+    /// `pre_encoded` takes H.264 from the GPU encoder; otherwise `libwebrtc` encodes raw frames
+    /// (the e2e test pattern).
     pub(crate) fn new_sender(
         config: P2pPeerConfig,
+        pre_encoded: bool,
     ) -> Result<(Self, UnboundedReceiver<P2pPeerEvent>), P2pPeerError> {
         let lk_runtime = LkRuntime::instance();
         let factory = lk_runtime.pc_factory();
         let pc = factory.create_peer_connection(build_rtc_configuration(&config.stun_urls))?;
 
-        let source = NativeVideoSource::new_encoded(config.video_resolution);
+        let source = if pre_encoded {
+            NativeVideoSource::new_encoded(config.video_resolution)
+        } else {
+            NativeVideoSource::new(config.video_resolution, true)
+        };
         let track = factory.create_video_track(P2P_VIDEO_TRACK_LABEL, source.clone());
         let init = RtpTransceiverInit {
             direction: RtpTransceiverDirection::SendOnly,
@@ -103,14 +106,15 @@ impl P2pPeer {
             }],
         };
         let transceiver = pc.add_transceiver(MediaStreamTrack::Video(track), init)?;
-        transceiver
-            .sender()
-            .set_video_encoder_backend(VideoEncoderBackend::PreEncoded);
-
-        let capabilities = factory.get_rtp_sender_capabilities(MediaType::Video).codecs;
-        let preferred = prioritize_h264_codecs(capabilities);
-        if !preferred.is_empty() {
-            transceiver.set_codec_preferences(preferred)?;
+        if pre_encoded {
+            transceiver
+                .sender()
+                .set_video_encoder_backend(VideoEncoderBackend::PreEncoded);
+            let capabilities = factory.get_rtp_sender_capabilities(MediaType::Video).codecs;
+            let preferred = prioritize_h264_codecs(capabilities);
+            if !preferred.is_empty() {
+                transceiver.set_codec_preferences(preferred)?;
+            }
         }
 
         if has_bitrate_setting(config.bitrate) {
@@ -133,6 +137,7 @@ impl P2pPeer {
                 session_id: config.session_id,
                 closed,
                 stats_task: StdMutex::new(stats_task),
+                #[cfg(test)]
                 receive_task: StdMutex::new(None),
                 ice_buffer: StdMutex::new(IceCandidateBuffer::default()),
                 video_source: Some(source),
@@ -179,6 +184,7 @@ impl P2pPeer {
                 session_id: config.session_id,
                 closed,
                 stats_task: StdMutex::new(stats_task),
+                #[cfg(test)]
                 receive_task: StdMutex::new(None),
                 ice_buffer: StdMutex::new(IceCandidateBuffer::default()),
                 video_source: None,
@@ -190,14 +196,17 @@ impl P2pPeer {
         ))
     }
 
+    #[cfg(test)]
     pub(crate) fn role(&self) -> P2pRole {
         self.role
     }
 
+    #[cfg(test)]
     pub(crate) fn session_id(&self) -> &str {
         &self.session_id
     }
 
+    #[cfg(test)]
     pub(crate) fn state(&self) -> P2pPeerState {
         if self.closed.load(Ordering::Acquire) {
             return P2pPeerState::Closed;
@@ -209,6 +218,7 @@ impl P2pPeer {
         self.video_source.as_ref()
     }
 
+    #[cfg(test)]
     pub(crate) fn push_encoded_frame(&self, frame: &EncodedVideoFrame<'_>) -> bool {
         if self.closed.load(Ordering::Acquire) {
             return false;
@@ -218,18 +228,21 @@ impl P2pPeer {
             .is_some_and(|source| source.capture_encoded_frame(frame))
     }
 
+    #[cfg(test)]
     pub(crate) fn take_keyframe_request(&self) -> bool {
         self.video_source
             .as_ref()
             .is_some_and(NativeVideoSource::take_keyframe_request)
     }
 
+    #[cfg(test)]
     pub(crate) fn take_rate_control_request(&self) -> Option<EncodedRateControl> {
         self.video_source
             .as_ref()
             .and_then(NativeVideoSource::take_rate_control_request)
     }
 
+    #[cfg(test)]
     pub(crate) fn set_bitrate(&self, settings: BitrateSettings) -> Result<(), P2pPeerError> {
         self.ensure_open()?;
         self.pc.set_bitrate(settings)?;
@@ -308,6 +321,7 @@ impl P2pPeer {
         }
     }
 
+    #[cfg(test)]
     pub(crate) async fn stats(&self) -> Result<P2pStatsSnapshot, P2pPeerError> {
         self.ensure_open()?;
         let raw = self.pc.get_stats().await?;
@@ -315,6 +329,7 @@ impl P2pPeer {
     }
 
     /// Streams decoded frames from `track` into `slot` until the track ends or the peer closes.
+    #[cfg(test)]
     pub(crate) fn attach_frame_slot(&self, track: RtcVideoTrack, slot: FrameSlot) {
         if self.closed.load(Ordering::Acquire) {
             return;
@@ -346,6 +361,7 @@ impl P2pPeer {
         {
             task.abort();
         }
+        #[cfg(test)]
         if let Some(task) = self
             .receive_task
             .lock()
@@ -474,6 +490,7 @@ fn spawn_stats_task(
     }))
 }
 
+#[cfg(test)]
 async fn read_decoded_frames(track: RtcVideoTrack, slot: FrameSlot, closed: Arc<AtomicBool>) {
     let mut stream = NativeVideoStream::new(track);
     while let Some(frame) = stream.next().await {
@@ -702,7 +719,7 @@ mod tests {
         receiver_cfg.stun_urls.clear();
         receiver_cfg.stats_interval = Duration::from_millis(100);
 
-        let (sender, mut sender_events) = P2pPeer::new_sender(sender_cfg).unwrap();
+        let (sender, mut sender_events) = P2pPeer::new_sender(sender_cfg, true).unwrap();
         let (receiver, mut receiver_events) = P2pPeer::new_receiver(receiver_cfg).unwrap();
         assert_eq!(sender.role(), P2pRole::Sender);
         assert_eq!(receiver.role(), P2pRole::Receiver);

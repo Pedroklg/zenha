@@ -1,12 +1,12 @@
 //! Publishing and ending the screen share as a local video track.
 
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex as StdMutex, OnceLock, PoisonError};
 use std::time::{Duration, Instant};
 
 use livekit::options::{TrackPublishOptions, VideoCodec, VideoEncoding};
 use livekit::prelude::{LocalTrack, LocalVideoTrack, Room, TrackSid, TrackSource};
 use livekit::webrtc::rtp_sender::VideoEncoderBackend;
-use livekit::webrtc::video_frame::{VideoFrame as RtcFrame, VideoRotation};
+use livekit::webrtc::video_frame::{I420Buffer, VideoFrame as RtcFrame, VideoRotation};
 use livekit::webrtc::video_source::native::NativeVideoSource;
 use livekit::webrtc::video_source::{RtcVideoSource, VideoResolution};
 use tokio::sync::mpsc::UnboundedSender;
@@ -28,8 +28,41 @@ const FIRST_FRAME_TIMEOUT: Duration = Duration::from_secs(5);
 const PUBLISH_TIMEOUT: Duration = Duration::from_secs(15);
 const UNPUBLISH_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// Copies the e2e test-pattern frames to the P2P senders, which encode them in `libwebrtc`.
+#[derive(Default)]
+pub(crate) struct RawVideoFanOut {
+    sinks: StdMutex<Vec<(String, NativeVideoSource)>>,
+}
+
+impl RawVideoFanOut {
+    pub(crate) fn add(&self, id: impl Into<String>, source: NativeVideoSource) {
+        let id = id.into();
+        let mut sinks = self.sinks.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some((_, existing)) = sinks.iter_mut().find(|(sink_id, _)| *sink_id == id) {
+            *existing = source;
+        } else {
+            sinks.push((id, source));
+        }
+    }
+
+    pub(crate) fn remove(&self, id: &str) {
+        self.sinks
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .retain(|(sink_id, _)| sink_id != id);
+    }
+
+    fn send_frame(&self, frame: &RtcFrame<I420Buffer>) {
+        let sinks = self.sinks.lock().unwrap_or_else(PoisonError::into_inner);
+        for (_, source) in sinks.iter() {
+            source.capture_frame(frame);
+        }
+    }
+}
+
 pub(crate) struct PublishSink {
     source: Arc<OnceLock<NativeVideoSource>>,
+    raw_fan_out: Option<Arc<RawVideoFanOut>>,
     first_size: Option<oneshot::Sender<(u32, u32)>>,
     preset: SharePreset,
     events: UnboundedSender<BackendEvent>,
@@ -80,7 +113,11 @@ impl FrameSink for PublishSink {
         let Some(buffer) = self.converter.convert(&frame, out) else {
             return;
         };
-        source.capture_frame(&RtcFrame::new(VideoRotation::VideoRotation0, buffer));
+        let rtc_frame = RtcFrame::new(VideoRotation::VideoRotation0, buffer);
+        source.capture_frame(&rtc_frame);
+        if let Some(raw_fan_out) = &self.raw_fan_out {
+            raw_fan_out.send_frame(&rtc_frame);
+        }
         if out != self.published {
             tracing::info!(
                 source_width = frame.width,
@@ -121,6 +158,9 @@ pub(crate) struct LocalShare {
     sid: Arc<std::sync::Mutex<TrackSid>>,
     capture: Box<dyn FrameSource>,
     fan_out: Option<Arc<gpu_share::VideoFanOut>>,
+    raw_fan_out: Option<Arc<RawVideoFanOut>>,
+    preset: SharePreset,
+    resolution: (u32, u32),
 }
 
 impl LocalShare {
@@ -128,12 +168,20 @@ impl LocalShare {
         Arc::clone(&self.sid)
     }
 
-    #[expect(
-        dead_code,
-        reason = "exposed for upcoming P2P sink registration (T105.2)"
-    )]
     pub(crate) fn fan_out(&self) -> Option<Arc<gpu_share::VideoFanOut>> {
         self.fan_out.clone()
+    }
+
+    pub(crate) fn raw_fan_out(&self) -> Option<Arc<RawVideoFanOut>> {
+        self.raw_fan_out.clone()
+    }
+
+    pub(crate) fn preset(&self) -> SharePreset {
+        self.preset
+    }
+
+    pub(crate) fn resolution(&self) -> (u32, u32) {
+        self.resolution
     }
 }
 
@@ -141,6 +189,8 @@ impl LocalShare {
 pub(crate) struct ShareOptions {
     pub(crate) preset: SharePreset,
     pub(crate) video_codec: crate::backend::options::VideoCodec,
+    /// Test pattern only: keep a [`RawVideoFanOut`] so P2P works without the GPU encoder.
+    pub(crate) p2p_raw_test_source: bool,
 }
 
 fn livekit_video_codec(codec: crate::backend::options::VideoCodec) -> VideoCodec {
@@ -163,6 +213,7 @@ pub(crate) async fn publish_share(
     let ShareOptions {
         preset,
         video_codec,
+        p2p_raw_test_source,
     } = share_options;
     if gpu_share::enabled()
         && let Some(gpu_target) = parse_target_id(&target.id)
@@ -188,9 +239,11 @@ pub(crate) async fn publish_share(
         }
     }
     let video_source = Arc::new(OnceLock::new());
+    let raw_fan_out = p2p_raw_test_source.then(|| Arc::new(RawVideoFanOut::default()));
     let (size_tx, size_rx) = oneshot::channel();
     let sink = PublishSink {
         source: video_source.clone(),
+        raw_fan_out: raw_fan_out.clone(),
         first_size: Some(size_tx),
         preset,
         events,
@@ -266,6 +319,9 @@ pub(crate) async fn publish_share(
         sid: Arc::new(std::sync::Mutex::new(publication.sid())),
         capture,
         fan_out: None,
+        raw_fan_out,
+        preset,
+        resolution: (width, height),
     })
 }
 
@@ -351,6 +407,9 @@ async fn publish_gpu_share(
         sid: Arc::new(std::sync::Mutex::new(publication.sid())),
         capture,
         fan_out: Some(fan_out),
+        raw_fan_out: None,
+        preset,
+        resolution: (width, height),
     })
 }
 
@@ -369,6 +428,7 @@ pub(crate) async fn stop_share(share: LocalShare) {
         sid,
         capture,
         fan_out,
+        ..
     } = share;
     if let Some(fan_out) = fan_out {
         fan_out.remove(gpu_share::SFU_SINK_ID);

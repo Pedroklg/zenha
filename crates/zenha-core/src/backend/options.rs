@@ -75,6 +75,8 @@ pub struct LiveKitBackendOptions {
     pub test_pattern_size: Option<(u32, u32)>,
     /// Video codec used by the CPU capture path. Defaults to VP9 to match the client.
     pub video_codec: VideoCodec,
+    /// Forces the P2P share on or off; `None` reads `ZENHA_P2P` (on unless it is `0`).
+    pub p2p_enabled: Option<bool>,
 }
 
 impl LiveKitBackendOptions {
@@ -155,6 +157,7 @@ mod tests {
         assert!(!options.test_pattern_target);
         assert_eq!(options.test_pattern_size, None);
         assert_eq!(options.video_codec, VideoCodec::Vp9);
+        assert_eq!(options.p2p_enabled, None);
         assert!(!options.is_tone());
         assert!(options.validate().is_ok());
     }

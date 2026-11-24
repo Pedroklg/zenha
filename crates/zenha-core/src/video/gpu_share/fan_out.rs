@@ -43,6 +43,7 @@ struct VideoSink<S> {
 pub(crate) struct SinkControls {
     pub force_keyframe: bool,
     pub target_bitrate_bps: Option<u64>,
+    pub active_sinks: usize,
 }
 
 /// Distributes pre-encoded frames to one or more independent video sinks and aggregates
@@ -135,11 +136,11 @@ impl<S: EncodedVideoSink> VideoFanOut<S> {
     pub(crate) fn poll_controls(&self, max_bitrate_bps: u64) -> SinkControls {
         let mut sinks = self.lock();
         let mut force_keyframe = false;
-        let mut has_active = false;
+        let mut active_sinks = 0usize;
         let mut min_requested: Option<u64> = None;
 
         for sink in sinks.iter_mut().filter(|sink| sink.active) {
-            has_active = true;
+            active_sinks += 1;
             force_keyframe |= std::mem::take(&mut sink.needs_keyframe);
             force_keyframe |= sink.source.take_keyframe_request();
             // WebRTC reports 0 bps when a sender is paused by dynacast; ignore so it cannot
@@ -155,13 +156,14 @@ impl<S: EncodedVideoSink> VideoFanOut<S> {
         }
 
         let floor = self.min_bitrate_bps.min(max_bitrate_bps);
-        let target_bitrate_bps = has_active.then(|| {
+        let target_bitrate_bps = (active_sinks > 0).then(|| {
             min_requested.map_or(max_bitrate_bps, |bps| bps.clamp(floor, max_bitrate_bps))
         });
 
         SinkControls {
             force_keyframe,
             target_bitrate_bps,
+            active_sinks,
         }
     }
 
@@ -323,7 +325,9 @@ mod tests {
         let max_bps = 8_000_000;
         let floor_bps = 300_000;
         let fan_out = VideoFanOut::<FakeSink>::new(floor_bps);
-        assert_eq!(fan_out.poll_controls(max_bps).target_bitrate_bps, None);
+        let empty = fan_out.poll_controls(max_bps);
+        assert_eq!(empty.target_bitrate_bps, None);
+        assert_eq!(empty.active_sinks, 0);
 
         let sfu = FakeSink::default();
         let peer_a = FakeSink::default();
@@ -332,10 +336,9 @@ mod tests {
         fan_out.add("peer:a", peer_a.clone());
 
         // Before any SetRates arrives, active sinks stay at the preset cap.
-        assert_eq!(
-            fan_out.poll_controls(max_bps).target_bitrate_bps,
-            Some(max_bps)
-        );
+        let initial = fan_out.poll_controls(max_bps);
+        assert_eq!(initial.target_bitrate_bps, Some(max_bps));
+        assert_eq!(initial.active_sinks, 2);
 
         // SFU reports 6 Mbps, peer_a has not reported yet.
         sfu.request_bitrate(6_000_000);

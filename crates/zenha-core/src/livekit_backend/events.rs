@@ -26,6 +26,7 @@ use crate::livekit_backend::video::Watch;
 
 use super::Flags;
 use super::audio::audio_tap;
+use super::p2p::{P2pCoordinatorHandle, share_epoch_from_sid};
 use super::room::{
     is_screen_share, is_share_audio, remote_view, set_screen_share_subscribed, wants_audio,
 };
@@ -107,14 +108,19 @@ fn disconnect_event(reason: DisconnectReason) -> BackendEvent {
     }
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "translates room events across speaking tracker, watch, files and P2P coordinator"
+)]
 fn translate(
     event: RoomEvent,
     room: &Arc<Room>,
     speaking: &mut SpeakingTracker,
     flags: &Flags,
-    watch: &Watch,
+    watch: &Arc<Watch>,
     events: &UnboundedSender<BackendEvent>,
     files: &FileReceiver,
+    p2p: &P2pCoordinatorHandle,
 ) -> Vec<BackendEvent> {
     match event {
         RoomEvent::ParticipantConnected(participant) => {
@@ -124,6 +130,7 @@ fn translate(
             let identity = String::from(participant.identity());
             speaking.forget(&identity);
             watch.clear_if(&identity);
+            p2p.participant_left(identity.clone());
             vec![BackendEvent::ParticipantLeft { identity }]
         }
         RoomEvent::ParticipantNameChanged {
@@ -193,6 +200,7 @@ fn translate(
             }
             let identity = String::from(participant.identity());
             watch.clear_if(&identity);
+            p2p.remote_share_stopped(identity.clone());
             vec![BackendEvent::RemoteScreenShareStopped { identity }]
         }
         RoomEvent::TrackSubscribed {
@@ -297,6 +305,7 @@ fn translate(
                         .share_sids
                         .republish_video(&previous_sid, new_sid.clone()) =>
                 {
+                    p2p.epoch_changed(share_epoch_from_sid(new_sid.as_str()));
                     tracing::info!(
                         %previous_sid,
                         %new_sid,
@@ -379,11 +388,21 @@ pub(super) async fn pump_events(
     flags: Arc<Flags>,
     watch: Arc<Watch>,
     files: Arc<FileReceiver>,
+    p2p: P2pCoordinatorHandle,
 ) {
     let mut speaking = SpeakingTracker::new(String::from(room.local_participant().identity()));
     while let Some(event) = room_events.recv().await {
         let mut finished = false;
-        for backend_event in translate(event, &room, &mut speaking, &flags, &watch, &tx, &files) {
+        for backend_event in translate(
+            event,
+            &room,
+            &mut speaking,
+            &flags,
+            &watch,
+            &tx,
+            &files,
+            &p2p,
+        ) {
             finished |= matches!(
                 backend_event,
                 BackendEvent::Disconnected { .. } | BackendEvent::RemovedFromRoom { .. }

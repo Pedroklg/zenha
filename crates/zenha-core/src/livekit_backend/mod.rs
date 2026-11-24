@@ -315,7 +315,6 @@ impl Flags {
         }
     }
 
-    #[expect(dead_code, reason = "wired by the P2P coordinator in the next phase")]
     fn subscribe_p2p_signals(&self) -> UnboundedReceiver<IncomingP2pSignal> {
         let (tx, rx) = mpsc::unbounded_channel();
         *self
@@ -533,6 +532,10 @@ impl MediaBackend for LiveKitBackend {
                 return;
             };
             let visible = flags.ui_visible.0.load(Ordering::SeqCst);
+            // P2P keeps running while hidden; only the SFU subscription follows the window.
+            if visible && watch.uses_p2p() {
+                return;
+            }
             let track = room::set_screen_share_video_subscribed(&room, &identity, visible);
             if visible && let Some(video) = track {
                 watch.start_stream(&identity, video, events, Arc::clone(&flags.ui_visible.0));

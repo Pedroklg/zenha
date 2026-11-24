@@ -25,6 +25,7 @@ pub fn options_for(args: &BotArgs) -> LiveKitBackendOptions {
         test_pattern_target: args.test_pattern,
         test_pattern_size: args.test_pattern_size,
         video_codec: args.video_codec,
+        p2p_enabled: None,
     }
 }
 
