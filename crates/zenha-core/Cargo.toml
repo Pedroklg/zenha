@@ -29,6 +29,7 @@ livekit.workspace = true
 rustls.workspace = true
 wasapi.workspace = true
 windows.workspace = true
+windows-core.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
