@@ -132,6 +132,27 @@ impl<'a> Ctx<'a> {
             test_pattern_size: None,
             video_codec: VideoCodec::default(),
             echo_test,
+            p2p: false,
+        })
+    }
+
+    /// Tone bot (so no real microphone is needed) with the P2P share forced on or off.
+    pub(super) fn spawn_p2p(
+        &mut self,
+        name: &str,
+        pattern: bool,
+        p2p: bool,
+    ) -> anyhow::Result<Arc<BotProcess>> {
+        self.spawn_with(BotSpec {
+            name: name.to_owned(),
+            token_url: self.setup.token_url(),
+            invite: self.setup.invite.clone(),
+            tone: Some((TONE_HZ, TONE_AMPLITUDE)),
+            test_pattern: pattern,
+            test_pattern_size: None,
+            video_codec: VideoCodec::default(),
+            echo_test: None,
+            p2p,
         })
     }
 

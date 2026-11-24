@@ -25,7 +25,7 @@ pub fn options_for(args: &BotArgs) -> LiveKitBackendOptions {
         test_pattern_target: args.test_pattern,
         test_pattern_size: args.test_pattern_size,
         video_codec: args.video_codec,
-        p2p_enabled: None,
+        p2p_enabled: args.p2p,
     }
 }
 
@@ -106,6 +106,7 @@ mod tests {
             test_pattern: pattern,
             test_pattern_size: None,
             video_codec: VideoCodec::default(),
+            p2p: None,
             allow_non_windows: false,
         }
     }
@@ -117,6 +118,7 @@ mod tests {
         let mut custom = args(Some(1290.0), true);
         custom.test_pattern_size = Some((1920, 1080));
         custom.video_codec = VideoCodec::Av1;
+        custom.p2p = Some(true);
         let tone = options_for(&custom);
         assert_eq!(
             tone.microphone,
@@ -128,6 +130,7 @@ mod tests {
         assert!(tone.test_pattern_target);
         assert_eq!(tone.test_pattern_size, Some((1920, 1080)));
         assert_eq!(tone.video_codec, VideoCodec::Av1);
+        assert_eq!(tone.p2p_enabled, Some(true));
         assert_eq!(describe(&tone), "tone 1290 Hz at 0.03");
     }
 

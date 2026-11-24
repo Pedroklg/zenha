@@ -1,8 +1,9 @@
-//! The fifteen scenarios, their registry and the tools they share.
+//! The scenarios, their registry and the tools they share.
 
 mod audio;
 mod chat;
 mod ctx;
+mod p2p_share;
 mod session;
 mod share;
 
@@ -124,6 +125,36 @@ pub const ALL: &[ScenarioDef] = &[
         needs_media: true,
         run: share::av1_decode,
     },
+    ScenarioDef {
+        name: "p2p-upgrade",
+        title: "Quem assiste passa do SFU para o P2P sem perder quadros",
+        needs_media: true,
+        run: p2p_share::p2p_upgrade,
+    },
+    ScenarioDef {
+        name: "p2p-viewer-limit",
+        title: "Segundo espectador acima do limite leva todos de volta ao SFU",
+        needs_media: true,
+        run: p2p_share::p2p_viewer_limit,
+    },
+    ScenarioDef {
+        name: "p2p-cleanup",
+        title: "Parar a transmissão ou sair da sala fecha a conexão P2P",
+        needs_media: true,
+        run: p2p_share::p2p_cleanup,
+    },
+    ScenarioDef {
+        name: "p2p-disabled",
+        title: "P2P desligado em uma das pontas fica no SFU sem erro",
+        needs_media: true,
+        run: p2p_share::p2p_disabled,
+    },
+    ScenarioDef {
+        name: "p2p-rewatch",
+        title: "Parar de assistir e voltar abre uma sessão P2P nova",
+        needs_media: true,
+        run: p2p_share::p2p_rewatch,
+    },
 ];
 
 pub fn room_name(scenario: &str) -> String {
@@ -186,6 +217,11 @@ mod tests {
                 "room-switch",
                 "cue",
                 "av1-decode",
+                "p2p-upgrade",
+                "p2p-viewer-limit",
+                "p2p-cleanup",
+                "p2p-disabled",
+                "p2p-rewatch",
             ]
         );
         assert!(!ALL[0].needs_media);

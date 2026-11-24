@@ -266,6 +266,7 @@ fn measure_codec_decode(
         test_pattern_size: Some(DECODE_SIZE),
         video_codec: codec,
         echo_test: None,
+        p2p: false,
     })?;
     sharer.send(&BotCommand::SetMuted { muted: true })?;
     ctx.join(&sharer, room)?;
@@ -279,6 +280,7 @@ fn measure_codec_decode(
         test_pattern_size: None,
         video_codec: VideoCodec::Vp9,
         echo_test: None,
+        p2p: false,
     })?;
     watcher.send(&BotCommand::SetMuted { muted: true })?;
     watcher.send(&BotCommand::SetDeafened { deafened: true })?;

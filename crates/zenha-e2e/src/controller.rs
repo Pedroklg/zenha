@@ -83,6 +83,8 @@ pub struct BotSpec {
     pub video_codec: VideoCodec,
     /// Replaces the enhanced microphone with the bot's own sound times this gain.
     pub echo_test: Option<f32>,
+    /// Off keeps the older scenarios on the SFU path they were written for.
+    pub p2p: bool,
 }
 
 #[derive(Default)]
@@ -136,6 +138,7 @@ impl BotProcess {
             command.args(["--test-pattern-size", &format!("{width}x{height}")]);
         }
         command.args(["--video-codec", spec.video_codec.as_str()]);
+        command.args(["--p2p", if spec.p2p { "on" } else { "off" }]);
         if cfg!(not(windows)) {
             command.arg("--allow-non-windows");
         }
