@@ -6486,7 +6486,7 @@ checksum = "e450f9b2ed1dff33c94c12589a87338689467b9c4f5d8a5710bd09a847d2c8a7"
 
 [[package]]
 name = "xtask"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "image",
 ]
@@ -6633,7 +6633,7 @@ dependencies = [
 
 [[package]]
 name = "zenha-client"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "anyhow",
  "directories",
@@ -6656,7 +6656,7 @@ dependencies = [
 
 [[package]]
 name = "zenha-core"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "async-trait",
  "cc",
@@ -6677,7 +6677,7 @@ dependencies = [
 
 [[package]]
 name = "zenha-e2e"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "anyhow",
  "serde",
@@ -6693,7 +6693,7 @@ dependencies = [
 
 [[package]]
 name = "zenha-protocol"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "serde",
  "serde_json",
@@ -6702,7 +6702,7 @@ dependencies = [
 
 [[package]]
 name = "zenha-server"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "anyhow",
  "argon2",
