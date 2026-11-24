@@ -98,7 +98,11 @@ fn run(launch: cli::LaunchArgs) -> anyhow::Result<()> {
         // Keep --demo isolated from the user's real config file and Credential Manager.
         (None, Some(demo::DEMO_PASSWORD.to_owned()))
     } else {
-        let stored_id = platform::credentials::load_identity();
+        // A separate config dir (dev and tests) must not take the real identity from the vault.
+        let use_vault = platform::settings::config_dir_override().is_none();
+        let stored_id = use_vault
+            .then(platform::credentials::load_identity)
+            .flatten();
         let (client_id, save) =
             platform::settings::pick_client_id(&settings.client_id, stored_id.as_deref());
         settings.client_id = client_id;
@@ -108,7 +112,7 @@ fn run(launch: cli::LaunchArgs) -> anyhow::Result<()> {
         {
             tracing::warn!(%err, "could not save client id");
         }
-        if save.vault {
+        if use_vault && save.vault {
             platform::credentials::store_identity(&settings.client_id);
         }
         let server = settings.token_server_url.trim();
