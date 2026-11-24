@@ -101,10 +101,6 @@ impl<S> VideoFanOut<S> {
     }
 
     /// Enables or pauses delivery and control aggregation for `id`.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "used by upcoming P2P sink switching (T105.2)")
-    )]
     pub(crate) fn set_active(&self, id: &str, active: bool) -> bool {
         let mut sinks = self.lock();
         let Some(sink) = sinks.iter_mut().find(|sink| sink.id == id) else {

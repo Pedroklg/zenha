@@ -715,7 +715,10 @@ impl Share {
             };
             let due = last_submit.is_none_or(|at| at.elapsed() >= KEEPALIVE);
             let began = Instant::now();
-            let outputs = if fresh || force_key || due {
+            let outputs = if controls.active_sinks == 0 {
+                force_key = true;
+                pipeline.encoder.poll()?
+            } else if fresh || force_key || due {
                 let texture = pipeline.converter.convert()?;
                 let timestamp = i64::try_from(start.elapsed().as_nanos() / 100).unwrap_or(i64::MAX);
                 let encode_start = Instant::now();
