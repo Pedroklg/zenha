@@ -15,6 +15,8 @@ pub(super) const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 pub(super) const DISCONNECTED_TIMEOUT: Duration = Duration::from_secs(2);
 pub(super) const FRAME_STALL_TIMEOUT: Duration = Duration::from_millis(1500);
 pub(super) const DOWNGRADE_GRACE: Duration = Duration::from_secs(2);
+/// A request can reach the sharer before it knows the viewer joined; the SDK then drops the sender.
+pub(super) const REQUEST_RETRY: Duration = Duration::from_secs(1);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum Action {
@@ -87,9 +89,17 @@ struct Share {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Phase {
     Sfu,
-    Negotiating { since: Instant, offered: bool },
-    P2p { disconnected_since: Option<Instant> },
-    Downgrading { until: Instant },
+    Negotiating {
+        since: Instant,
+        requested_at: Instant,
+        offered: bool,
+    },
+    P2p {
+        disconnected_since: Option<Instant>,
+    },
+    Downgrading {
+        until: Instant,
+    },
 }
 
 #[derive(Debug)]
@@ -189,6 +199,7 @@ impl P2pState {
             session_id,
             phase: Phase::Negotiating {
                 since: now,
+                requested_at: now,
                 offered: false,
             },
         });
@@ -404,6 +415,25 @@ impl P2pState {
             {
                 Some(Reason::NatTimeout)
             }
+            Phase::Negotiating {
+                since,
+                requested_at,
+                offered: false,
+            } if now.saturating_duration_since(requested_at) >= REQUEST_RETRY => {
+                watching.phase = Phase::Negotiating {
+                    since,
+                    requested_at: now,
+                    offered: false,
+                };
+                actions.push(send(
+                    &watching.broadcaster,
+                    P2pSignal::Request {
+                        share_epoch: watching.epoch,
+                        session_id: watching.session_id.clone(),
+                    },
+                ));
+                None
+            }
             Phase::P2p { disconnected_since }
                 if disconnected_since.is_some_and(|since| {
                     now.saturating_duration_since(since) >= DISCONNECTED_TIMEOUT
@@ -448,6 +478,13 @@ impl P2pState {
         let Some(share) = self.share.as_mut().filter(|share| share.epoch == epoch) else {
             return vec![reject(viewer, session_id, Reason::StaleEpoch)];
         };
+        if share
+            .viewers
+            .get(viewer)
+            .is_some_and(|known| known.session_id == session_id)
+        {
+            return Vec::new();
+        }
         let mut actions = Vec::new();
         let previous = share.viewers.insert(
             viewer.to_owned(),
@@ -1188,5 +1225,34 @@ mod tests {
         );
         let mut state = viewing_on_p2p(t0);
         assert_eq!(state.participant_left(SHARER), vec![close_receiver(None)]);
+    }
+
+    #[test]
+    fn viewer_repeats_an_unanswered_request_and_the_sharer_ignores_repeats() {
+        let t0 = Instant::now();
+        let mut viewer = P2pState::new(true, 1);
+        viewer.watch_started(SHARER, EPOCH, "v1".to_owned(), t0);
+        assert!(
+            viewer
+                .tick(t0 + Duration::from_millis(500), None, None)
+                .is_empty()
+        );
+        assert_eq!(
+            viewer.tick(t0 + REQUEST_RETRY, None, None),
+            vec![send(SHARER, request("v1"))]
+        );
+        viewer.signal(SHARER, offer("v1"), t0 + REQUEST_RETRY);
+        assert!(viewer.tick(t0 + REQUEST_RETRY * 3, None, None).is_empty());
+
+        let mut sharer = sharing(1);
+        assert_eq!(
+            sharer.signal(ALICE, request("a1"), t0),
+            vec![open(ALICE, "a1")]
+        );
+        assert!(
+            sharer
+                .signal(ALICE, request("a1"), t0 + REQUEST_RETRY)
+                .is_empty()
+        );
     }
 }
